@@ -65,3 +65,36 @@ func TestBreakPane_JoinPane(t *testing.T) {
 		t.Fatalf("JoinPane: %v", err)
 	}
 }
+
+func TestWindowPaneCount(t *testing.T) {
+	if os.Getenv("TMUX") == "" {
+		t.Skip("Skipping tmux test: not running inside tmux")
+	}
+	n, err := WindowPaneCount()
+	if err != nil {
+		t.Fatalf("WindowPaneCount: %v", err)
+	}
+	if n < 1 {
+		t.Errorf("WindowPaneCount: expected >= 1, got %d", n)
+	}
+}
+
+func TestEnsureLayout(t *testing.T) {
+	if os.Getenv("TMUX") == "" {
+		t.Skip("Skipping tmux test: not running inside tmux")
+	}
+	if err := EnsureLayout(); err != nil {
+		t.Fatalf("EnsureLayout: %v", err)
+	}
+	n, err := WindowPaneCount()
+	if err != nil {
+		t.Fatalf("WindowPaneCount after EnsureLayout: %v", err)
+	}
+	if n < 2 {
+		t.Errorf("EnsureLayout: expected >= 2 panes, got %d", n)
+	}
+	// Idempotent: second call should be a no-op
+	if err := EnsureLayout(); err != nil {
+		t.Fatalf("EnsureLayout (second call): %v", err)
+	}
+}

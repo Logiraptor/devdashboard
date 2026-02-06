@@ -49,9 +49,10 @@ type AgentRunner interface {
 
 **Requires tmux** — App expects `TMUX` env. If unset, shows message to start tmux first.
 
-1. **Pane layout**: devdeploy runs in one pane. `SPC s s` creates new pane via `tmux split-window -c <workDir>` with shell in project directory.
-2. **internal/tmux**: `SplitPane(workDir)`, `KillPane`, `SendKeys`, `BreakPane`, `JoinPane`
-3. **Hide/show**: `break-pane -d` moves agent pane to background window; `join-pane` restores it.
+1. **Layout init on startup**: devdeploy creates a two-pane layout if it doesn't exist: left = devdeploy (control panel), right = project area. `tmux.EnsureLayout()` splits horizontally when the window has only one pane.
+2. **Pane layout**: devdeploy runs in the left pane. `SPC s s` creates new pane via `tmux split-window -c <workDir>` with shell in project directory.
+3. **internal/tmux**: `EnsureLayout`, `WindowPaneCount`, `SplitPane(workDir)`, `KillPane`, `SendKeys`, `BreakPane`, `JoinPane`
+4. **Hide/show**: `break-pane -d` moves agent pane to background window; `join-pane` restores it.
 
 **Rationale**: Native tmux pane = full terminal features, no key translation, simpler code. PTY embedding competed with tmux when users ran devdeploy inside tmux.
 

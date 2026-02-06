@@ -7,8 +7,51 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
+
+// WindowPaneCount returns the number of panes in the current window.
+func WindowPaneCount() (int, error) {
+	cmd := exec.Command("tmux", "display-message", "-p", "#{window_panes}")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("tmux display-message: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out.String()))
+	if err != nil {
+		return 0, fmt.Errorf("parse pane count: %w", err)
+	}
+	return n, nil
+}
+
+// EnsureLayout creates a two-pane layout if it doesn't exist: left = devdeploy, right = project area.
+// If the current window has only one pane, splits horizontally to create the right pane.
+// Idempotent: does nothing if layout already has 2+ panes.
+func EnsureLayout() error {
+	count, err := WindowPaneCount()
+	if err != nil {
+		return err
+	}
+	if count >= 2 {
+		return nil // layout already exists
+	}
+	cmd := exec.Command("tmux", "split-window", "-h")
+	var out bytes.Buffer
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tmux split-window: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	// split-window focuses the new pane; switch back to devdeploy (left)
+	cmd = exec.Command("tmux", "select-pane", "-L")
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tmux select-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
 
 // SplitPane creates a new pane in the current window with cwd set to workDir.
 // Returns the new pane ID (e.g. %4) or an error.
@@ -48,8 +91,9 @@ func SendKeys(paneID, keys string) error {
 
 // BreakPane moves the pane into its own window (background). Use -d so the new
 // window does not become current. The pane ID remains valid for JoinPane.
+// break-pane uses -s for source pane; -t is for destination window.
 func BreakPane(paneID string) error {
-	cmd := exec.Command("tmux", "break-pane", "-d", "-t", paneID)
+	cmd := exec.Command("tmux", "break-pane", "-d", "-s", paneID)
 	var out bytes.Buffer
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
