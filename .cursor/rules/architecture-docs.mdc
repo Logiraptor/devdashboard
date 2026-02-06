@@ -17,12 +17,18 @@ Create a dev-log entry when:
 
 ## Before Writing New Features
 
-1. Review existing `dev-log/` entries to understand:
+1. Review `dev-log/` documents (architecture.md, ui.md, keybinds.md, agent-workflow.md) to understand:
    - Prior decisions that may affect your implementation
    - Established patterns and conventions
    - Assumptions about the system architecture
 
 2. Consider how the new feature fits within documented decisions
+
+## Document Structure
+
+Core docs are topic-based: `architecture.md`, `ui.md`, `keybinds.md`, `agent-workflow.md`. For new decisions, either:
+- **Consolidate** into the relevant topic doc when the decision fits
+- **Create** `dev-log/YYYY-MM-DD-topic-name.md` for standalone decisions; add to `dev-log/README.md`
 
 ## Log Entry Format
 
@@ -41,11 +47,3 @@ What was decided?
 ## Consequences
 What are the tradeoffs and implications?
 ```
-
-## File Naming
-
-Use descriptive names: `dev-log/YYYY-MM-DD-topic-name.md`
-
-## Index Maintenance
-
-When creating a new dev-log entry, **always** add it to the `dev-log/README.md` Entries table. Keep entries sorted by date (oldest first). Use the first heading (`# Title`) as the link text.
