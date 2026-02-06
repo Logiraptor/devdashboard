@@ -14,7 +14,7 @@ func main() {
 		os.Exit(1)
 	}
 	model := ui.NewAppModel().AsTeaModel()
-	p := tea.NewProgram(model)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
