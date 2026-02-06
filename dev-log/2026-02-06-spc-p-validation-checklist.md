@@ -36,4 +36,5 @@
 
 ## Automated tests
 
-`go test ./internal/ui/... -run TestProjectKeybinds` validates message handling and context rules.
+- `go test ./internal/ui/... -run TestProjectKeybinds` — message handling and context rules
+- `go test ./internal/ui/... -run TestSPC` — SPC shows keybind hints (`TestSPCShowsKeybindHints`), commands execute (`TestSPCKeybindCommandsExecute`)

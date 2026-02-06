@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"devdeploy/internal/agent"
@@ -230,6 +231,79 @@ func TestProjectKeybinds_ShowRemoveRepoMsg_NoOpWhenDashboard(t *testing.T) {
 	}
 	if a.Overlays.Len() != 0 {
 		t.Errorf("expected no overlay in Dashboard, got %d", a.Overlays.Len())
+	}
+}
+
+// TestSPCShowsKeybindHints validates that pressing SPC displays keybind hints in the View.
+func TestSPCShowsKeybindHints(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
+	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
+
+	m := NewAppModel()
+	adapter := m.AsTeaModel().(*appModelAdapter)
+
+	// Process ProjectsLoadedMsg first (from Init)
+	adapter.Update(ProjectsLoadedMsg{Projects: nil})
+
+	// Press SPC -> leader waiting, View should show hints
+	_, _ = adapter.Update(keyMsg(" "))
+	view := adapter.View()
+	if !m.KeyHandler.LeaderWaiting {
+		t.Fatal("expected LeaderWaiting after SPC")
+	}
+	// Help view should show first-level hints: p, q, a
+	for _, hint := range []string{"p", "q", "a"} {
+		if !strings.Contains(view, hint) {
+			t.Errorf("View should contain hint %q after SPC, got:\n%s", hint, view)
+		}
+	}
+
+	// Press p -> still in leader mode, View should show SPC p sub-hints
+	_, _ = adapter.Update(keyMsg("p"))
+	view = adapter.View()
+	if !m.KeyHandler.LeaderWaiting {
+		t.Fatal("expected LeaderWaiting after SPC p")
+	}
+	for _, hint := range []string{"c", "d", "a", "r"} {
+		if !strings.Contains(view, hint) {
+			t.Errorf("View should contain hint %q after SPC p, got:\n%s", hint, view)
+		}
+	}
+}
+
+// TestSPCKeybindCommandsExecute validates that SPC p c triggers CreateProjectModal.
+func TestSPCKeybindCommandsExecute(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
+	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
+
+	m := NewAppModel()
+	adapter := m.AsTeaModel().(*appModelAdapter)
+
+	// Process ProjectsLoadedMsg first
+	adapter.Update(ProjectsLoadedMsg{Projects: nil})
+
+	// SPC p c -> should push CreateProjectModal
+	_, cmd := adapter.Update(keyMsg(" "))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+	_, cmd = adapter.Update(keyMsg("p"))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+	_, cmd = adapter.Update(keyMsg("c"))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+
+	if m.Overlays.Len() != 1 {
+		t.Fatalf("expected 1 overlay after SPC p c, got %d", m.Overlays.Len())
+	}
+	top, _ := m.Overlays.Peek()
+	if _, ok := top.View.(*CreateProjectModal); !ok {
+		t.Errorf("expected CreateProjectModal, got %T", top.View)
 	}
 }
 
