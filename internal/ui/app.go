@@ -18,7 +18,7 @@ type SelectProjectMsg struct {
 	Name string
 }
 
-// RunAgentMsg is sent when user triggers agent run (SPC a a).
+// RunAgentMsg is sent when user triggers agent run (SPC s s).
 type RunAgentMsg struct{}
 
 // HideAgentPaneMsg hides the agent pane (break-pane to background window).
@@ -428,9 +428,9 @@ func NewAppModel() *AppModel {
 	reg.BindWithDesc("q", tea.Quit, "Quit")
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDescForMode("SPC a a", func() tea.Msg { return RunAgentMsg{} }, "Agent run", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC a h", func() tea.Msg { return HideAgentPaneMsg{} }, "Hide agent pane", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC a s", func() tea.Msg { return ShowAgentPaneMsg{} }, "Show agent pane", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s s", func() tea.Msg { return RunAgentMsg{} }, "Open shell", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s h", func() tea.Msg { return HideAgentPaneMsg{} }, "Hide shell pane", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s j", func() tea.Msg { return ShowAgentPaneMsg{} }, "Show shell pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})

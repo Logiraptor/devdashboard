@@ -87,7 +87,7 @@ func (r *KeybindRegistry) Hints() map[string]string {
 // Used to avoid showing a specific sub-action (e.g. "Delete project") when the key opens a submenu.
 var firstLevelSubmenuLabel = map[string]string{
 	"p": "Project",
-	"a": "Agent",
+	"s": "Shell",
 }
 
 // LeaderHints returns hints for SPC-prefixed bindings, filtered by mode.

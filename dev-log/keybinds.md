@@ -40,11 +40,13 @@
 | `SPC p a` | Add repo to project | Project detail |
 | `SPC p r` | Remove repo from project | Project detail |
 
-## SPC a — Agent
+## SPC s — Shell
 
 | Sequence | Action |
 |----------|--------|
-| `SPC a a` | Run agent (opens tmux pane or progress overlay) |
+| `SPC s s` | Open shell (opens tmux pane in project directory) |
+| `SPC s h` | Hide shell pane |
+| `SPC s j` | Show shell pane |
 
 ## Help View
 
