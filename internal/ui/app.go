@@ -99,7 +99,15 @@ func (a *appModelAdapter) Init() tea.Cmd {
 func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case progress.Event:
-		// Phase 6 will display; for now we accept and discard
+		if a.Overlays.Len() > 0 {
+			if top, hasOverlay := a.Overlays.Peek(); hasOverlay {
+				if _, isProgress := top.View.(*ProgressWindow); isProgress {
+					if cmd, updated := a.Overlays.UpdateTop(msg); updated {
+						return a, cmd
+					}
+				}
+			}
+		}
 		return a, nil
 	case ProjectsLoadedMsg:
 		if a.Dashboard != nil {
@@ -218,7 +226,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			projectDir := a.ArtifactStore.ProjectDir(a.Detail.ProjectName)
 			planPath := filepath.Join(projectDir, "plan.md")
 			designPath := filepath.Join(projectDir, "design.md")
-			return a, a.AgentRunner.Run(context.Background(), projectDir, planPath, designPath)
+			progWin := NewProgressWindow()
+			a.Overlays.Push(Overlay{View: progWin, Dismiss: "esc"})
+			return a, tea.Batch(progWin.Init(), a.AgentRunner.Run(context.Background(), projectDir, planPath, designPath))
 		}
 		return a, nil
 	case SelectProjectMsg:
