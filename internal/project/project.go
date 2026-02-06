@@ -99,8 +99,19 @@ func (m *Manager) CreateProject(name string) error {
 }
 
 // DeleteProject removes a project directory and all its worktrees.
+// It first runs 'git worktree remove' for each worktree so the main repo
+// in ~/workspace does not retain orphaned worktree entries.
 func (m *Manager) DeleteProject(name string) error {
 	dir := m.projectDir(name)
+	repos, err := m.ListProjectRepos(name)
+	if err != nil {
+		return err
+	}
+	for _, repoName := range repos {
+		if err := m.RemoveRepo(name, repoName); err != nil {
+			return fmt.Errorf("remove worktree %s: %w", repoName, err)
+		}
+	}
 	return os.RemoveAll(dir)
 }
 
