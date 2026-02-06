@@ -1,8 +1,9 @@
 # Embedded PTY/Shell for Agent Interaction
 
 **Date**: 2026-02-06
-**Status**: accepted
-**Task**: devdeploy-awh.1
+**Status**: deprecated (superseded by tmux pane orchestration)
+**Task**: devdeploy-awh.1 (closed)
+**Superseded by**: devdeploy-bgt (tmux pane orchestration)
 
 ## Context
 
@@ -21,11 +22,14 @@ The previous agent flow used a `ProgressWindow` overlay that displayed `progress
    - Displays PTY output in a viewport with scrollback
    - Esc dismisses (does not pass through to shell)
 
-3. **RunAgentMsg wiring** — Replaced `ProgressWindow` + `AgentRunner.Run` with `ShellView` + PTY. The shell runs in the project directory; future work (devdeploy-awh.3) will wire agent context (plan, design) into the flow.
+3. **RunAgentMsg wiring** — Replaced `ProgressWindow` + `AgentRunner.Run` with `ShellView` + PTY. The shell runs in the project directory.
 
 ## Consequences
 
 - Engineers get an interactive shell when running SPC a a from project detail
 - PTY interface allows swapping libraries or mocking for tests
 - ProgressWindow and StubRunner remain in codebase for potential future use (e.g. non-interactive agent runs)
-- Non-SPC escape chord (devdeploy-awh.2) will provide a dedicated exit key to avoid accidental Esc
+
+## Deprecation (2026-02-06)
+
+This approach is **deprecated**. Use **tmux pane orchestration** (devdeploy-bgt) instead: app runs in one pane, creates shells via `tmux split-window`. See devdeploy-bgt epic.

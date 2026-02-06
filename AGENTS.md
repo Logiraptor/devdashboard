@@ -4,6 +4,8 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 
 ## Quick Reference
 
+**Agent shell work**: Use epic `devdeploy-bgt` (tmux pane orchestration). `devdeploy-awh` is closed and superseded.
+
 ```bash
 bd ready              # Find available work
 bd show <id>          # View issue details

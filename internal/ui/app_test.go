@@ -411,7 +411,7 @@ func TestAgentProgressVisible(t *testing.T) {
 }
 
 // TestAgentShell_EscDismisses validates that Esc dismisses the ShellView overlay.
-// Part of devdeploy-awh.1 (embedded PTY/shell).
+// ShellView will be replaced by tmux pane orchestration (devdeploy-bgt).
 func TestAgentShell_EscDismisses(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
