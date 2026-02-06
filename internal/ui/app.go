@@ -7,7 +7,6 @@ import (
 	"devdeploy/internal/artifact"
 	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
-	"devdeploy/internal/pty"
 	"devdeploy/internal/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -74,7 +73,6 @@ type AppModel struct {
 	ArtifactStore   *artifact.Store
 	ProjectManager  *project.Manager
 	AgentRunner     agent.Runner
-	PTYRunner       pty.Runner
 	Overlays        OverlayStack
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
@@ -411,7 +409,6 @@ func NewAppModel() *AppModel {
 		ArtifactStore:  store,
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
-		PTYRunner:      &pty.CreackPTY{},
 	}
 }
 

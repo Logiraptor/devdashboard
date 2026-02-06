@@ -9,7 +9,6 @@ import (
 	"devdeploy/internal/agent"
 	"devdeploy/internal/artifact"
 	"devdeploy/internal/project"
-	"devdeploy/internal/pty"
 )
 
 func TestProjectKeybinds_ShowCreateProjectMsg(t *testing.T) {
@@ -382,7 +381,6 @@ func TestRunAgentMsg_TmuxSplitPane_NoOverlay(t *testing.T) {
 		ArtifactStore:  store,
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
-		PTYRunner:      &pty.CreackPTY{},
 	}
 	adapter := a.AsTeaModel().(*appModelAdapter)
 
