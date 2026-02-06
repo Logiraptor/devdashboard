@@ -83,9 +83,17 @@ func (r *KeybindRegistry) Hints() map[string]string {
 	return out
 }
 
+// firstLevelSubmenuLabel maps first-level keys that have sub-bindings to a generic display label.
+// Used to avoid showing a specific sub-action (e.g. "Delete project") when the key opens a submenu.
+var firstLevelSubmenuLabel = map[string]string{
+	"p": "Project",
+	"a": "Agent",
+}
+
 // LeaderHints returns hints for SPC-prefixed bindings, filtered by mode.
 // When currentSeq is empty, returns first-level hints (e.g. "q", "p", "a").
 // When currentSeq is e.g. "SPC p", returns next-level hints (e.g. "c", "d" on Dashboard; "a", "r" on Project detail).
+// For first-level keys with sub-bindings (HasPrefix), shows a generic label (e.g. "Project") instead of a specific sub-action.
 // Bindings with no mode filter apply to all modes.
 func (r *KeybindRegistry) LeaderHints(currentSeq string, mode AppMode) map[string]string {
 	out := make(map[string]string)
@@ -106,10 +114,18 @@ func (r *KeybindRegistry) LeaderHints(currentSeq string, mode AppMode) map[strin
 		if len(parts) > 0 {
 			key = parts[0]
 		}
-		if d, ok := r.descriptions[seq]; ok && d != "" {
-			out[key] = d
+		if r.HasPrefix(strings.TrimSuffix(prefix, " ") + " " + key) {
+			if label, ok := firstLevelSubmenuLabel[key]; ok {
+				out[key] = label
+			} else {
+				out[key] = key + "…"
+			}
 		} else {
-			out[key] = seq
+			if d, ok := r.descriptions[seq]; ok && d != "" {
+				out[key] = d
+			} else {
+				out[key] = seq
+			}
 		}
 	}
 	return out

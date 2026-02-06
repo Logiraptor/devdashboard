@@ -44,6 +44,21 @@ func TestKeybindRegistry_LeaderHints(t *testing.T) {
 	}
 }
 
+func TestKeybindRegistry_LeaderHintsFirstLevelSubmenu(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
+	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p d", tea.Quit, "Delete project", []AppMode{ModeDashboard})
+
+	hints := reg.LeaderHints("", ModeDashboard)
+	if hints["p"] != "Project" {
+		t.Errorf("p: expected 'Project' (generic submenu label), got %q", hints["p"])
+	}
+	if hints["q"] != "Quit" {
+		t.Errorf("q: expected 'Quit', got %q", hints["q"])
+	}
+}
+
 func TestKeybindRegistry_LeaderHintsFilteredByMode(t *testing.T) {
 	reg := NewKeybindRegistry()
 	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
