@@ -21,6 +21,12 @@ type SelectProjectMsg struct {
 // RunAgentMsg is sent when user triggers agent run (SPC a a).
 type RunAgentMsg struct{}
 
+// HideAgentPaneMsg hides the agent pane (break-pane to background window).
+type HideAgentPaneMsg struct{}
+
+// ShowAgentPaneMsg shows the agent pane (join-pane back into current window).
+type ShowAgentPaneMsg struct{}
+
 // ProjectsLoadedMsg is sent when projects are loaded from disk.
 type ProjectsLoadedMsg struct {
 	Projects []ProjectSummary
@@ -77,6 +83,7 @@ type AppModel struct {
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
 	agentCancelFunc func() // cancels in-flight agent run; nil when none
+	agentPaneID     string // last agent pane from tmux.SplitPane; used for hide/show
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -240,11 +247,36 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RunAgentMsg:
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.ArtifactStore != nil {
 			projectDir := a.ArtifactStore.ProjectDir(a.Detail.ProjectName)
-			if _, err := tmux.SplitPane(projectDir); err != nil {
+			paneID, err := tmux.SplitPane(projectDir)
+			if err != nil {
 				a.Status = fmt.Sprintf("Agent shell: %v", err)
 				a.StatusIsError = true
+			} else {
+				a.agentPaneID = paneID
 			}
 			// No overlay: user sees new tmux pane with shell
+		}
+		return a, nil
+	case HideAgentPaneMsg:
+		if a.agentPaneID != "" {
+			if err := tmux.BreakPane(a.agentPaneID); err != nil {
+				a.Status = fmt.Sprintf("Hide pane: %v", err)
+				a.StatusIsError = true
+				a.agentPaneID = "" // pane may be gone
+			}
+		} else {
+			a.Status = "No agent pane to hide"
+		}
+		return a, nil
+	case ShowAgentPaneMsg:
+		if a.agentPaneID != "" {
+			if err := tmux.JoinPane(a.agentPaneID); err != nil {
+				a.Status = fmt.Sprintf("Show pane: %v", err)
+				a.StatusIsError = true
+				a.agentPaneID = "" // pane may be gone
+			}
+		} else {
+			a.Status = "No agent pane to show"
 		}
 		return a, nil
 	case SelectProjectMsg:
@@ -397,6 +429,8 @@ func NewAppModel() *AppModel {
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
 	reg.BindWithDescForMode("SPC a a", func() tea.Msg { return RunAgentMsg{} }, "Agent run", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC a h", func() tea.Msg { return HideAgentPaneMsg{} }, "Hide agent pane", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC a s", func() tea.Msg { return ShowAgentPaneMsg{} }, "Show agent pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})

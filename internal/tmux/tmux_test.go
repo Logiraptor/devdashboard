@@ -47,3 +47,21 @@ func TestSplitPane_InvalidDir(t *testing.T) {
 		t.Error("expected error for nonexistent dir")
 	}
 }
+
+func TestBreakPane_JoinPane(t *testing.T) {
+	if os.Getenv("TMUX") == "" {
+		t.Skip("Skipping tmux test: not running inside tmux")
+	}
+	workDir := t.TempDir()
+	paneID, err := SplitPane(workDir)
+	if err != nil {
+		t.Fatalf("SplitPane: %v", err)
+	}
+	defer KillPane(paneID)
+	if err := BreakPane(paneID); err != nil {
+		t.Fatalf("BreakPane: %v", err)
+	}
+	if err := JoinPane(paneID); err != nil {
+		t.Fatalf("JoinPane: %v", err)
+	}
+}

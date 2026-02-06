@@ -45,3 +45,27 @@ func SendKeys(paneID, keys string) error {
 	}
 	return nil
 }
+
+// BreakPane moves the pane into its own window (background). Use -d so the new
+// window does not become current. The pane ID remains valid for JoinPane.
+func BreakPane(paneID string) error {
+	cmd := exec.Command("tmux", "break-pane", "-d", "-t", paneID)
+	var out bytes.Buffer
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tmux break-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
+
+// JoinPane joins the source pane back into the current window. Target "." means
+// the current pane (where the app runs). Use -d so focus stays on the app pane.
+func JoinPane(paneID string) error {
+	cmd := exec.Command("tmux", "join-pane", "-d", "-s", paneID, "-t", ".")
+	var out bytes.Buffer
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tmux join-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
