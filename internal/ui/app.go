@@ -1,14 +1,13 @@
 package ui
 
 import (
-	"context"
 	"fmt"
-	"path/filepath"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/artifact"
 	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
+	"devdeploy/internal/pty"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -74,6 +73,7 @@ type AppModel struct {
 	ArtifactStore   *artifact.Store
 	ProjectManager  *project.Manager
 	AgentRunner     agent.Runner
+	PTYRunner       pty.Runner
 	Overlays        OverlayStack
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
@@ -234,20 +234,24 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.agentCancelFunc = nil
 					return a, nil // Don't pop yet; user will see Aborted, then Esc again to dismiss
 				}
+				// ShellView: close PTY before popping
+				if sv, isShell := top.View.(*ShellView); isShell {
+					_ = sv.Close()
+				}
 			}
 		}
 		a.Overlays.Pop()
 		return a, nil
 	case RunAgentMsg:
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.AgentRunner != nil && a.ArtifactStore != nil {
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.ArtifactStore != nil {
 			projectDir := a.ArtifactStore.ProjectDir(a.Detail.ProjectName)
-			planPath := filepath.Join(projectDir, "plan.md")
-			designPath := filepath.Join(projectDir, "design.md")
-			progWin := NewProgressWindow()
-			ctx, cancel := context.WithCancel(context.Background())
-			a.agentCancelFunc = cancel
-			a.Overlays.Push(Overlay{View: progWin, Dismiss: "esc"})
-			return a, tea.Batch(progWin.Init(), a.AgentRunner.Run(ctx, projectDir, planPath, designPath))
+			ptyRunner := a.PTYRunner
+			if ptyRunner == nil {
+				ptyRunner = &pty.CreackPTY{}
+			}
+			shellView := NewShellView(ptyRunner, projectDir)
+			a.Overlays.Push(Overlay{View: shellView, Dismiss: "esc"})
+			return a, shellView.Init()
 		}
 		return a, nil
 	case SelectProjectMsg:
@@ -412,6 +416,7 @@ func NewAppModel() *AppModel {
 		ArtifactStore:  store,
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
+		PTYRunner:      &pty.CreackPTY{},
 	}
 }
 
