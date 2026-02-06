@@ -66,7 +66,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (a *appModelAdapter) View() string {
-	return a.currentView().View()
+	base := a.currentView().View()
+	if a.KeyHandler != nil && a.KeyHandler.LeaderWaiting {
+		base += "\n" + RenderKeybindHelp(a.KeyHandler.Registry)
+	}
+	return base
 }
 
 func (a *appModelAdapter) currentView() View {
@@ -100,9 +104,9 @@ func (a *appModelAdapter) setCurrentView(v View) {
 // NewAppModel creates the root application model.
 func NewAppModel() *AppModel {
 	reg := NewKeybindRegistry()
-	reg.Bind("q", tea.Quit)
-	reg.Bind("ctrl+c", tea.Quit)
-	reg.Bind("SPC q", tea.Quit) // spacemacs-style quit
+	reg.BindWithDesc("q", tea.Quit, "Quit")
+	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
+	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
 	return &AppModel{
 		Mode:       ModeDashboard,
 		Dashboard:  NewDashboardView(),

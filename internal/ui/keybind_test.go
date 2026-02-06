@@ -23,6 +23,27 @@ func TestKeybindRegistry_BindLookup(t *testing.T) {
 	}
 }
 
+func TestKeybindRegistry_LeaderHints(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
+	reg.BindWithDesc("SPC f", tea.Quit, "Find") // placeholder
+	reg.Bind("SPC x", tea.Quit)                 // no desc, uses seq
+
+	hints := reg.LeaderHints()
+	if len(hints) != 3 {
+		t.Errorf("expected 3 leader hints, got %d", len(hints))
+	}
+	if hints["q"] != "Quit" {
+		t.Errorf("q: expected 'Quit', got %q", hints["q"])
+	}
+	if hints["f"] != "Find" {
+		t.Errorf("f: expected 'Find', got %q", hints["f"])
+	}
+	if hints["x"] != "SPC x" {
+		t.Errorf("x: expected 'SPC x' (fallback), got %q", hints["x"])
+	}
+}
+
 func TestKeyHandler_LeaderKey(t *testing.T) {
 	reg := NewKeybindRegistry()
 	var executed bool

@@ -10,20 +10,32 @@ import (
 // Key sequences use spacemacs-style notation: "SPC" for space, "SPC f" for SPC then f.
 // Single keys: "j", "k", "esc", "ctrl+c", "enter".
 type KeybindRegistry struct {
-	bindings map[string]tea.Cmd
+	bindings     map[string]tea.Cmd
+	descriptions map[string]string
 }
 
 // NewKeybindRegistry creates an empty registry.
 func NewKeybindRegistry() *KeybindRegistry {
 	return &KeybindRegistry{
-		bindings: make(map[string]tea.Cmd),
+		bindings:     make(map[string]tea.Cmd),
+		descriptions: make(map[string]string),
 	}
 }
 
 // Bind registers a key sequence to a command.
 // Overwrites any existing binding for the sequence.
+// Use BindWithDesc for human-readable hints in the help view.
 func (r *KeybindRegistry) Bind(seq string, cmd tea.Cmd) {
-	r.bindings[normalizeSeq(seq)] = cmd
+	r.BindWithDesc(seq, cmd, "")
+}
+
+// BindWithDesc registers a key sequence with a description for the help view.
+func (r *KeybindRegistry) BindWithDesc(seq string, cmd tea.Cmd, desc string) {
+	n := normalizeSeq(seq)
+	r.bindings[n] = cmd
+	if desc != "" {
+		r.descriptions[n] = desc
+	}
 }
 
 // Lookup returns the command for a key sequence, or nil if not bound.
@@ -31,12 +43,36 @@ func (r *KeybindRegistry) Lookup(seq string) tea.Cmd {
 	return r.bindings[normalizeSeq(seq)]
 }
 
-// Hints returns all bound sequences for display (Phase 4 will use this).
+// Hints returns all bound sequences with descriptions for display.
+// Keys are normalized sequences; values are descriptions (or the sequence if none set).
 func (r *KeybindRegistry) Hints() map[string]string {
 	out := make(map[string]string)
 	for seq, cmd := range r.bindings {
 		if cmd != nil {
-			out[seq] = "bound"
+			if d, ok := r.descriptions[seq]; ok && d != "" {
+				out[seq] = d
+			} else {
+				out[seq] = seq
+			}
+		}
+	}
+	return out
+}
+
+// LeaderHints returns hints for SPC-prefixed bindings only.
+// Keys are the part after "SPC " (e.g. "q"); values are descriptions.
+// Used when rendering the post-SPC help view.
+func (r *KeybindRegistry) LeaderHints() map[string]string {
+	out := make(map[string]string)
+	prefix := "SPC "
+	for seq, cmd := range r.bindings {
+		if cmd != nil && strings.HasPrefix(seq, prefix) {
+			suffix := strings.TrimPrefix(seq, prefix)
+			if d, ok := r.descriptions[seq]; ok && d != "" {
+				out[suffix] = d
+			} else {
+				out[suffix] = seq
+			}
 		}
 	}
 	return out
