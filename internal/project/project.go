@@ -268,3 +268,26 @@ func (m *Manager) projectDir(name string) string {
 	normalized := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 	return filepath.Join(m.projectsBase, normalized)
 }
+
+// artifactFiles are the well-known artifact filenames per project layout (plan.md, design.md).
+var artifactFiles = []string{"plan.md", "design.md"}
+
+// CountArtifacts returns the number of artifact files present in the project directory.
+func (m *Manager) CountArtifacts(projectName string) int {
+	dir := m.projectDir(projectName)
+	count := 0
+	for _, name := range artifactFiles {
+		path := filepath.Join(dir, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			count++
+		}
+	}
+	return count
+}
+
+// CountPRs returns the number of open PRs across the project's repos.
+// Phase 6+ will integrate with PR API (e.g. gh pr list); for now returns 0.
+func (m *Manager) CountPRs(projectName string) int {
+	// TODO(Phase 6): integrate with gh pr list or similar per repo
+	return 0
+}

@@ -350,8 +350,8 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 			projects[i] = ProjectSummary{
 				Name:      info.Name,
 				RepoCount: info.RepoCount,
-				PRCount:   0, // TODO: Phase 6+
-				Artifacts: 0, // Could count plan.md, design.md
+				PRCount:   m.CountPRs(info.Name),
+				Artifacts: m.CountArtifacts(info.Name),
 				Selected:  false, // Dashboard uses Selected index
 			}
 		}
