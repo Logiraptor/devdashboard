@@ -3,6 +3,7 @@ package project
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,17 @@ const (
 	// DefaultWorkspace is the default path for listing available repos.
 	DefaultWorkspace = "workspace"
 )
+
+const alnumChars = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+// randAlnum returns n random alphanumeric (lowercase) characters.
+func randAlnum(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = alnumChars[rand.Intn(len(alnumChars))]
+	}
+	return string(b)
+}
 
 // Manager handles project CRUD and worktree operations.
 type Manager struct {
@@ -148,7 +160,9 @@ func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
 }
 
 // AddRepo creates a worktree in the project dir from a repo in ~/workspace.
-// It creates a new branch named devdeploy/<project> based on main, ensuring it's up to date.
+// It creates a new branch named devdeploy/<project>-<3 random alphanumeric chars> based on main,
+// ensuring it's up to date. The random suffix reduces collisions when multiple devdeploy
+// instances or users add the same project.
 // Does not change the main repo's current branch.
 // Hooks are disabled during worktree add/merge to avoid repo-specific hooks (e.g. beads)
 // from failing and blocking the operation.
@@ -158,7 +172,8 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	if _, err := os.Stat(srcRepo); err != nil {
 		return fmt.Errorf("source repo %s: %w", srcRepo, err)
 	}
-	branch := "devdeploy/" + strings.ToLower(strings.ReplaceAll(projectName, " ", "-"))
+	base := strings.ToLower(strings.ReplaceAll(projectName, " ", "-"))
+	branch := "devdeploy/" + base + "-" + randAlnum(3)
 
 	// Empty dir for core.hooksPath to disable hooks (avoids post-checkout etc. failing)
 	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
