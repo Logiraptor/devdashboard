@@ -34,6 +34,8 @@ Files are named: `YYYY-MM-DD-topic-name.md`
 
 ## Entries
 
+**When adding a new dev-log entry, add it to this table** (sorted by date, oldest first).
+
 | Date | Title |
 |------|-------|
 | 2025-02-06 | [DevDeploy: Vision and Long-Term Roadmap](2025-02-06-devdeploy-vision-and-roadmap.md) |

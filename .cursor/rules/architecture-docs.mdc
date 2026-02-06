@@ -45,3 +45,7 @@ What are the tradeoffs and implications?
 ## File Naming
 
 Use descriptive names: `dev-log/YYYY-MM-DD-topic-name.md`
+
+## Index Maintenance
+
+When creating a new dev-log entry, **always** add it to the `dev-log/README.md` Entries table. Keep entries sorted by date (oldest first). Use the first heading (`# Title`) as the link text.
