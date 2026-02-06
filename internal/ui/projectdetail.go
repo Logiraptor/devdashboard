@@ -38,10 +38,8 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "esc", "q":
+		case "esc":
 			return p, nil // Caller handles back navigation
-		case "ctrl+c":
-			return p, tea.Quit
 		}
 	}
 	return p, nil

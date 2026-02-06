@@ -10,9 +10,10 @@ type SelectProjectMsg struct {
 // AppModel is the root model implementing Option E (Dashboard + Detail).
 // It switches between Dashboard and ProjectDetail modes.
 type AppModel struct {
-	Mode     AppMode
-	Dashboard *DashboardView
-	Detail   *ProjectDetailView
+	Mode       AppMode
+	Dashboard  *DashboardView
+	Detail     *ProjectDetailView
+	KeyHandler *KeyHandler
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -36,6 +37,13 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.Detail = NewProjectDetailView(msg.Name)
 		return a, a.Detail.Init()
 	case tea.KeyMsg:
+		// Keybind system (leader key, SPC-prefixed commands)
+		if a.KeyHandler != nil {
+			if consumed, keyCmd := a.KeyHandler.Handle(msg); consumed {
+				return a, keyCmd
+			}
+		}
+		// App-level navigation
 		if a.Mode == ModeProjectDetail && msg.String() == "esc" {
 			a.Mode = ModeDashboard
 			a.Detail = nil
@@ -91,10 +99,15 @@ func (a *appModelAdapter) setCurrentView(v View) {
 
 // NewAppModel creates the root application model.
 func NewAppModel() *AppModel {
+	reg := NewKeybindRegistry()
+	reg.Bind("q", tea.Quit)
+	reg.Bind("ctrl+c", tea.Quit)
+	reg.Bind("SPC q", tea.Quit) // spacemacs-style quit
 	return &AppModel{
-		Mode:     ModeDashboard,
-		Dashboard: NewDashboardView(),
-		Detail:   nil,
+		Mode:       ModeDashboard,
+		Dashboard:  NewDashboardView(),
+		Detail:     nil,
+		KeyHandler: NewKeyHandler(reg),
 	}
 }
 

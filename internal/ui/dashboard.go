@@ -62,10 +62,26 @@ func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 				d.Projects[d.Selected].Selected = true
 			}
 			return d, nil
+		case "g":
+			// vim: gg = go to top (first key of 'g' sequence; second 'g' would be gg)
+			// For now single 'g' goes to top; Phase 4 could add gg
+			if d.Selected != 0 {
+				d.Projects[d.Selected].Selected = false
+				d.Selected = 0
+				d.Projects[d.Selected].Selected = true
+			}
+			return d, nil
+		case "G":
+			// vim: G = go to bottom
+			last := len(d.Projects) - 1
+			if last >= 0 && d.Selected != last {
+				d.Projects[d.Selected].Selected = false
+				d.Selected = last
+				d.Projects[d.Selected].Selected = true
+			}
+			return d, nil
 		case "enter":
 			return d, nil // Caller handles navigation to detail
-		case "q", "ctrl+c":
-			return d, tea.Quit
 		}
 	}
 	return d, nil
