@@ -8,6 +8,7 @@ import (
 	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
 	"devdeploy/internal/pty"
+	"devdeploy/internal/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -234,10 +235,6 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.agentCancelFunc = nil
 					return a, nil // Don't pop yet; user will see Aborted, then Esc again to dismiss
 				}
-				// ShellView: close PTY before popping
-				if sv, isShell := top.View.(*ShellView); isShell {
-					_ = sv.Close()
-				}
 			}
 		}
 		a.Overlays.Pop()
@@ -245,13 +242,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RunAgentMsg:
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.ArtifactStore != nil {
 			projectDir := a.ArtifactStore.ProjectDir(a.Detail.ProjectName)
-			ptyRunner := a.PTYRunner
-			if ptyRunner == nil {
-				ptyRunner = &pty.CreackPTY{}
+			if _, err := tmux.SplitPane(projectDir); err != nil {
+				a.Status = fmt.Sprintf("Agent shell: %v", err)
+				a.StatusIsError = true
 			}
-			shellView := NewShellView(ptyRunner, projectDir)
-			a.Overlays.Push(Overlay{View: shellView, Dismiss: "esc"})
-			return a, shellView.Init()
+			// No overlay: user sees new tmux pane with shell
 		}
 		return a, nil
 	case SelectProjectMsg:

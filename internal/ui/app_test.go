@@ -360,9 +360,9 @@ func TestSPCKeybindCommandsExecute(t *testing.T) {
 	}
 }
 
-// TestAgentProgressVisible validates that agent progress events are visible in the ProgressWindow.
-// Part of devdeploy-i1u.10 validation.
-func TestAgentProgressVisible(t *testing.T) {
+// TestRunAgentMsg_TmuxSplitPane_NoOverlay validates that RunAgentMsg uses tmux split-window
+// instead of pushing a ShellView overlay (devdeploy-bgt.3).
+func TestRunAgentMsg_TmuxSplitPane_NoOverlay(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
 	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
@@ -386,78 +386,10 @@ func TestAgentProgressVisible(t *testing.T) {
 	}
 	adapter := a.AsTeaModel().(*appModelAdapter)
 
-	// Run agent -> ShellView overlay (PTY-backed shell)
-	_, cmd := adapter.Update(RunAgentMsg{})
-	if a.Overlays.Len() != 1 {
-		t.Fatalf("expected 1 overlay (ShellView) after RunAgentMsg, got %d", a.Overlays.Len())
-	}
-	top, _ := a.Overlays.Peek()
-	if _, ok := top.View.(*ShellView); !ok {
-		t.Fatalf("expected ShellView overlay, got %T", top.View)
-	}
-
-	// Run Init cmd to start PTY read loop; shell will output prompt
-	if cmd != nil {
-		msg := cmd()
-		if msg != nil {
-			_, _ = adapter.Update(msg)
-		}
-	}
-
-	view := adapter.View()
-	if !strings.Contains(view, "Agent shell") {
-		t.Errorf("View should contain 'Agent shell' header, got:\n%s", view)
-	}
-}
-
-// TestAgentShell_EscDismisses validates that Esc dismisses the ShellView overlay.
-// ShellView will be replaced by tmux pane orchestration (devdeploy-bgt).
-func TestAgentShell_EscDismisses(t *testing.T) {
-	dir := t.TempDir()
-	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
-	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
-
-	store, err := artifact.NewStore()
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	projMgr := project.NewManager(store.BaseDir(), dir)
-	_ = projMgr.CreateProject("test-proj")
-
-	a := &AppModel{
-		Mode:           ModeProjectDetail,
-		Dashboard:      NewDashboardView(),
-		Detail:         NewProjectDetailView("test-proj"),
-		KeyHandler:     NewKeyHandler(NewKeybindRegistry()),
-		ArtifactStore:  store,
-		ProjectManager: projMgr,
-		AgentRunner:    &agent.StubRunner{},
-		PTYRunner:      &pty.CreackPTY{},
-	}
-	adapter := a.AsTeaModel().(*appModelAdapter)
-
-	// Run agent -> ShellView overlay
-	_, cmd := adapter.Update(RunAgentMsg{})
-	if cmd != nil {
-		msg := cmd()
-		if msg != nil {
-			_, _ = adapter.Update(msg)
-		}
-	}
-	if a.Overlays.Len() != 1 {
-		t.Fatalf("expected 1 overlay after RunAgentMsg, got %d", a.Overlays.Len())
-	}
-
-	// Esc on ShellView -> overlay returns DismissModalMsg cmd
-	_, cmd = adapter.Update(keyMsg("esc"))
-	if cmd == nil {
-		t.Fatal("expected overlay to return DismissModalMsg cmd on Esc")
-	}
-	// Process DismissModalMsg -> app pops overlay and closes PTY
-	_, _ = adapter.Update(cmd())
-
+	// Run agent -> tmux.SplitPane(projectDir); no overlay pushed
+	_, _ = adapter.Update(RunAgentMsg{})
 	if a.Overlays.Len() != 0 {
-		t.Errorf("expected overlay to be dismissed after Esc, got %d overlays", a.Overlays.Len())
+		t.Fatalf("expected no overlay after RunAgentMsg (tmux pane), got %d", a.Overlays.Len())
 	}
 }
 
