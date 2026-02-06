@@ -72,19 +72,71 @@ func TestProjectKeybinds_ShowDeleteProjectMsg(t *testing.T) {
 	a.Dashboard.Selected = 0
 	adapter := &appModelAdapter{AppModel: a}
 
-	// SPC p d in Dashboard with project: should delete
+	// SPC p d in Dashboard with project: should show confirmation modal
 	_, cmd := adapter.Update(ShowDeleteProjectMsg{})
-	if cmd == nil {
-		t.Error("expected loadProjectsCmd after delete")
+	if a.Overlays.Len() != 1 {
+		t.Errorf("expected 1 overlay (confirmation modal) after ShowDeleteProjectMsg, got %d", a.Overlays.Len())
 	}
-	// Run the cmd to refresh
+	top, _ := a.Overlays.Peek()
+	if _, ok := top.View.(*DeleteProjectConfirmModal); !ok {
+		t.Errorf("expected DeleteProjectConfirmModal on overlay, got %T", top.View)
+	}
+	// Simulate user pressing Enter to confirm
+	_, cmd = adapter.Update(keyMsg("enter"))
 	if cmd != nil {
-		cmd()
+		msg := cmd()
+		_, cmd = adapter.Update(msg)
+		if cmd != nil {
+			cmd()
+		}
 	}
 	// Verify project was deleted
 	projects, _ := projMgr.ListProjects()
 	if len(projects) != 0 {
 		t.Errorf("expected 0 projects after delete, got %d", len(projects))
+	}
+}
+
+func TestProjectKeybinds_ShowDeleteProjectMsg_CancelWithEsc(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
+	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
+
+	store, err := artifact.NewStore()
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	projMgr := project.NewManager(store.BaseDir(), dir)
+	_ = projMgr.CreateProject("test-proj")
+
+	a := &AppModel{
+		Mode:           ModeDashboard,
+		Dashboard:      NewDashboardView(),
+		KeyHandler:     NewKeyHandler(NewKeybindRegistry()),
+		ArtifactStore:  store,
+		ProjectManager: projMgr,
+		AgentRunner:    &agent.StubRunner{},
+	}
+	a.Dashboard.Projects = []ProjectSummary{{Name: "test-proj", Selected: false}}
+	a.Dashboard.Selected = 0
+	adapter := &appModelAdapter{AppModel: a}
+
+	// SPC p d -> confirmation modal
+	_, _ = adapter.Update(ShowDeleteProjectMsg{})
+	if a.Overlays.Len() != 1 {
+		t.Fatalf("expected 1 overlay after ShowDeleteProjectMsg, got %d", a.Overlays.Len())
+	}
+	// Esc to cancel
+	_, cmd := adapter.Update(keyMsg("esc"))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+	if a.Overlays.Len() != 0 {
+		t.Errorf("expected 0 overlays after Esc, got %d", a.Overlays.Len())
+	}
+	projects, _ := projMgr.ListProjects()
+	if len(projects) != 1 {
+		t.Errorf("project should still exist after cancel, got %d projects", len(projects))
 	}
 }
 

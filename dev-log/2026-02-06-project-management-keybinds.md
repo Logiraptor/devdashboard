@@ -42,6 +42,7 @@ Phase 5.1 (Artifact store) already loads plan/design from disk. The dashboard st
 ### Modals
 
 - **Create project**: Text input; Enter creates, Esc cancels
+- **Delete project**: Confirmation modal; shows project name; y/Enter confirms, Esc cancels (Phase 7 destructive-action principle)
 - **Add repo**: List picker of ~/workspace repos; Enter adds worktree, Esc cancels
 - **Remove repo**: List picker of project repos; Enter removes worktree, Esc cancels
 
@@ -49,6 +50,7 @@ Phase 5.1 (Artifact store) already loads plan/design from disk. The dashboard st
 
 - `internal/project/project.go`: Manager with CRUD and worktree ops
 - `internal/ui/modal_create_project.go`: CreateProjectModal (bubbles textinput)
+- `internal/ui/modal_delete_project.go`: DeleteProjectConfirmModal (confirmation)
 - `internal/ui/modal_repo_picker.go`: RepoPickerModal (bubbles list)
 - `internal/ui/keybind.go`: HasPrefix, multi-level leader, LeaderHints(prefix)
 - `internal/ui/app.go`: Overlay stack, message handlers, loadProjectsCmd

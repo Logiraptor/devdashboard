@@ -122,7 +122,14 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case DeleteProjectMsg:
 		if a.ProjectManager != nil && msg.Name != "" {
-			_ = a.ProjectManager.DeleteProject(msg.Name)
+			if err := a.ProjectManager.DeleteProject(msg.Name); err != nil {
+				a.Status = fmt.Sprintf("Delete project: %v", err)
+				a.StatusIsError = true
+			} else {
+				a.Status = "Project deleted"
+				a.StatusIsError = false
+			}
+			a.Overlays.Pop()
 			return a, loadProjectsCmd(a.ProjectManager)
 		}
 		return a, nil
@@ -169,16 +176,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx := a.Dashboard.Selected
 			if idx >= 0 && idx < len(a.Dashboard.Projects) {
 				name := a.Dashboard.Projects[idx].Name
-				if a.ProjectManager != nil {
-					if err := a.ProjectManager.DeleteProject(name); err != nil {
-						a.Status = fmt.Sprintf("Delete project: %v", err)
-						a.StatusIsError = true
-					} else {
-						a.Status = "Project deleted"
-						a.StatusIsError = false
-					}
-					return a, loadProjectsCmd(a.ProjectManager)
-				}
+				modal := NewDeleteProjectConfirmModal(name)
+				a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+				return a, modal.Init()
 			}
 		}
 		return a, nil
