@@ -9,6 +9,10 @@ import (
 )
 
 func main() {
+	if os.Getenv("TMUX") == "" {
+		fmt.Fprintln(os.Stderr, "Run devdeploy inside tmux (e.g. `tmux new -s dev` then `devdeploy`)")
+		os.Exit(1)
+	}
 	model := ui.NewAppModel().AsTeaModel()
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
