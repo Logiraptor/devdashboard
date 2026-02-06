@@ -84,7 +84,14 @@ func (p *ProgressWindow) Update(msg tea.Msg) (View, tea.Cmd) {
 // View implements View.
 func (p *ProgressWindow) View() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	header := titleStyle.Render("Agent progress") + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("  Esc: abort")
+	hint := "Esc: abort"
+	if len(p.events) > 0 {
+		last := p.events[len(p.events)-1]
+		if last.Status == progress.StatusDone || last.Status == progress.StatusAborted {
+			hint = "Esc: close"
+		}
+	}
+	header := titleStyle.Render("Agent progress") + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("  "+hint)
 	return header + "\n" + p.viewport.View()
 }
 

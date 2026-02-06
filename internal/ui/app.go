@@ -224,12 +224,15 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case DismissModalMsg:
-		// If top overlay is ProgressWindow and we have an active agent run, cancel it first.
+		// If top overlay is ProgressWindow and we have an active agent run, cancel it
+		// but keep the overlay visible so the user can see the "Aborted" state.
+		// They press Esc again to dismiss after seeing it.
 		if a.Overlays.Len() > 0 {
 			if top, ok := a.Overlays.Peek(); ok {
 				if _, isProgress := top.View.(*ProgressWindow); isProgress && a.agentCancelFunc != nil {
 					a.agentCancelFunc()
 					a.agentCancelFunc = nil
+					return a, nil // Don't pop yet; user will see Aborted, then Esc again to dismiss
 				}
 			}
 		}
