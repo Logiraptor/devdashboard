@@ -9,22 +9,25 @@ import (
 
 // ProjectDetailView shows a selected project with repos, PRs, and artifact area (Option E).
 type ProjectDetailView struct {
-	ProjectName string
-	Repos       []string
-	PRs         []string
-	Artifact    string
+	ProjectName   string
+	Repos         []string
+	PRs           []string
+	PlanContent   string // from plan.md; empty = "no plan yet"
+	DesignContent string // from design.md; empty = "no design yet"
 }
 
 // Ensure ProjectDetailView implements View.
 var _ View = (*ProjectDetailView)(nil)
 
 // NewProjectDetailView creates a detail view for a project.
+// PlanContent and DesignContent can be set by the caller (from ArtifactStore).
 func NewProjectDetailView(name string) *ProjectDetailView {
 	return &ProjectDetailView{
-		ProjectName: name,
-		Repos:       []string{"repo-a", "repo-b"},
-		PRs:         []string{"#42 in review", "#41 merged", "#38 open"},
-		Artifact:    "Agent plan (excerpt) — [e] expand, [SPC] open",
+		ProjectName:   name,
+		Repos:         []string{"repo-a", "repo-b"},
+		PRs:           []string{"#42 in review", "#41 merged", "#38 open"},
+		PlanContent:   "",
+		DesignContent: "",
 	}
 }
 
@@ -65,7 +68,43 @@ func (p *ProjectDetailView) View() string {
 		b.WriteString("  • " + normalStyle.Render(pr) + "\n")
 	}
 
-	b.WriteString("\n" + artifactStyle.Render("Artifact: "+p.Artifact) + "\n")
+	planLabel := "Plan"
+	if p.PlanContent == "" {
+		planLabel = "Plan (no plan yet)"
+	}
+	designLabel := "Design"
+	if p.DesignContent == "" {
+		designLabel = "Design (no design yet)"
+	}
+	b.WriteString("\n" + sectionStyle.Render("Artifacts") + "\n")
+	b.WriteString("  " + artifactStyle.Render(planLabel+": ") + artifactContent(p.PlanContent) + "\n")
+	b.WriteString("  " + artifactStyle.Render(designLabel+": ") + artifactContent(p.DesignContent) + "\n")
 
 	return b.String()
+}
+
+func artifactContent(s string) string {
+	if s == "" {
+		return "(empty)"
+	}
+	lines := splitLines(s)
+	if len(lines) == 0 {
+		return "(empty)"
+	}
+	first := lines[0]
+	if len(first) > 80 {
+		first = first[:77] + "..."
+	}
+	return first
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
 }

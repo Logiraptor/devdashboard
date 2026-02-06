@@ -1,19 +1,33 @@
 package ui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"context"
+	"path/filepath"
+
+	"devdeploy/internal/agent"
+	"devdeploy/internal/artifact"
+	"devdeploy/internal/progress"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
 	Name string
 }
 
+// RunAgentMsg is sent when user triggers agent run (SPC a a).
+type RunAgentMsg struct{}
+
 // AppModel is the root model implementing Option E (Dashboard + Detail).
 // It switches between Dashboard and ProjectDetail modes.
 type AppModel struct {
-	Mode       AppMode
-	Dashboard  *DashboardView
-	Detail     *ProjectDetailView
-	KeyHandler *KeyHandler
+	Mode          AppMode
+	Dashboard     *DashboardView
+	Detail        *ProjectDetailView
+	KeyHandler    *KeyHandler
+	ArtifactStore *artifact.Store
+	AgentRunner   agent.Runner
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -32,9 +46,20 @@ func (a *appModelAdapter) Init() tea.Cmd {
 // Update implements tea.Model.
 func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case progress.Event:
+		// Phase 6 will display; for now we accept and discard
+		return a, nil
+	case RunAgentMsg:
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.AgentRunner != nil && a.ArtifactStore != nil {
+			projectDir := a.ArtifactStore.ProjectDir(a.Detail.ProjectName)
+			planPath := filepath.Join(projectDir, "plan.md")
+			designPath := filepath.Join(projectDir, "design.md")
+			return a, a.AgentRunner.Run(context.Background(), projectDir, planPath, designPath)
+		}
+		return a, nil
 	case SelectProjectMsg:
 		a.Mode = ModeProjectDetail
-		a.Detail = NewProjectDetailView(msg.Name)
+		a.Detail = a.newProjectDetailView(msg.Name)
 		return a, a.Detail.Init()
 	case tea.KeyMsg:
 		// Keybind system (leader key, SPC-prefixed commands)
@@ -101,17 +126,32 @@ func (a *appModelAdapter) setCurrentView(v View) {
 	}
 }
 
+// newProjectDetailView creates a detail view with artifact content from the store.
+func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
+	v := NewProjectDetailView(name)
+	if a.ArtifactStore != nil {
+		art := a.ArtifactStore.Load(name)
+		v.PlanContent = art.Plan
+		v.DesignContent = art.Design
+	}
+	return v
+}
+
 // NewAppModel creates the root application model.
 func NewAppModel() *AppModel {
+	store, _ := artifact.NewStore() // ignore err; store nil = no artifacts
 	reg := NewKeybindRegistry()
 	reg.BindWithDesc("q", tea.Quit, "Quit")
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
+	reg.BindWithDesc("SPC a a", func() tea.Msg { return RunAgentMsg{} }, "Agent run")
 	return &AppModel{
-		Mode:       ModeDashboard,
-		Dashboard:  NewDashboardView(),
-		Detail:     nil,
-		KeyHandler: NewKeyHandler(reg),
+		Mode:          ModeDashboard,
+		Dashboard:     NewDashboardView(),
+		Detail:        nil,
+		KeyHandler:    NewKeyHandler(reg),
+		ArtifactStore: store,
+		AgentRunner:   &agent.StubRunner{},
 	}
 }
 
