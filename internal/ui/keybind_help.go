@@ -9,8 +9,16 @@ import (
 
 // RenderKeybindHelp produces the transient help view shown after SPC.
 // Displays SPC-prefixed bindings in a compact bar format.
-func RenderKeybindHelp(reg *KeybindRegistry) string {
-	hints := reg.LeaderHints()
+// When keyHandler is in leader mode with a buffer (e.g. "SPC p"), shows next-level hints.
+func RenderKeybindHelp(keyHandler *KeyHandler) string {
+	if keyHandler == nil {
+		return ""
+	}
+	currentSeq := ""
+	if len(keyHandler.Buffer) > 0 {
+		currentSeq = strings.Join(keyHandler.Buffer, " ")
+	}
+	hints := keyHandler.Registry.LeaderHints(currentSeq)
 	if len(hints) == 0 {
 		return ""
 	}
@@ -45,7 +53,11 @@ func RenderKeybindHelp(reg *KeybindRegistry) string {
 		parts = append(parts, keyStyle.Render(k)+": "+descStyle.Render(desc))
 	}
 
-	content := labelStyle.Render("SPC") + " " + strings.Join(parts, "  ")
+	prefix := "SPC"
+	if currentSeq != "" {
+		prefix = currentSeq
+	}
+	content := labelStyle.Render(prefix) + " " + strings.Join(parts, "  ")
 	content += "  " + descStyle.Render("[esc] cancel")
 	return boxStyle.Render(content)
 }

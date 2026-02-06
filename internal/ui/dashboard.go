@@ -26,14 +26,10 @@ type DashboardView struct {
 // Ensure DashboardView implements View.
 var _ View = (*DashboardView)(nil)
 
-// NewDashboardView creates a dashboard with placeholder projects.
+// NewDashboardView creates a dashboard. Projects are loaded from disk via ProjectsLoadedMsg.
 func NewDashboardView() *DashboardView {
 	return &DashboardView{
-		Projects: []ProjectSummary{
-			{Name: "HA sampler querier", RepoCount: 2, PRCount: 12, Artifacts: 2, Selected: true},
-			{Name: "Project B", RepoCount: 1, PRCount: 5, Artifacts: 1, Selected: false},
-			{Name: "Project C", RepoCount: 3, PRCount: 8, Artifacts: 0, Selected: false},
-		},
+		Projects: nil,
 		Selected: 0,
 	}
 }
@@ -50,34 +46,23 @@ func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 		switch msg.String() {
 		case "j", "down":
 			if d.Selected < len(d.Projects)-1 {
-				d.Projects[d.Selected].Selected = false
 				d.Selected++
-				d.Projects[d.Selected].Selected = true
 			}
 			return d, nil
 		case "k", "up":
 			if d.Selected > 0 {
-				d.Projects[d.Selected].Selected = false
 				d.Selected--
-				d.Projects[d.Selected].Selected = true
 			}
 			return d, nil
 		case "g":
-			// vim: gg = go to top (first key of 'g' sequence; second 'g' would be gg)
-			// For now single 'g' goes to top; Phase 4 could add gg
 			if d.Selected != 0 {
-				d.Projects[d.Selected].Selected = false
 				d.Selected = 0
-				d.Projects[d.Selected].Selected = true
 			}
 			return d, nil
 		case "G":
-			// vim: G = go to bottom
 			last := len(d.Projects) - 1
 			if last >= 0 && d.Selected != last {
-				d.Projects[d.Selected].Selected = false
 				d.Selected = last
-				d.Projects[d.Selected].Selected = true
 			}
 			return d, nil
 		case "enter":
@@ -95,17 +80,18 @@ func (d *DashboardView) View() string {
 	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Projects") + " (3)\n")
+	count := len(d.Projects)
+	b.WriteString(titleStyle.Render("Projects") + fmt.Sprintf(" (%d)", count) + "\n")
 	b.WriteString(headerStyle.Render("Press [SPC] for commands") + "\n\n")
 
-	for _, p := range d.Projects {
+	for i, p := range d.Projects {
 		bullet := "  "
-		if p.Selected {
+		if i == d.Selected {
 			bullet = "● "
 		}
 		line := fmt.Sprintf("%s%s  %d repos, %d PRs, %d artifacts",
 			bullet, p.Name, p.RepoCount, p.PRCount, p.Artifacts)
-		if p.Selected {
+		if i == d.Selected {
 			b.WriteString(selectedStyle.Render(line) + "\n")
 		} else {
 			b.WriteString(normalStyle.Render(line) + "\n")

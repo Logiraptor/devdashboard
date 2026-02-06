@@ -43,6 +43,17 @@ func (r *KeybindRegistry) Lookup(seq string) tea.Cmd {
 	return r.bindings[normalizeSeq(seq)]
 }
 
+// HasPrefix returns true if any binding starts with seq and a space (i.e. more keys follow).
+func (r *KeybindRegistry) HasPrefix(seq string) bool {
+	prefix := normalizeSeq(seq) + " "
+	for k := range r.bindings {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Hints returns all bound sequences with descriptions for display.
 // Keys are normalized sequences; values are descriptions (or the sequence if none set).
 func (r *KeybindRegistry) Hints() map[string]string {
@@ -59,19 +70,28 @@ func (r *KeybindRegistry) Hints() map[string]string {
 	return out
 }
 
-// LeaderHints returns hints for SPC-prefixed bindings only.
-// Keys are the part after "SPC " (e.g. "q"); values are descriptions.
-// Used when rendering the post-SPC help view.
-func (r *KeybindRegistry) LeaderHints() map[string]string {
+// LeaderHints returns hints for SPC-prefixed bindings.
+// When currentSeq is empty, returns first-level hints (e.g. "q", "p", "a").
+// When currentSeq is e.g. "SPC p", returns next-level hints (e.g. "c", "d", "a", "r").
+func (r *KeybindRegistry) LeaderHints(currentSeq string) map[string]string {
 	out := make(map[string]string)
 	prefix := "SPC "
+	if currentSeq != "" {
+		prefix = normalizeSeq(currentSeq) + " "
+	}
 	for seq, cmd := range r.bindings {
 		if cmd != nil && strings.HasPrefix(seq, prefix) {
-			suffix := strings.TrimPrefix(seq, prefix)
+			rest := strings.TrimPrefix(seq, prefix)
+			// For display, take only the next key (e.g. "c" from "c" or "a a")
+			parts := strings.Fields(rest)
+			key := rest
+			if len(parts) > 0 {
+				key = parts[0]
+			}
 			if d, ok := r.descriptions[seq]; ok && d != "" {
-				out[suffix] = d
+				out[key] = d
 			} else {
-				out[suffix] = seq
+				out[key] = seq
 			}
 		}
 	}
@@ -139,13 +159,18 @@ func (h *KeyHandler) Handle(msg tea.KeyMsg) (consumed bool, cmd tea.Cmd) {
 		keyPart := keyToSeqPart(s)
 		h.Buffer = append(h.Buffer, keyPart)
 		seq := strings.Join(h.Buffer, " ")
-		h.LeaderWaiting = false
-		h.Buffer = nil
 
 		if c := h.Registry.Lookup(seq); c != nil {
+			h.LeaderWaiting = false
+			h.Buffer = nil
 			return true, c
 		}
-		// No binding: consume but do nothing (could show "unknown" in Phase 4)
+		// No exact match; stay in leader mode if a longer binding exists
+		if h.Registry.HasPrefix(seq) {
+			return true, nil
+		}
+		h.LeaderWaiting = false
+		h.Buffer = nil
 		return true, nil
 	}
 

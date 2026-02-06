@@ -39,6 +39,11 @@ func NewStore() (*Store, error) {
 	return &Store{baseDir: base}, nil
 }
 
+// BaseDir returns the projects root directory.
+func (s *Store) BaseDir() string {
+	return s.baseDir
+}
+
 // ProjectDir returns the absolute path for a project by name.
 func (s *Store) ProjectDir(name string) string {
 	// Normalize: lowercase, replace spaces with hyphens

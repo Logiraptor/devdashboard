@@ -1,5 +1,7 @@
 package ui
 
+import tea "github.com/charmbracelet/bubbletea"
+
 // Overlay represents a modal or popup view with a dismiss key.
 type Overlay struct {
 	View   View
@@ -42,4 +44,16 @@ func (s *OverlayStack) Peek() (Overlay, bool) {
 // Len returns the number of overlays in the stack.
 func (s *OverlayStack) Len() int {
 	return len(s.Stack)
+}
+
+// UpdateTop passes msg to the top overlay's Update and replaces its View with the result.
+// Returns the cmd from the overlay's Update. Caller must run the cmd.
+func (s *OverlayStack) UpdateTop(msg tea.Msg) (tea.Cmd, bool) {
+	if len(s.Stack) == 0 {
+		return nil, false
+	}
+	top := &s.Stack[len(s.Stack)-1]
+	newView, cmd := top.View.Update(msg)
+	top.View = newView
+	return cmd, true
 }

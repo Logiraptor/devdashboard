@@ -29,7 +29,7 @@ func TestKeybindRegistry_LeaderHints(t *testing.T) {
 	reg.BindWithDesc("SPC f", tea.Quit, "Find") // placeholder
 	reg.Bind("SPC x", tea.Quit)                 // no desc, uses seq
 
-	hints := reg.LeaderHints()
+	hints := reg.LeaderHints("")
 	if len(hints) != 3 {
 		t.Errorf("expected 3 leader hints, got %d", len(hints))
 	}
@@ -105,6 +105,50 @@ func TestKeyHandler_SingleKey(t *testing.T) {
 	consumed, cmd := h.Handle(keyMsg("q"))
 	if !consumed || cmd == nil {
 		t.Errorf("q: consumed=%v cmd=%v", consumed, cmd)
+	}
+}
+
+func TestKeyHandler_MultiLevelLeader(t *testing.T) {
+	reg := NewKeybindRegistry()
+	var executed string
+	reg.Bind("SPC p c", func() tea.Msg {
+		executed = "SPC p c"
+		return nil
+	})
+	reg.Bind("SPC p d", func() tea.Msg {
+		executed = "SPC p d"
+		return nil
+	})
+	h := NewKeyHandler(reg)
+
+	// SPC -> leader waiting
+	h.Handle(keyMsg(" "))
+	if !h.LeaderWaiting {
+		t.Fatal("expected leader waiting")
+	}
+
+	// p -> no exact match, but HasPrefix("SPC p") so stay in leader mode
+	consumed, cmd := h.Handle(keyMsg("p"))
+	if !consumed || cmd != nil {
+		t.Errorf("p: consumed=%v cmd=%v", consumed, cmd)
+	}
+	if !h.LeaderWaiting {
+		t.Error("expected still in leader mode after p")
+	}
+	if len(h.Buffer) != 2 {
+		t.Errorf("expected buffer [SPC p], got %v", h.Buffer)
+	}
+
+	// c -> exact match SPC p c
+	consumed, cmd = h.Handle(keyMsg("c"))
+	if !consumed || cmd == nil {
+		t.Errorf("c: consumed=%v cmd=%v", consumed, cmd)
+	}
+	if cmd != nil {
+		cmd()
+		if executed != "SPC p c" {
+			t.Errorf("expected executed SPC p c, got %q", executed)
+		}
 	}
 }
 
