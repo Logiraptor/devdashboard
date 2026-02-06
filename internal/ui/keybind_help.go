@@ -8,9 +8,9 @@ import (
 )
 
 // RenderKeybindHelp produces the transient help view shown after SPC.
-// Displays SPC-prefixed bindings in a compact bar format.
+// Displays SPC-prefixed bindings in a compact bar format, filtered by mode.
 // When keyHandler is in leader mode with a buffer (e.g. "SPC p"), shows next-level hints.
-func RenderKeybindHelp(keyHandler *KeyHandler) string {
+func RenderKeybindHelp(keyHandler *KeyHandler, mode AppMode) string {
 	if keyHandler == nil {
 		return ""
 	}
@@ -18,7 +18,7 @@ func RenderKeybindHelp(keyHandler *KeyHandler) string {
 	if len(keyHandler.Buffer) > 0 {
 		currentSeq = strings.Join(keyHandler.Buffer, " ")
 	}
-	hints := keyHandler.Registry.LeaderHints(currentSeq)
+	hints := keyHandler.Registry.LeaderHints(currentSeq, mode)
 	if len(hints) == 0 {
 		return ""
 	}

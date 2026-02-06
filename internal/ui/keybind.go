@@ -12,6 +12,7 @@ import (
 type KeybindRegistry struct {
 	bindings     map[string]tea.Cmd
 	descriptions map[string]string
+	modeFilter   map[string][]AppMode // nil/empty = applies to all modes
 }
 
 // NewKeybindRegistry creates an empty registry.
@@ -19,6 +20,7 @@ func NewKeybindRegistry() *KeybindRegistry {
 	return &KeybindRegistry{
 		bindings:     make(map[string]tea.Cmd),
 		descriptions: make(map[string]string),
+		modeFilter:   make(map[string][]AppMode),
 	}
 }
 
@@ -30,11 +32,22 @@ func (r *KeybindRegistry) Bind(seq string, cmd tea.Cmd) {
 }
 
 // BindWithDesc registers a key sequence with a description for the help view.
+// The binding applies to all AppModes.
 func (r *KeybindRegistry) BindWithDesc(seq string, cmd tea.Cmd, desc string) {
+	r.BindWithDescForMode(seq, cmd, desc, nil)
+}
+
+// BindWithDescForMode registers a key sequence with a description and mode filter.
+// If modes is nil or empty, the binding applies to all modes.
+// Otherwise, hints are only shown when the current AppMode is in modes.
+func (r *KeybindRegistry) BindWithDescForMode(seq string, cmd tea.Cmd, desc string, modes []AppMode) {
 	n := normalizeSeq(seq)
 	r.bindings[n] = cmd
 	if desc != "" {
 		r.descriptions[n] = desc
+	}
+	if len(modes) > 0 {
+		r.modeFilter[n] = modes
 	}
 }
 
@@ -70,32 +83,50 @@ func (r *KeybindRegistry) Hints() map[string]string {
 	return out
 }
 
-// LeaderHints returns hints for SPC-prefixed bindings.
+// LeaderHints returns hints for SPC-prefixed bindings, filtered by mode.
 // When currentSeq is empty, returns first-level hints (e.g. "q", "p", "a").
-// When currentSeq is e.g. "SPC p", returns next-level hints (e.g. "c", "d", "a", "r").
-func (r *KeybindRegistry) LeaderHints(currentSeq string) map[string]string {
+// When currentSeq is e.g. "SPC p", returns next-level hints (e.g. "c", "d" on Dashboard; "a", "r" on Project detail).
+// Bindings with no mode filter apply to all modes.
+func (r *KeybindRegistry) LeaderHints(currentSeq string, mode AppMode) map[string]string {
 	out := make(map[string]string)
 	prefix := "SPC "
 	if currentSeq != "" {
 		prefix = normalizeSeq(currentSeq) + " "
 	}
 	for seq, cmd := range r.bindings {
-		if cmd != nil && strings.HasPrefix(seq, prefix) {
-			rest := strings.TrimPrefix(seq, prefix)
-			// For display, take only the next key (e.g. "c" from "c" or "a a")
-			parts := strings.Fields(rest)
-			key := rest
-			if len(parts) > 0 {
-				key = parts[0]
-			}
-			if d, ok := r.descriptions[seq]; ok && d != "" {
-				out[key] = d
-			} else {
-				out[key] = seq
-			}
+		if cmd == nil || !strings.HasPrefix(seq, prefix) {
+			continue
+		}
+		if !r.appliesToMode(seq, mode) {
+			continue
+		}
+		rest := strings.TrimPrefix(seq, prefix)
+		parts := strings.Fields(rest)
+		key := rest
+		if len(parts) > 0 {
+			key = parts[0]
+		}
+		if d, ok := r.descriptions[seq]; ok && d != "" {
+			out[key] = d
+		} else {
+			out[key] = seq
 		}
 	}
 	return out
+}
+
+// appliesToMode returns true if the binding applies to the given mode.
+func (r *KeybindRegistry) appliesToMode(seq string, mode AppMode) bool {
+	modes, ok := r.modeFilter[seq]
+	if !ok || len(modes) == 0 {
+		return true
+	}
+	for _, m := range modes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeSeq converts tea key strings to our canonical format.

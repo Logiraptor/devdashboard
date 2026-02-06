@@ -29,7 +29,7 @@ func TestKeybindRegistry_LeaderHints(t *testing.T) {
 	reg.BindWithDesc("SPC f", tea.Quit, "Find") // placeholder
 	reg.Bind("SPC x", tea.Quit)                 // no desc, uses seq
 
-	hints := reg.LeaderHints("")
+	hints := reg.LeaderHints("", ModeDashboard)
 	if len(hints) != 3 {
 		t.Errorf("expected 3 leader hints, got %d", len(hints))
 	}
@@ -41,6 +41,30 @@ func TestKeybindRegistry_LeaderHints(t *testing.T) {
 	}
 	if hints["x"] != "SPC x" {
 		t.Errorf("x: expected 'SPC x' (fallback), got %q", hints["x"])
+	}
+}
+
+func TestKeybindRegistry_LeaderHintsFilteredByMode(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p d", tea.Quit, "Delete project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p a", tea.Quit, "Add repo", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC p r", tea.Quit, "Remove repo", []AppMode{ModeProjectDetail})
+
+	dashboardHints := reg.LeaderHints("SPC p", ModeDashboard)
+	if len(dashboardHints) != 2 {
+		t.Errorf("Dashboard: expected 2 hints (c,d), got %d: %v", len(dashboardHints), dashboardHints)
+	}
+	if dashboardHints["c"] != "Create project" || dashboardHints["d"] != "Delete project" {
+		t.Errorf("Dashboard: expected c,d with correct descs, got %v", dashboardHints)
+	}
+
+	detailHints := reg.LeaderHints("SPC p", ModeProjectDetail)
+	if len(detailHints) != 2 {
+		t.Errorf("Project detail: expected 2 hints (a,r), got %d: %v", len(detailHints), detailHints)
+	}
+	if detailHints["a"] != "Add repo" || detailHints["r"] != "Remove repo" {
+		t.Errorf("Project detail: expected a,r with correct descs, got %v", detailHints)
 	}
 }
 

@@ -275,7 +275,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *appModelAdapter) View() string {
 	base := a.currentView().View()
 	if a.KeyHandler != nil && a.KeyHandler.LeaderWaiting {
-		base += "\n" + RenderKeybindHelp(a.KeyHandler)
+		base += "\n" + RenderKeybindHelp(a.KeyHandler, a.Mode)
 	}
 	if a.Overlays.Len() > 0 {
 		if top, ok := a.Overlays.Peek(); ok {
@@ -370,11 +370,11 @@ func NewAppModel() *AppModel {
 	reg.BindWithDesc("q", tea.Quit, "Quit")
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDesc("SPC a a", func() tea.Msg { return RunAgentMsg{} }, "Agent run")
-	reg.BindWithDesc("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project")
-	reg.BindWithDesc("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project")
-	reg.BindWithDesc("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo")
-	reg.BindWithDesc("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo")
+	reg.BindWithDescForMode("SPC a a", func() tea.Msg { return RunAgentMsg{} }, "Agent run", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo", []AppMode{ModeProjectDetail})
 	return &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),
