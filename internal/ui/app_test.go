@@ -1,14 +1,19 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/artifact"
+	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestProjectKeybinds_ShowCreateProjectMsg(t *testing.T) {
@@ -356,6 +361,128 @@ func TestSPCKeybindCommandsExecute(t *testing.T) {
 	top, _ := m.Overlays.Peek()
 	if _, ok := top.View.(*CreateProjectModal); !ok {
 		t.Errorf("expected CreateProjectModal, got %T", top.View)
+	}
+}
+
+// TestAgentProgressVisible validates that agent progress events are visible in the ProgressWindow.
+// Part of devdeploy-i1u.10 validation.
+func TestAgentProgressVisible(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
+	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
+
+	store, err := artifact.NewStore()
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	projMgr := project.NewManager(store.BaseDir(), dir)
+	_ = projMgr.CreateProject("test-proj")
+
+	a := &AppModel{
+		Mode:           ModeProjectDetail,
+		Dashboard:      NewDashboardView(),
+		Detail:         NewProjectDetailView("test-proj"),
+		KeyHandler:     NewKeyHandler(NewKeybindRegistry()),
+		ArtifactStore:  store,
+		ProjectManager: projMgr,
+		AgentRunner:    &agent.StubRunner{},
+	}
+	adapter := a.AsTeaModel().(*appModelAdapter)
+
+	// Run agent -> ProgressWindow overlay
+	_, _ = adapter.Update(RunAgentMsg{})
+	if a.Overlays.Len() != 1 {
+		t.Fatalf("expected 1 overlay (ProgressWindow) after RunAgentMsg, got %d", a.Overlays.Len())
+	}
+	top, _ := a.Overlays.Peek()
+	if _, ok := top.View.(*ProgressWindow); !ok {
+		t.Fatalf("expected ProgressWindow overlay, got %T", top.View)
+	}
+
+	// Simulate agent emitting a progress event (as StubRunner would).
+	// This validates that ProgressWindow displays events when they arrive.
+	_, _ = adapter.Update(progress.Event{
+		Message:   "Agent run started (stub) — test-proj",
+		Status:    progress.StatusRunning,
+		Timestamp: time.Now(),
+	})
+
+	view := adapter.View()
+	if !strings.Contains(view, "Agent progress") {
+		t.Errorf("View should contain 'Agent progress' header, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Agent run started") {
+		t.Errorf("View should contain agent progress message, got:\n%s", view)
+	}
+}
+
+// cancelableTestRunner stores the context so tests can verify it was cancelled.
+type cancelableTestRunner struct {
+	ctx context.Context
+}
+
+func (r *cancelableTestRunner) Run(ctx context.Context, projectDir, planPath, designPath string) tea.Cmd {
+	r.ctx = ctx
+	// Return a cmd that emits one event immediately (so we don't block).
+	return func() tea.Msg {
+		return progress.Event{
+			Message:   "Started",
+			Status:    progress.StatusRunning,
+			Timestamp: time.Now(),
+		}
+	}
+}
+
+// TestAgentAbort_CallsCancelOnEsc validates that Esc triggers abort (calls cancel on in-flight run).
+// Part of devdeploy-i1u.10 validation.
+func TestAgentAbort_CallsCancelOnEsc(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
+	defer os.Unsetenv("DEVDEPLOY_PROJECTS_DIR")
+
+	store, err := artifact.NewStore()
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	projMgr := project.NewManager(store.BaseDir(), dir)
+	_ = projMgr.CreateProject("test-proj")
+
+	runner := &cancelableTestRunner{}
+	a := &AppModel{
+		Mode:           ModeProjectDetail,
+		Dashboard:      NewDashboardView(),
+		Detail:         NewProjectDetailView("test-proj"),
+		KeyHandler:     NewKeyHandler(NewKeybindRegistry()),
+		ArtifactStore:  store,
+		ProjectManager: projMgr,
+		AgentRunner:    runner,
+	}
+	adapter := a.AsTeaModel().(*appModelAdapter)
+
+	// Run agent -> overlay + cmd
+	_, cmd := adapter.Update(RunAgentMsg{})
+	if cmd != nil {
+		msg := cmd()
+		_, _ = adapter.Update(msg)
+	}
+	if a.agentCancelFunc == nil {
+		t.Fatal("expected agentCancelFunc to be set after RunAgentMsg")
+	}
+
+	// Esc on ProgressWindow -> overlay returns DismissModalMsg cmd
+	_, cmd = adapter.Update(keyMsg("esc"))
+	if cmd == nil {
+		t.Fatal("expected overlay to return DismissModalMsg cmd on Esc")
+	}
+	// Process DismissModalMsg -> app calls agentCancelFunc
+	_, _ = adapter.Update(cmd())
+
+	// Verify context was cancelled
+	if runner.ctx == nil {
+		t.Fatal("runner should have stored context")
+	}
+	if runner.ctx.Err() != context.Canceled {
+		t.Errorf("expected context to be cancelled after Esc, got Err=%v", runner.ctx.Err())
 	}
 }
 
