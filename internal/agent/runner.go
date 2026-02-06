@@ -22,31 +22,32 @@ type StubRunner struct{}
 
 // Run implements Runner. Emits fake progress events as tea.Msg.
 // Phase 6 will consume these for live display.
+// Respects ctx cancellation: when ctx is done, emits StatusAborted and stops.
 func (s *StubRunner) Run(ctx context.Context, projectDir, planPath, designPath string) tea.Cmd {
 	base := filepath.Base(projectDir)
 	return tea.Sequence(
-		emitAfter(0, progress.Event{
+		emitAfter(ctx, 0, progress.Event{
 			Message:   "Agent run started (stub) — " + base,
 			Status:    progress.StatusRunning,
 			Timestamp: time.Now(),
 		}),
-		emitAfter(400*time.Millisecond, progress.Event{
+		emitAfter(ctx, 400*time.Millisecond, progress.Event{
 			Message:   "Loading plan from " + planPath,
 			Status:    progress.StatusRunning,
 			Timestamp: time.Now(),
 		}),
-		emitAfter(400*time.Millisecond, progress.Event{
+		emitAfter(ctx, 400*time.Millisecond, progress.Event{
 			Message:   "Analyzing design context",
 			Status:    progress.StatusRunning,
 			Timestamp: time.Now(),
 		}),
-		emitAfter(400*time.Millisecond, progress.Event{
+		emitAfter(ctx, 400*time.Millisecond, progress.Event{
 			Message:   "Executing tasks...",
 			Status:    progress.StatusRunning,
 			Timestamp: time.Now(),
 			Metadata:  map[string]string{"step": "3", "total": "5"},
 		}),
-		emitAfter(400*time.Millisecond, progress.Event{
+		emitAfter(ctx, 400*time.Millisecond, progress.Event{
 			Message:   "Agent run completed (stub)",
 			Status:    progress.StatusDone,
 			Timestamp: time.Now(),
@@ -55,10 +56,20 @@ func (s *StubRunner) Run(ctx context.Context, projectDir, planPath, designPath s
 }
 
 // emitAfter returns a Cmd that sleeps then emits the event.
-func emitAfter(d time.Duration, ev progress.Event) tea.Cmd {
+// If ctx is cancelled during sleep, emits an aborted event instead.
+func emitAfter(ctx context.Context, d time.Duration, ev progress.Event) tea.Cmd {
 	return func() tea.Msg {
 		if d > 0 {
-			time.Sleep(d)
+			select {
+			case <-ctx.Done():
+				return progress.Event{
+					Message:   "Aborted",
+					Status:    progress.StatusAborted,
+					Timestamp: time.Now(),
+				}
+			case <-time.After(d):
+				// continue to emit
+			}
 		}
 		if ev.Timestamp.IsZero() {
 			ev.Timestamp = time.Now()

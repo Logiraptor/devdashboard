@@ -67,16 +67,17 @@ type DismissModalMsg struct{}
 // AppModel is the root model implementing Option E (Dashboard + Detail).
 // It switches between Dashboard and ProjectDetail modes.
 type AppModel struct {
-	Mode           AppMode
-	Dashboard      *DashboardView
-	Detail         *ProjectDetailView
-	KeyHandler     *KeyHandler
-	ArtifactStore  *artifact.Store
-	ProjectManager *project.Manager
-	AgentRunner    agent.Runner
-	Overlays       OverlayStack
-	Status         string // Error or success message; cleared on keypress
-	StatusIsError  bool
+	Mode            AppMode
+	Dashboard       *DashboardView
+	Detail          *ProjectDetailView
+	KeyHandler      *KeyHandler
+	ArtifactStore   *artifact.Store
+	ProjectManager  *project.Manager
+	AgentRunner     agent.Runner
+	Overlays        OverlayStack
+	Status          string // Error or success message; cleared on keypress
+	StatusIsError   bool
+	agentCancelFunc func() // cancels in-flight agent run; nil when none
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -99,6 +100,10 @@ func (a *appModelAdapter) Init() tea.Cmd {
 func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case progress.Event:
+		// Run finished (done or aborted); clear cancel so Esc just dismisses
+		if msg.Status == progress.StatusDone || msg.Status == progress.StatusAborted {
+			a.agentCancelFunc = nil
+		}
 		if a.Overlays.Len() > 0 {
 			if top, hasOverlay := a.Overlays.Peek(); hasOverlay {
 				if _, isProgress := top.View.(*ProgressWindow); isProgress {
@@ -219,6 +224,15 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case DismissModalMsg:
+		// If top overlay is ProgressWindow and we have an active agent run, cancel it first.
+		if a.Overlays.Len() > 0 {
+			if top, ok := a.Overlays.Peek(); ok {
+				if _, isProgress := top.View.(*ProgressWindow); isProgress && a.agentCancelFunc != nil {
+					a.agentCancelFunc()
+					a.agentCancelFunc = nil
+				}
+			}
+		}
 		a.Overlays.Pop()
 		return a, nil
 	case RunAgentMsg:
@@ -227,8 +241,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			planPath := filepath.Join(projectDir, "plan.md")
 			designPath := filepath.Join(projectDir, "design.md")
 			progWin := NewProgressWindow()
+			ctx, cancel := context.WithCancel(context.Background())
+			a.agentCancelFunc = cancel
 			a.Overlays.Push(Overlay{View: progWin, Dismiss: "esc"})
-			return a, tea.Batch(progWin.Init(), a.AgentRunner.Run(context.Background(), projectDir, planPath, designPath))
+			return a, tea.Batch(progWin.Init(), a.AgentRunner.Run(ctx, projectDir, planPath, designPath))
 		}
 		return a, nil
 	case SelectProjectMsg:

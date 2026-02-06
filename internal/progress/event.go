@@ -9,6 +9,7 @@ const (
 	StatusRunning Status = "running"
 	StatusDone    Status = "done"
 	StatusError   Status = "error"
+	StatusAborted Status = "aborted"
 )
 
 // Event is the contract for live progress display (Phase 6).
