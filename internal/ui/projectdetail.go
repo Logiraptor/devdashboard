@@ -1,19 +1,22 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"devdeploy/internal/project"
 )
 
 // ProjectDetailView shows a selected project with repos, PRs, and artifact area (Option E).
 type ProjectDetailView struct {
 	ProjectName   string
 	Repos         []string
-	PRs           []string
-	PlanContent   string // from plan.md; empty = "no plan yet"
-	DesignContent string // from design.md; empty = "no design yet"
+	PRsByRepo     []project.RepoPRs // PRs grouped by repo (from gh pr list)
+	PlanContent   string            // from plan.md; empty = "no plan yet"
+	DesignContent string            // from design.md; empty = "no design yet"
 }
 
 // Ensure ProjectDetailView implements View.
@@ -24,8 +27,8 @@ var _ View = (*ProjectDetailView)(nil)
 func NewProjectDetailView(name string) *ProjectDetailView {
 	return &ProjectDetailView{
 		ProjectName:   name,
-		Repos:         []string{"repo-a", "repo-b"},
-		PRs:           []string{"#42 in review", "#41 merged", "#38 open"},
+		Repos:         nil,
+		PRsByRepo:     nil,
 		PlanContent:   "",
 		DesignContent: "",
 	}
@@ -64,8 +67,22 @@ func (p *ProjectDetailView) View() string {
 	}
 
 	b.WriteString("\n" + sectionStyle.Render("PRs / Issues") + "\n")
-	for _, pr := range p.PRs {
-		b.WriteString("  • " + normalStyle.Render(pr) + "\n")
+	for _, rp := range p.PRsByRepo {
+		b.WriteString("  " + normalStyle.Render(rp.Repo+":") + "\n")
+		for _, pr := range rp.PRs {
+			state := strings.ToLower(pr.State)
+			if state == "" {
+				state = "open"
+			}
+			line := fmt.Sprintf("#%d %s (%s)", pr.Number, pr.Title, state)
+			if len(line) > 60 {
+				line = line[:57] + "..."
+			}
+			b.WriteString("    • " + normalStyle.Render(line) + "\n")
+		}
+	}
+	if len(p.PRsByRepo) == 0 {
+		b.WriteString("  " + artifactStyle.Render("(no PRs)") + "\n")
 	}
 
 	planLabel := "Plan"

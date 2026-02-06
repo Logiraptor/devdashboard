@@ -378,7 +378,7 @@ func (a *appModelAdapter) setCurrentView(v View) {
 	}
 }
 
-// newProjectDetailView creates a detail view with artifact content and repos from disk.
+// newProjectDetailView creates a detail view with artifact content, repos, and PRs from disk/gh.
 func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	v := NewProjectDetailView(name)
 	if a.ArtifactStore != nil {
@@ -389,6 +389,8 @@ func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	if a.ProjectManager != nil {
 		repos, _ := a.ProjectManager.ListProjectRepos(name)
 		v.Repos = repos
+		prsByRepo, _ := a.ProjectManager.ListProjectPRs(name)
+		v.PRsByRepo = prsByRepo
 	}
 	return v
 }

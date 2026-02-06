@@ -2,6 +2,7 @@ package project
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -285,9 +286,82 @@ func (m *Manager) CountArtifacts(projectName string) int {
 	return count
 }
 
+// PRInfo holds minimal PR metadata from gh pr list.
+type PRInfo struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+}
+
+// RepoPRs groups PRs by repository for display.
+type RepoPRs struct {
+	Repo string
+	PRs  []PRInfo
+}
+
+// listPRsInRepo runs gh pr list in the given worktree dir and returns PRs.
+// state: "open", "merged", "closed", or "all". limit: max PRs (0 = default 30).
+func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
+	args := []string{"pr", "list", "--json", "number,title,state"}
+	if state != "" && state != "open" {
+		args = append(args, "--state", state)
+	}
+	if limit > 0 {
+		args = append(args, "--limit", fmt.Sprintf("%d", limit))
+	}
+	cmd := exec.Command("gh", args...)
+	cmd.Dir = worktreePath
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	var prs []PRInfo
+	if err := json.Unmarshal(out.Bytes(), &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
+}
+
 // CountPRs returns the number of open PRs across the project's repos.
-// Phase 6+ will integrate with PR API (e.g. gh pr list); for now returns 0.
 func (m *Manager) CountPRs(projectName string) int {
-	// TODO(Phase 6): integrate with gh pr list or similar per repo
-	return 0
+	repos, err := m.ListProjectRepos(projectName)
+	if err != nil || len(repos) == 0 {
+		return 0
+	}
+	count := 0
+	for _, repoName := range repos {
+		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
+		prs, err := m.listPRsInRepo(worktreePath, "open", 0)
+		if err != nil {
+			continue
+		}
+		count += len(prs)
+	}
+	return count
+}
+
+// mergedPRsLimit is how many recently merged PRs to show per repo.
+const mergedPRsLimit = 5
+
+// ListProjectPRs returns PRs grouped by repo (open + recently merged).
+func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
+	repos, err := m.ListProjectRepos(projectName)
+	if err != nil {
+		return nil, err
+	}
+	var out []RepoPRs
+	for _, repoName := range repos {
+		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
+		var all []PRInfo
+		open, _ := m.listPRsInRepo(worktreePath, "open", 0)
+		all = append(all, open...)
+		merged, _ := m.listPRsInRepo(worktreePath, "merged", mergedPRsLimit)
+		all = append(all, merged...)
+		if len(all) > 0 {
+			out = append(out, RepoPRs{Repo: repoName, PRs: all})
+		}
+	}
+	return out, nil
 }
