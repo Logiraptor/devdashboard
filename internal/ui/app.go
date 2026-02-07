@@ -161,31 +161,29 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.Status = fmt.Sprintf("Added %s to %s", msg.RepoName, msg.ProjectName)
 				a.StatusIsError = false
 			}
-			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-				repos, _ := a.ProjectManager.ListProjectRepos(msg.ProjectName)
-				a.Detail.Repos = repos
-			}
-			a.Overlays.Pop()
-			return a, nil
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
 		}
+		a.Overlays.Pop()
 		return a, nil
-	case RemoveRepoMsg:
-		if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
-			if err := a.ProjectManager.RemoveRepo(msg.ProjectName, msg.RepoName); err != nil {
-				a.Status = fmt.Sprintf("Remove repo: %v", err)
-				a.StatusIsError = true
-			} else {
-				a.Status = fmt.Sprintf("Removed %s from %s", msg.RepoName, msg.ProjectName)
-				a.StatusIsError = false
-			}
-			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-				repos, _ := a.ProjectManager.ListProjectRepos(msg.ProjectName)
-				a.Detail.Repos = repos
-			}
-			a.Overlays.Pop()
-			return a, nil
+	}
+	return a, nil
+case RemoveRepoMsg:
+	if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
+		if err := a.ProjectManager.RemoveRepo(msg.ProjectName, msg.RepoName); err != nil {
+			a.Status = fmt.Sprintf("Remove repo: %v", err)
+			a.StatusIsError = true
+		} else {
+			a.Status = fmt.Sprintf("Removed %s from %s", msg.RepoName, msg.ProjectName)
+			a.StatusIsError = false
 		}
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+		}
+		a.Overlays.Pop()
 		return a, nil
+	}
+	return a, nil
 	case ShowCreateProjectMsg:
 		modal := NewCreateProjectModal()
 		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
@@ -378,7 +376,7 @@ func (a *appModelAdapter) setCurrentView(v View) {
 	}
 }
 
-// newProjectDetailView creates a detail view with artifact content, repos, and PRs from disk/gh.
+// newProjectDetailView creates a detail view with artifact content and resources from disk/gh.
 func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	v := NewProjectDetailView(name)
 	if a.ArtifactStore != nil {
@@ -387,10 +385,7 @@ func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 		v.DesignContent = art.Design
 	}
 	if a.ProjectManager != nil {
-		repos, _ := a.ProjectManager.ListProjectRepos(name)
-		v.Repos = repos
-		prsByRepo, _ := a.ProjectManager.ListProjectPRs(name)
-		v.PRsByRepo = prsByRepo
+		v.Resources = a.ProjectManager.ListProjectResources(name)
 	}
 	return v
 }

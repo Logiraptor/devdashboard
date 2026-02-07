@@ -288,9 +288,10 @@ func (m *Manager) CountArtifacts(projectName string) int {
 
 // PRInfo holds minimal PR metadata from gh pr list.
 type PRInfo struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	State  string `json:"state"`
+	Number      int    `json:"number"`
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	HeadRefName string `json:"headRefName"` // branch name for worktree checkout
 }
 
 // RepoPRs groups PRs by repository for display.
@@ -302,7 +303,7 @@ type RepoPRs struct {
 // listPRsInRepo runs gh pr list in the given worktree dir and returns PRs.
 // state: "open", "merged", "closed", or "all". limit: max PRs (0 = default 30).
 func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
-	args := []string{"pr", "list", "--json", "number,title,state"}
+	args := []string{"pr", "list", "--json", "number,title,state,headRefName"}
 	if state != "" && state != "open" {
 		args = append(args, "--state", state)
 	}
@@ -364,4 +365,35 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 		}
 	}
 	return out, nil
+}
+
+// ListProjectResources builds a flat []Resource from repos and PRs.
+// Resources are ordered repo-first: each repo Resource is followed by
+// its PR Resources, enabling tree-style rendering in the UI.
+func (m *Manager) ListProjectResources(projectName string) []Resource {
+	repos, _ := m.ListProjectRepos(projectName)
+	prsByRepo, _ := m.ListProjectPRs(projectName)
+
+	prMap := make(map[string][]PRInfo, len(prsByRepo))
+	for _, rp := range prsByRepo {
+		prMap[rp.Repo] = rp.PRs
+	}
+
+	var resources []Resource
+	for _, repoName := range repos {
+		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
+		resources = append(resources, Resource{
+			Kind:         ResourceRepo,
+			RepoName:     repoName,
+			WorktreePath: worktreePath,
+		})
+		for i := range prMap[repoName] {
+			resources = append(resources, Resource{
+				Kind:     ResourcePR,
+				RepoName: repoName,
+				PR:       &prMap[repoName][i],
+			})
+		}
+	}
+	return resources
 }

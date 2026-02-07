@@ -10,13 +10,12 @@ import (
 	"devdeploy/internal/project"
 )
 
-// ProjectDetailView shows a selected project with repos, PRs, and artifact area (Option E).
+// ProjectDetailView shows a selected project with resources (repos + PRs) and artifact area.
 type ProjectDetailView struct {
 	ProjectName   string
-	Repos         []string
-	PRsByRepo     []project.RepoPRs // PRs grouped by repo (from gh pr list)
-	PlanContent   string            // from plan.md; empty = "no plan yet"
-	DesignContent string            // from design.md; empty = "no design yet"
+	Resources     []project.Resource // unified resource list (repos + PRs)
+	PlanContent   string             // from plan.md; empty = "no plan yet"
+	DesignContent string             // from design.md; empty = "no design yet"
 }
 
 // Ensure ProjectDetailView implements View.
@@ -27,8 +26,7 @@ var _ View = (*ProjectDetailView)(nil)
 func NewProjectDetailView(name string) *ProjectDetailView {
 	return &ProjectDetailView{
 		ProjectName:   name,
-		Repos:         nil,
-		PRsByRepo:     nil,
+		Resources:     nil,
 		PlanContent:   "",
 		DesignContent: "",
 	}
@@ -55,34 +53,34 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 func (p *ProjectDetailView) View() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	repoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	prStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	artifactStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
 
 	var b strings.Builder
 	b.WriteString("← " + titleStyle.Render(p.ProjectName) + "\n\n")
 
-	b.WriteString(sectionStyle.Render("Repos") + "\n")
-	for _, r := range p.Repos {
-		b.WriteString("  • " + normalStyle.Render(r) + "\n")
+	b.WriteString(sectionStyle.Render("Resources") + "\n")
+	if len(p.Resources) == 0 {
+		b.WriteString("  " + artifactStyle.Render("(no repos added)") + "\n")
 	}
-
-	b.WriteString("\n" + sectionStyle.Render("PRs / Issues") + "\n")
-	for _, rp := range p.PRsByRepo {
-		b.WriteString("  " + normalStyle.Render(rp.Repo+":") + "\n")
-		for _, pr := range rp.PRs {
-			state := strings.ToLower(pr.State)
-			if state == "" {
-				state = "open"
+	for _, r := range p.Resources {
+		switch r.Kind {
+		case project.ResourceRepo:
+			b.WriteString("  " + repoStyle.Render(r.RepoName+"/") + "\n")
+		case project.ResourcePR:
+			if r.PR != nil {
+				state := strings.ToLower(r.PR.State)
+				if state == "" {
+					state = "open"
+				}
+				line := fmt.Sprintf("#%d %s (%s)", r.PR.Number, r.PR.Title, state)
+				if len(line) > 60 {
+					line = line[:57] + "..."
+				}
+				b.WriteString("    " + prStyle.Render(line) + "\n")
 			}
-			line := fmt.Sprintf("#%d %s (%s)", pr.Number, pr.Title, state)
-			if len(line) > 60 {
-				line = line[:57] + "..."
-			}
-			b.WriteString("    • " + normalStyle.Render(line) + "\n")
 		}
-	}
-	if len(p.PRsByRepo) == 0 {
-		b.WriteString("  " + artifactStyle.Render("(no PRs)") + "\n")
 	}
 
 	planLabel := "Plan"
