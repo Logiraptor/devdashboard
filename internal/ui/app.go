@@ -7,6 +7,7 @@ import (
 	"devdeploy/internal/artifact"
 	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
+	"devdeploy/internal/session"
 	"devdeploy/internal/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -79,11 +80,12 @@ type AppModel struct {
 	ArtifactStore   *artifact.Store
 	ProjectManager  *project.Manager
 	AgentRunner     agent.Runner
+	Sessions        *session.Tracker // tracks panes across all resources; persists across project switches
 	Overlays        OverlayStack
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
 	agentCancelFunc func() // cancels in-flight agent run; nil when none
-	agentPaneID     string // last agent pane from tmux.SplitPane; used for hide/show
+	agentPaneID     string // last agent pane from tmux.SplitPane; used for hide/show (legacy, kept for break/join)
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -251,6 +253,14 @@ case RemoveRepoMsg:
 				a.StatusIsError = true
 			} else {
 				a.agentPaneID = paneID
+				// Register with session tracker
+				if a.Sessions != nil {
+					if r := a.Detail.SelectedResource(); r != nil {
+						rk := resourceKeyFromResource(*r)
+						a.Sessions.Register(rk, paneID, session.PaneShell)
+						a.refreshDetailPanes()
+					}
+				}
 			}
 			// No overlay: user sees new tmux pane with shell
 		}
@@ -387,7 +397,45 @@ func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	if a.ProjectManager != nil {
 		v.Resources = a.ProjectManager.ListProjectResources(name)
 	}
+	// Populate pane info from session tracker
+	if a.Sessions != nil {
+		a.populateResourcePanes(v)
+	}
 	return v
+}
+
+// populateResourcePanes attaches tracked pane info to each resource in the detail view.
+func (a *AppModel) populateResourcePanes(v *ProjectDetailView) {
+	if a.Sessions == nil {
+		return
+	}
+	for i := range v.Resources {
+		r := &v.Resources[i]
+		rk := resourceKeyFromResource(*r)
+		tracked := a.Sessions.PanesForResource(rk)
+		r.Panes = nil
+		for _, tp := range tracked {
+			r.Panes = append(r.Panes, project.PaneInfo{
+				ID:      tp.PaneID,
+				IsAgent: tp.Type == session.PaneAgent,
+			})
+		}
+	}
+}
+
+// refreshDetailPanes updates the current detail view's pane info from the session tracker.
+func (a *AppModel) refreshDetailPanes() {
+	if a.Detail != nil && a.Sessions != nil {
+		a.populateResourcePanes(a.Detail)
+	}
+}
+
+// resourceKeyFromResource builds a session.ResourceKey from a project.Resource.
+func resourceKeyFromResource(r project.Resource) string {
+	if r.Kind == project.ResourcePR && r.PR != nil {
+		return session.ResourceKey("pr", r.RepoName, r.PR.Number)
+	}
+	return session.ResourceKey("repo", r.RepoName, 0)
 }
 
 // loadProjectsCmd returns a command that loads projects from disk and sends ProjectsLoadedMsg.
@@ -440,6 +488,7 @@ func NewAppModel() *AppModel {
 		ArtifactStore:  store,
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
+		Sessions:       session.New(tmux.ListPaneIDs),
 	}
 }
 

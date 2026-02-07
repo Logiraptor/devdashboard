@@ -11,7 +11,7 @@ const (
 )
 
 // PaneInfo tracks an active tmux pane associated with a resource.
-// Stub for now; fleshed out in session tracker (devdeploy-7uj.3).
+// Populated from session.Tracker during view construction.
 type PaneInfo struct {
 	ID      string // tmux pane ID (e.g. "%42")
 	IsAgent bool   // true if running `agent`, false for plain shell

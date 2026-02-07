@@ -113,3 +113,23 @@ func JoinPane(paneID string) error {
 	}
 	return nil
 }
+
+// ListPaneIDs returns all live pane IDs across all tmux sessions/windows.
+// Each ID looks like "%42". Used for liveness checks by the session tracker.
+func ListPaneIDs() (map[string]bool, error) {
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("tmux list-panes: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	panes := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			panes[line] = true
+		}
+	}
+	return panes, nil
+}
