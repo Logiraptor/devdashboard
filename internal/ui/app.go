@@ -19,14 +19,14 @@ type SelectProjectMsg struct {
 	Name string
 }
 
-// RunAgentMsg is sent when user triggers agent run (SPC s s).
-type RunAgentMsg struct{}
+// OpenShellMsg is sent when user opens a shell on the selected resource (SPC s s or Enter).
+type OpenShellMsg struct{}
 
-// HideAgentPaneMsg hides the agent pane (break-pane to background window).
-type HideAgentPaneMsg struct{}
+// HidePaneMsg hides the selected resource's most recent pane (break-pane to background window).
+type HidePaneMsg struct{}
 
-// ShowAgentPaneMsg shows the agent pane (join-pane back into current window).
-type ShowAgentPaneMsg struct{}
+// ShowPaneMsg shows the selected resource's most recent pane (join-pane back into current window).
+type ShowPaneMsg struct{}
 
 // ProjectsLoadedMsg is sent when projects are loaded from disk.
 type ProjectsLoadedMsg struct {
@@ -85,7 +85,6 @@ type AppModel struct {
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
 	agentCancelFunc func() // cancels in-flight agent run; nil when none
-	agentPaneID     string // last agent pane from tmux.SplitPane; used for hide/show (legacy, kept for break/join)
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -244,47 +243,54 @@ case RemoveRepoMsg:
 		}
 		a.Overlays.Pop()
 		return a, nil
-	case RunAgentMsg:
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.ArtifactStore != nil {
-			projectDir := a.ArtifactStore.ProjectDir(a.Detail.ProjectName)
-			paneID, err := tmux.SplitPane(projectDir)
-			if err != nil {
-				a.Status = fmt.Sprintf("Agent shell: %v", err)
-				a.StatusIsError = true
-			} else {
-				a.agentPaneID = paneID
-				// Register with session tracker
-				if a.Sessions != nil {
-					if r := a.Detail.SelectedResource(); r != nil {
-						rk := resourceKeyFromResource(*r)
-						a.Sessions.Register(rk, paneID, session.PaneShell)
-						a.refreshDetailPanes()
-					}
-				}
-			}
-			// No overlay: user sees new tmux pane with shell
+	case OpenShellMsg:
+		if a.Mode != ModeProjectDetail || a.Detail == nil {
+			return a, nil
+		}
+		r := a.Detail.SelectedResource()
+		if r == nil {
+			a.Status = "No resource selected"
+			a.StatusIsError = true
+			return a, nil
+		}
+		workDir := r.WorktreePath
+		if workDir == "" {
+			a.Status = "No worktree for this resource (PR worktrees not yet supported)"
+			a.StatusIsError = true
+			return a, nil
+		}
+		paneID, err := tmux.SplitPane(workDir)
+		if err != nil {
+			a.Status = fmt.Sprintf("Open shell: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		if a.Sessions != nil {
+			rk := resourceKeyFromResource(*r)
+			a.Sessions.Register(rk, paneID, session.PaneShell)
+			a.refreshDetailPanes()
 		}
 		return a, nil
-	case HideAgentPaneMsg:
-		if a.agentPaneID != "" {
-			if err := tmux.BreakPane(a.agentPaneID); err != nil {
-				a.Status = fmt.Sprintf("Hide pane: %v", err)
-				a.StatusIsError = true
-				a.agentPaneID = "" // pane may be gone
-			}
-		} else {
-			a.Status = "No agent pane to hide"
+	case HidePaneMsg:
+		paneID := a.selectedResourceLatestPaneID()
+		if paneID == "" {
+			a.Status = "No pane to hide"
+			return a, nil
+		}
+		if err := tmux.BreakPane(paneID); err != nil {
+			a.Status = fmt.Sprintf("Hide pane: %v", err)
+			a.StatusIsError = true
 		}
 		return a, nil
-	case ShowAgentPaneMsg:
-		if a.agentPaneID != "" {
-			if err := tmux.JoinPane(a.agentPaneID); err != nil {
-				a.Status = fmt.Sprintf("Show pane: %v", err)
-				a.StatusIsError = true
-				a.agentPaneID = "" // pane may be gone
-			}
-		} else {
-			a.Status = "No agent pane to show"
+	case ShowPaneMsg:
+		paneID := a.selectedResourceLatestPaneID()
+		if paneID == "" {
+			a.Status = "No pane to show"
+			return a, nil
+		}
+		if err := tmux.JoinPane(paneID); err != nil {
+			a.Status = fmt.Sprintf("Show pane: %v", err)
+			a.StatusIsError = true
 		}
 		return a, nil
 	case SelectProjectMsg:
@@ -314,6 +320,9 @@ case RemoveRepoMsg:
 			a.Mode = ModeDashboard
 			a.Detail = nil
 			return a, nil
+		}
+		if a.Mode == ModeProjectDetail && msg.String() == "enter" {
+			return a, func() tea.Msg { return OpenShellMsg{} }
 		}
 		if a.Mode == ModeDashboard && msg.String() == "enter" {
 			d := a.Dashboard
@@ -430,6 +439,24 @@ func (a *AppModel) refreshDetailPanes() {
 	}
 }
 
+// selectedResourceLatestPaneID returns the pane ID of the most recently registered
+// pane for the currently selected resource, or "" if none.
+func (a *AppModel) selectedResourceLatestPaneID() string {
+	if a.Mode != ModeProjectDetail || a.Detail == nil || a.Sessions == nil {
+		return ""
+	}
+	r := a.Detail.SelectedResource()
+	if r == nil {
+		return ""
+	}
+	rk := resourceKeyFromResource(*r)
+	panes := a.Sessions.PanesForResource(rk)
+	if len(panes) == 0 {
+		return ""
+	}
+	return panes[len(panes)-1].PaneID
+}
+
 // resourceKeyFromResource builds a session.ResourceKey from a project.Resource.
 func resourceKeyFromResource(r project.Resource) string {
 	if r.Kind == project.ResourcePR && r.PR != nil {
@@ -473,9 +500,9 @@ func NewAppModel() *AppModel {
 	reg.BindWithDesc("q", tea.Quit, "Quit")
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDescForMode("SPC s s", func() tea.Msg { return RunAgentMsg{} }, "Open shell", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC s h", func() tea.Msg { return HideAgentPaneMsg{} }, "Hide shell pane", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC s j", func() tea.Msg { return ShowAgentPaneMsg{} }, "Show shell pane", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
