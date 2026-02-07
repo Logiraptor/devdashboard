@@ -22,6 +22,9 @@ type SelectProjectMsg struct {
 // OpenShellMsg is sent when user opens a shell on the selected resource (SPC s s or Enter).
 type OpenShellMsg struct{}
 
+// LaunchAgentMsg is sent when user launches an agent on the selected resource (SPC s a).
+type LaunchAgentMsg struct{}
+
 // HidePaneMsg hides the selected resource's most recent pane (break-pane to background window).
 type HidePaneMsg struct{}
 
@@ -271,6 +274,39 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.refreshDetailPanes()
 		}
 		return a, nil
+	case LaunchAgentMsg:
+		if a.Mode != ModeProjectDetail || a.Detail == nil {
+			return a, nil
+		}
+		r := a.Detail.SelectedResource()
+		if r == nil {
+			a.Status = "No resource selected"
+			a.StatusIsError = true
+			return a, nil
+		}
+		workDir := r.WorktreePath
+		if workDir == "" {
+			a.Status = "No worktree for this resource (PR worktrees not yet supported)"
+			a.StatusIsError = true
+			return a, nil
+		}
+		paneID, err := tmux.SplitPane(workDir)
+		if err != nil {
+			a.Status = fmt.Sprintf("Launch agent: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		if err := tmux.SendKeys(paneID, "agent\n"); err != nil {
+			a.Status = fmt.Sprintf("Send agent command: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		if a.Sessions != nil {
+			rk := resourceKeyFromResource(*r)
+			a.Sessions.Register(rk, paneID, session.PaneAgent)
+			a.refreshDetailPanes()
+		}
+		return a, nil
 	case HidePaneMsg:
 		paneID := a.selectedResourceLatestPaneID()
 		if paneID == "" {
@@ -501,6 +537,7 @@ func NewAppModel() *AppModel {
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
 	reg.BindWithDescForMode("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s a", func() tea.Msg { return LaunchAgentMsg{} }, "Launch agent", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})
