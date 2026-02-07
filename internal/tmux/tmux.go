@@ -6,6 +6,7 @@ package tmux
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -55,7 +56,13 @@ func EnsureLayout() error {
 
 // SplitPane creates a new pane in the current window with cwd set to workDir.
 // Returns the new pane ID (e.g. %4) or an error.
+// workDir must be an existing directory; tmux silently ignores bad -c paths.
 func SplitPane(workDir string) (paneID string, err error) {
+	if info, statErr := os.Stat(workDir); statErr != nil {
+		return "", fmt.Errorf("invalid workdir: %w", statErr)
+	} else if !info.IsDir() {
+		return "", fmt.Errorf("invalid workdir: %s is not a directory", workDir)
+	}
 	cmd := exec.Command("tmux", "split-window", "-P", "-F", "#{pane_id}", "-c", workDir)
 	var out bytes.Buffer
 	cmd.Stdout = &out

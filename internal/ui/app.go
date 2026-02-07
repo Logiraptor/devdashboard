@@ -162,29 +162,29 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.Status = fmt.Sprintf("Added %s to %s", msg.RepoName, msg.ProjectName)
 				a.StatusIsError = false
 			}
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+				a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+			}
+			a.Overlays.Pop()
+			return a, nil
 		}
-		a.Overlays.Pop()
 		return a, nil
-	}
-	return a, nil
-case RemoveRepoMsg:
-	if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
-		if err := a.ProjectManager.RemoveRepo(msg.ProjectName, msg.RepoName); err != nil {
-			a.Status = fmt.Sprintf("Remove repo: %v", err)
-			a.StatusIsError = true
-		} else {
-			a.Status = fmt.Sprintf("Removed %s from %s", msg.RepoName, msg.ProjectName)
-			a.StatusIsError = false
+	case RemoveRepoMsg:
+		if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
+			if err := a.ProjectManager.RemoveRepo(msg.ProjectName, msg.RepoName); err != nil {
+				a.Status = fmt.Sprintf("Remove repo: %v", err)
+				a.StatusIsError = true
+			} else {
+				a.Status = fmt.Sprintf("Removed %s from %s", msg.RepoName, msg.ProjectName)
+				a.StatusIsError = false
+			}
+			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+				a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+			}
+			a.Overlays.Pop()
+			return a, nil
 		}
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
-		}
-		a.Overlays.Pop()
 		return a, nil
-	}
-	return a, nil
 	case ShowCreateProjectMsg:
 		modal := NewCreateProjectModal()
 		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
