@@ -1,11 +1,24 @@
 # Agent Workflow
 
 **Status**: accepted  
-**Last updated**: 2026-02-06
+**Last updated**: 2026-02-07
 
 ## Overview
 
 Agent workflow spans artifact storage, progress streaming, live display, abort capability, and shell orchestration. The app uses **tmux pane orchestration** (not embedded PTY) for interactive agent shells.
+
+## Resource-based Model (Current Direction)
+
+As of 2026-02-07, the agent concept is simplified: **an agent is just a shell with a predefined command** (`agent` — Cursor's CLI). There is no separate "agent runner" abstraction. The workflow is:
+
+1. User selects a **resource** (repo or PR) in a project
+2. `SPC s a` → creates worktree if needed → splits tmux pane → runs `agent` in that pane
+3. User interacts with the agent directly in its native interface
+4. devdeploy tracks the pane as type "agent" in the session tracker
+
+This replaces the earlier `AgentRunner` interface / `StubRunner` / progress event stream approach for agent execution. The progress/abort infrastructure remains for potential future use but is not the primary agent interaction model.
+
+See `devdeploy-7uj` epic for full details.
 
 ## Phase 5: Integration
 

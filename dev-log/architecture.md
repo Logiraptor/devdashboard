@@ -42,19 +42,24 @@ devdeploy/
 
 ## Phased Roadmap
 
-| Phase | Focus |
-|-------|-------|
-| 1 | Foundation: Bubble Tea, project structure, dev-log |
-| 2 | UI abstractions: views, panels, focus, layout |
-| 3 | Input: leader key (SPC), vim/spacemacs keybinds |
-| 4 | Keybind hints: transient help after SPC |
-| 5 | Agent workflow: artifact store, progress stream, integration |
-| 6 | Live progress windows for agent output |
-| 7 | Abort/cancel for in-flight operations |
+| Phase | Focus | Status |
+|-------|-------|--------|
+| 1 | Foundation: Bubble Tea, project structure, dev-log | Done |
+| 2 | UI abstractions: views, panels, focus, layout | Done |
+| 3 | Input: leader key (SPC), vim/spacemacs keybinds | Done |
+| 4 | Keybind hints: transient help after SPC | Done |
+| 5 | Agent workflow: artifact store, progress stream, integration | Done |
+| 6 | Live progress windows for agent output | Done |
+| 7 | Abort/cancel for in-flight operations | Done |
+| 8 | Tmux pane orchestration (replace embedded PTY) | Done |
+| 9 | Resource-based project workflow (current) | In progress |
 
-**Dependencies**: Phase 1 → 2 → 3 → 4 (foundation); Phase 2 → 5 → 6 → 7 (agent stack)
+**Phase 9 — Resource-based project workflow**: Projects contain resources (repos from ~/workspace, PRs from gh). Two actions: open shell, launch agent (`agent`). devdeploy manages worktrees, tmux panes, and sessions. See `devdeploy-7uj` epic.
+
+## Core Concept
+
+devdeploy is a glue tool for **git worktrees**, **agent sessions**, **GitHub PRs**, and **tmux panes**. Projects group resources; the primary actions are opening a shell or launching an agent in a worktree. Everything persists until explicitly cleaned up.
 
 ## Open Questions
 
-- Integration targets: Cursor, Claude Code, custom agents?
 - Persistence: where do plans/context live beyond disk?

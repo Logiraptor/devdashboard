@@ -1,7 +1,7 @@
 # Keybind System
 
 **Status**: accepted  
-**Last updated**: 2026-02-06
+**Last updated**: 2026-02-07
 
 ## KeybindRegistry
 
@@ -40,11 +40,12 @@
 | `SPC p a` | Add repo to project | Project detail |
 | `SPC p r` | Remove repo from project | Project detail |
 
-## SPC s — Shell
+## SPC s — Shell / Agent
 
 | Sequence | Action |
 |----------|--------|
-| `SPC s s` | Open shell (opens tmux pane in project directory) |
+| `SPC s s` | Open shell (tmux pane in selected resource's worktree) |
+| `SPC s a` | Launch agent (`agent` in selected resource's worktree) |
 | `SPC s h` | Hide shell pane |
 | `SPC s j` | Show shell pane |
 
@@ -65,6 +66,13 @@ devdeploy uses SPC as leader; tmux uses **Ctrl+a** (C-a) to avoid accidental tri
 | C-a | **w** (windows) | w/W/n/c/0-9 | Next/prev/new/close/select window |
 | C-a | **s** (splits) | s/v/x | Split H, split V, kill pane |
 | C-a | **vim nav** | h/j/k/l | Focus pane left/down/up/right |
+
+### Which-key (keybind discovery popup)
+
+| Keys | Action |
+|------|--------|
+| **C-Space** | Open which-key menu (root, no prefix) |
+| **C-a Space** | Open which-key menu (prefix + Space) |
 
 - devdeploy (Bubble Tea) runs in one tmux pane; SPC remains its leader
 - Both systems coexist; no conflict

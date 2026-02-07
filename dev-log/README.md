@@ -16,7 +16,7 @@ This directory contains architecture documentation for the devdeploy project.
 | [ui.md](ui.md) | UI abstractions, layout (Dashboard + Detail), project directory |
 | [keybinds.md](keybinds.md) | Keybind system, SPC leader, help view, project/agent keybinds, tmux |
 | [agent-workflow.md](agent-workflow.md) | Agent integration, progress, abort, tmux orchestration, validation |
-| [2026-02-06-tmux-project-epic.plan.md](2026-02-06-tmux-project-epic.plan.md) | Epic plan: real PRs, selection, SPC s s, tmux organization |
+| [2026-02-06-tmux-project-epic.plan.md](2026-02-06-tmux-project-epic.plan.md) | (Superseded) Epic plan: real PRs, selection, SPC s s, tmux organization |
 
 ## Adding New Decisions
 
