@@ -273,6 +273,32 @@ func (m *Manager) RemoveRepo(projectName, repoName string) error {
 	return nil
 }
 
+// RemovePRWorktree removes a PR worktree from the project.
+// The worktree directory is <projectDir>/<repoName>-pr-<number>.
+// If the worktree directory does not exist, this is a no-op.
+func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) error {
+	wtName := fmt.Sprintf("%s-pr-%d", repoName, prNumber)
+	wtPath := filepath.Join(m.projectDir(projectName), wtName)
+
+	// If worktree dir doesn't exist, nothing to do.
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	srcRepo := filepath.Join(m.workspace, repoName)
+	cmd := exec.Command("git", "-C", srcRepo, "worktree", "remove", wtPath, "--force")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("git worktree remove (PR): %s", msg)
+	}
+	return nil
+}
+
 func (m *Manager) projectDir(name string) string {
 	normalized := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 	return filepath.Join(m.projectsBase, normalized)

@@ -70,6 +70,16 @@ type ShowAddRepoMsg struct{}
 // ShowRemoveRepoMsg triggers the remove-repo picker (project detail).
 type ShowRemoveRepoMsg struct{}
 
+// ShowRemoveResourceMsg triggers the remove-resource confirmation (project detail, 'd' key).
+type ShowRemoveResourceMsg struct{}
+
+// RemoveResourceMsg is sent when user confirms removal of a resource.
+// Kills associated panes and removes the worktree.
+type RemoveResourceMsg struct {
+	ProjectName string
+	Resource    project.Resource
+}
+
 // DismissModalMsg is sent when user cancels a modal (Esc).
 type DismissModalMsg struct{}
 
@@ -145,6 +155,18 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case DeleteProjectMsg:
 		if a.ProjectManager != nil && msg.Name != "" {
+			// Kill all panes for resources in this project before deleting.
+			if a.Sessions != nil {
+				resources := a.ProjectManager.ListProjectResources(msg.Name)
+				for _, r := range resources {
+					rk := resourceKeyFromResource(r)
+					panes := a.Sessions.PanesForResource(rk)
+					for _, p := range panes {
+						_ = tmux.KillPane(p.PaneID)
+					}
+					a.Sessions.UnregisterAll(rk)
+				}
+			}
 			if err := a.ProjectManager.DeleteProject(msg.Name); err != nil {
 				a.Status = fmt.Sprintf("Delete project: %v", err)
 				a.StatusIsError = true
@@ -229,6 +251,67 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				a.Overlays.Push(Overlay{View: NewRemoveRepoModal(a.Detail.ProjectName, repos), Dismiss: "esc"})
 			}
+		}
+		return a, nil
+	case ShowRemoveResourceMsg:
+		if a.Mode != ModeProjectDetail || a.Detail == nil {
+			return a, nil
+		}
+		r := a.Detail.SelectedResource()
+		if r == nil {
+			a.Status = "No resource selected"
+			a.StatusIsError = true
+			return a, nil
+		}
+		modal := NewRemoveResourceConfirmModal(a.Detail.ProjectName, *r)
+		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+		return a, modal.Init()
+	case RemoveResourceMsg:
+		if a.ProjectManager == nil {
+			return a, nil
+		}
+		// Kill associated tmux panes (best-effort; pane may already be dead).
+		if a.Sessions != nil {
+			rk := resourceKeyFromResource(msg.Resource)
+			panes := a.Sessions.PanesForResource(rk)
+			for _, p := range panes {
+				_ = tmux.KillPane(p.PaneID) // ignore errors for dead panes
+			}
+			a.Sessions.UnregisterAll(rk)
+		}
+		// Remove worktree based on resource kind.
+		var removeErr error
+		switch msg.Resource.Kind {
+		case project.ResourceRepo:
+			removeErr = a.ProjectManager.RemoveRepo(msg.ProjectName, msg.Resource.RepoName)
+		case project.ResourcePR:
+			if msg.Resource.PR != nil {
+				removeErr = a.ProjectManager.RemovePRWorktree(msg.ProjectName, msg.Resource.RepoName, msg.Resource.PR.Number)
+			}
+		}
+		if removeErr != nil {
+			a.Status = fmt.Sprintf("Remove resource: %v", removeErr)
+			a.StatusIsError = true
+		} else {
+			label := msg.Resource.RepoName
+			if msg.Resource.Kind == project.ResourcePR && msg.Resource.PR != nil {
+				label = fmt.Sprintf("PR #%d (%s)", msg.Resource.PR.Number, msg.Resource.RepoName)
+			}
+			a.Status = fmt.Sprintf("Removed %s", label)
+			a.StatusIsError = false
+		}
+		a.Overlays.Pop()
+		// Refresh the resource list and pane info.
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+			// Clamp selection index.
+			if a.Detail.Selected >= len(a.Detail.Resources) {
+				a.Detail.Selected = len(a.Detail.Resources) - 1
+			}
+			if a.Detail.Selected < 0 {
+				a.Detail.Selected = 0
+			}
+			a.refreshDetailPanes()
 		}
 		return a, nil
 	case DismissModalMsg:
@@ -359,6 +442,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if a.Mode == ModeProjectDetail && msg.String() == "enter" {
 			return a, func() tea.Msg { return OpenShellMsg{} }
+		}
+		if a.Mode == ModeProjectDetail && msg.String() == "d" {
+			return a, func() tea.Msg { return ShowRemoveResourceMsg{} }
 		}
 		if a.Mode == ModeDashboard && msg.String() == "enter" {
 			d := a.Dashboard
@@ -575,6 +661,7 @@ func NewAppModel() *AppModel {
 	reg.BindWithDescForMode("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project", []AppMode{ModeDashboard})
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource", []AppMode{ModeProjectDetail})
 	return &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),

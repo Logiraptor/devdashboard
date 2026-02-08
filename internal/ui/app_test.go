@@ -623,3 +623,309 @@ func TestProjectKeybinds_ShowRemoveRepoMsg_InProjectDetail_NoRepos(t *testing.T)
 		t.Errorf("expected error status when no repos, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
 	}
 }
+
+// --- Resource cleanup tests ---
+
+// TestShowRemoveResourceMsg_ShowsConfirmModal validates that ShowRemoveResourceMsg
+// pushes a RemoveResourceConfirmModal onto the overlay stack.
+func TestShowRemoveResourceMsg_ShowsConfirmModal(t *testing.T) {
+	ta := newTestApp(t)
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(ShowRemoveResourceMsg{})
+	if ta.Overlays.Len() != 1 {
+		t.Fatalf("expected 1 overlay after ShowRemoveResourceMsg, got %d", ta.Overlays.Len())
+	}
+	top, _ := ta.Overlays.Peek()
+	modal, ok := top.View.(*RemoveResourceConfirmModal)
+	if !ok {
+		t.Fatalf("expected RemoveResourceConfirmModal, got %T", top.View)
+	}
+	if modal.Resource.RepoName != "myrepo" {
+		t.Errorf("expected modal resource 'myrepo', got %q", modal.Resource.RepoName)
+	}
+}
+
+// TestShowRemoveResourceMsg_NoResourceSelected validates error when no resource selected.
+func TestShowRemoveResourceMsg_NoResourceSelected(t *testing.T) {
+	ta := newTestApp(t)
+	ta.Mode = ModeProjectDetail
+	ta.Detail = NewProjectDetailView("test-proj")
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(ShowRemoveResourceMsg{})
+	if !ta.StatusIsError || ta.Status != "No resource selected" {
+		t.Errorf("expected 'No resource selected' error, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+	if ta.Overlays.Len() != 0 {
+		t.Errorf("expected no overlay, got %d", ta.Overlays.Len())
+	}
+}
+
+// TestShowRemoveResourceMsg_NotInProjectDetail validates no-op when not in project detail.
+func TestShowRemoveResourceMsg_NotInProjectDetail(t *testing.T) {
+	ta := newTestApp(t)
+	adapter := ta.adapter()
+
+	_, cmd := adapter.Update(ShowRemoveResourceMsg{})
+	if cmd != nil {
+		t.Error("expected nil cmd when not in project detail")
+	}
+	if ta.Overlays.Len() != 0 {
+		t.Error("expected no overlay when not in project detail")
+	}
+}
+
+// TestRemoveResourceMsg_KillsPanesAndUnregisters validates that RemoveResourceMsg
+// kills panes and unregisters them from the session tracker.
+func TestRemoveResourceMsg_KillsPanesAndUnregisters(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("test-proj")
+
+	rk := session.ResourceKey("repo", "myrepo", 0)
+	ta.Sessions.Register(rk, "%10", session.PaneShell)
+	ta.Sessions.Register(rk, "%11", session.PaneAgent)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	// Send RemoveResourceMsg. Worktree removal will fail (no real git repo),
+	// but pane cleanup should still happen.
+	_, _ = adapter.Update(RemoveResourceMsg{
+		ProjectName: "test-proj",
+		Resource:    detail.Resources[0],
+	})
+
+	// Panes should be unregistered.
+	if panes := ta.Sessions.PanesForResource(rk); panes != nil {
+		t.Errorf("expected no panes after remove, got %+v", panes)
+	}
+}
+
+// TestRemoveResourceMsg_ClampsSelection validates that the selection index is
+// clamped after removing the last resource.
+func TestRemoveResourceMsg_ClampsSelection(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("test-proj")
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(RemoveResourceMsg{
+		ProjectName: "test-proj",
+		Resource:    detail.Resources[0],
+	})
+
+	// After removing the only resource, Selected should be clamped to 0.
+	if ta.Detail.Selected != 0 {
+		t.Errorf("expected Selected=0 after removing only resource, got %d", ta.Detail.Selected)
+	}
+}
+
+// TestRemoveResourceMsg_PR validates removal of a PR resource.
+func TestRemoveResourceMsg_PR(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("test-proj")
+
+	rk := session.ResourceKey("pr", "myrepo", 42)
+	ta.Sessions.Register(rk, "%20", session.PaneAgent)
+
+	prResource := project.Resource{
+		Kind:     project.ResourcePR,
+		RepoName: "myrepo",
+		PR:       &project.PRInfo{Number: 42, Title: "test PR", HeadRefName: "feat"},
+	}
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+		prResource,
+	}
+	detail.Selected = 1
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(RemoveResourceMsg{
+		ProjectName: "test-proj",
+		Resource:    prResource,
+	})
+
+	// PR panes should be unregistered.
+	if panes := ta.Sessions.PanesForResource(rk); panes != nil {
+		t.Errorf("expected no PR panes after remove, got %+v", panes)
+	}
+}
+
+// TestRemoveResourceMsg_DismissesOverlay validates that RemoveResourceMsg pops the overlay.
+func TestRemoveResourceMsg_DismissesOverlay(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("test-proj")
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+	}
+	detail.Selected = 0
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+
+	// Push modal first.
+	modal := NewRemoveResourceConfirmModal("test-proj", detail.Resources[0])
+	ta.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(RemoveResourceMsg{
+		ProjectName: "test-proj",
+		Resource:    detail.Resources[0],
+	})
+
+	if ta.Overlays.Len() != 0 {
+		t.Errorf("expected overlay dismissed after RemoveResourceMsg, got %d", ta.Overlays.Len())
+	}
+}
+
+// TestDKeyInProjectDetail_TriggersRemoveResource validates the 'd' shortcut key.
+func TestDKeyInProjectDetail_TriggersRemoveResource(t *testing.T) {
+	ta := newTestApp(t)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+	}
+	detail.Selected = 0
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	// 'd' in project detail should produce a cmd returning ShowRemoveResourceMsg
+	_, cmd := adapter.Update(keyMsg("d"))
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from 'd' in project detail")
+	}
+	msg := cmd()
+	if _, ok := msg.(ShowRemoveResourceMsg); !ok {
+		t.Errorf("expected ShowRemoveResourceMsg from 'd' cmd, got %T", msg)
+	}
+}
+
+// TestRemoveResourceConfirmModal_EscCancels validates that Esc dismisses the modal.
+func TestRemoveResourceConfirmModal_EscCancels(t *testing.T) {
+	r := project.Resource{Kind: project.ResourceRepo, RepoName: "myrepo"}
+	modal := NewRemoveResourceConfirmModal("test-proj", r)
+
+	_, cmd := modal.Update(keyMsg("esc"))
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from Esc")
+	}
+	msg := cmd()
+	if _, ok := msg.(DismissModalMsg); !ok {
+		t.Errorf("expected DismissModalMsg from Esc, got %T", msg)
+	}
+}
+
+// TestRemoveResourceConfirmModal_EnterConfirms validates that Enter sends RemoveResourceMsg.
+func TestRemoveResourceConfirmModal_EnterConfirms(t *testing.T) {
+	r := project.Resource{Kind: project.ResourceRepo, RepoName: "myrepo"}
+	modal := NewRemoveResourceConfirmModal("test-proj", r)
+
+	_, cmd := modal.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from Enter")
+	}
+	msg := cmd()
+	rmMsg, ok := msg.(RemoveResourceMsg)
+	if !ok {
+		t.Fatalf("expected RemoveResourceMsg from Enter, got %T", msg)
+	}
+	if rmMsg.ProjectName != "test-proj" {
+		t.Errorf("expected ProjectName 'test-proj', got %q", rmMsg.ProjectName)
+	}
+	if rmMsg.Resource.RepoName != "myrepo" {
+		t.Errorf("expected resource 'myrepo', got %q", rmMsg.Resource.RepoName)
+	}
+}
+
+// TestRemoveResourceConfirmModal_YConfirms validates that 'y' also confirms.
+func TestRemoveResourceConfirmModal_YConfirms(t *testing.T) {
+	r := project.Resource{Kind: project.ResourceRepo, RepoName: "myrepo"}
+	modal := NewRemoveResourceConfirmModal("test-proj", r)
+
+	_, cmd := modal.Update(keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from 'y'")
+	}
+	msg := cmd()
+	if _, ok := msg.(RemoveResourceMsg); !ok {
+		t.Errorf("expected RemoveResourceMsg from 'y', got %T", msg)
+	}
+}
+
+// TestRemoveResourceConfirmModal_View validates the modal renders resource info.
+func TestRemoveResourceConfirmModal_View(t *testing.T) {
+	r := project.Resource{
+		Kind:         project.ResourceRepo,
+		RepoName:     "myrepo",
+		WorktreePath: "/tmp/myrepo",
+		Panes: []project.PaneInfo{
+			{ID: "%1", IsAgent: false},
+			{ID: "%2", IsAgent: true},
+		},
+	}
+	modal := NewRemoveResourceConfirmModal("test-proj", r)
+	view := modal.View()
+
+	if !strings.Contains(view, "Remove resource?") {
+		t.Error("expected 'Remove resource?' in modal view")
+	}
+	if !strings.Contains(view, "myrepo") {
+		t.Error("expected 'myrepo' in modal view")
+	}
+	if !strings.Contains(view, "Worktree will be removed") {
+		t.Error("expected worktree warning in modal view")
+	}
+	if !strings.Contains(view, "2 active pane(s) will be killed") {
+		t.Error("expected pane warning in modal view")
+	}
+}
+
+// TestRemoveResourceConfirmModal_PRView validates the modal renders PR info.
+func TestRemoveResourceConfirmModal_PRView(t *testing.T) {
+	r := project.Resource{
+		Kind:     project.ResourcePR,
+		RepoName: "myrepo",
+		PR:       &project.PRInfo{Number: 42, Title: "Fix bug"},
+	}
+	modal := NewRemoveResourceConfirmModal("test-proj", r)
+	view := modal.View()
+
+	if !strings.Contains(view, "PR #42") {
+		t.Error("expected 'PR #42' in modal view")
+	}
+	if !strings.Contains(view, "Fix bug") {
+		t.Error("expected PR title in modal view")
+	}
+}

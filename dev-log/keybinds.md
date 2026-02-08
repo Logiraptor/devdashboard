@@ -39,6 +39,8 @@
 | `SPC p d` | Delete selected project | Dashboard only |
 | `SPC p a` | Add repo to project | Project detail |
 | `SPC p r` | Remove repo from project | Project detail |
+| `SPC p x` | Remove selected resource (kill panes, remove worktree) | Project detail |
+| `d` | Remove selected resource (shortcut for SPC p x) | Project detail |
 
 ## SPC s — Shell / Agent
 
