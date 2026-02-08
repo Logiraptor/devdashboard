@@ -17,6 +17,13 @@ type PaneInfo struct {
 	IsAgent bool   // true if running `agent`, false for plain shell
 }
 
+// BeadInfo holds a bd issue associated with a resource for display.
+type BeadInfo struct {
+	ID     string // bead identifier (e.g. "devdeploy-abc")
+	Title  string // short summary
+	Status string // "open", "in_progress", etc.
+}
+
 // Resource unifies repos and PRs as first-class project items.
 // The flat list is ordered repo-first, with PR resources immediately
 // following their parent repo, enabling tree-style rendering.
@@ -26,4 +33,5 @@ type Resource struct {
 	PR           *PRInfo    // non-nil for PR resources
 	WorktreePath string     // populated when worktree exists; empty otherwise
 	Panes        []PaneInfo // active tmux panes (from session tracker)
+	Beads        []BeadInfo // bd issues associated with this resource
 }

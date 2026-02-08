@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"devdeploy/internal/agent"
+	"devdeploy/internal/beads"
 	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
 	"devdeploy/internal/session"
@@ -521,12 +522,44 @@ func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	if a.ProjectManager != nil {
 		v.Resources = a.ProjectManager.ListProjectResources(name)
 	}
+	// Populate beads from bd for each resource with a worktree.
+	a.populateResourceBeads(v)
 	// Prune dead panes then populate pane info from session tracker
 	if a.Sessions != nil {
 		a.Sessions.Prune()
 		a.populateResourcePanes(v)
 	}
 	return v
+}
+
+// populateResourceBeads queries bd for beads associated with each resource
+// and attaches them. Only resources with worktrees are queried (bd needs a
+// working directory). Called once during view construction to avoid
+// re-querying on every keypress.
+func (a *AppModel) populateResourceBeads(v *ProjectDetailView) {
+	for i := range v.Resources {
+		r := &v.Resources[i]
+		if r.WorktreePath == "" {
+			continue
+		}
+		var bdBeads []beads.Bead
+		switch r.Kind {
+		case project.ResourceRepo:
+			bdBeads = beads.ListForRepo(r.WorktreePath, v.ProjectName)
+		case project.ResourcePR:
+			if r.PR != nil {
+				bdBeads = beads.ListForPR(r.WorktreePath, v.ProjectName, r.PR.Number)
+			}
+		}
+		r.Beads = make([]project.BeadInfo, len(bdBeads))
+		for j, b := range bdBeads {
+			r.Beads[j] = project.BeadInfo{
+				ID:     b.ID,
+				Title:  b.Title,
+				Status: b.Status,
+			}
+		}
+	}
 }
 
 // populateResourcePanes attaches tracked pane info to each resource in the detail view.
