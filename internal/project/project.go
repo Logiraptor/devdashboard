@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -19,6 +20,9 @@ const (
 )
 
 const alnumChars = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+// prWorktreePattern matches PR worktree directory names: <repo>-pr-<number>.
+var prWorktreePattern = regexp.MustCompile(`^.+-pr-\d+$`)
 
 // randAlnum returns n random alphanumeric (lowercase) characters.
 func randAlnum(n int) string {
@@ -155,6 +159,10 @@ func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
 		}
 		name := e.Name()
 		if strings.HasPrefix(name, ".") || name == "config.yaml" {
+			continue
+		}
+		// Skip PR worktree dirs (e.g. my-repo-pr-42); they belong to PR resources.
+		if prWorktreePattern.MatchString(name) {
 			continue
 		}
 		// Skip known artifact files (they're files, not dirs, but be safe)
@@ -485,19 +493,28 @@ func (m *Manager) ListProjectResources(projectName string) []Resource {
 		prMap[rp.Repo] = rp.PRs
 	}
 
+	projDir := m.projectDir(projectName)
 	var resources []Resource
 	for _, repoName := range repos {
-		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
+		worktreePath := filepath.Join(projDir, repoName)
 		resources = append(resources, Resource{
 			Kind:         ResourceRepo,
 			RepoName:     repoName,
 			WorktreePath: worktreePath,
 		})
 		for i := range prMap[repoName] {
+			pr := &prMap[repoName][i]
+			// Check if a PR worktree already exists on disk.
+			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
+			var wtPath string
+			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+				wtPath = prWT
+			}
 			resources = append(resources, Resource{
-				Kind:     ResourcePR,
-				RepoName: repoName,
-				PR:       &prMap[repoName][i],
+				Kind:         ResourcePR,
+				RepoName:     repoName,
+				PR:           pr,
+				WorktreePath: wtPath,
 			})
 		}
 	}

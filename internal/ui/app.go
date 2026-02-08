@@ -442,8 +442,9 @@ func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	if a.ProjectManager != nil {
 		v.Resources = a.ProjectManager.ListProjectResources(name)
 	}
-	// Populate pane info from session tracker
+	// Prune dead panes then populate pane info from session tracker
 	if a.Sessions != nil {
+		a.Sessions.Prune()
 		a.populateResourcePanes(v)
 	}
 	return v
@@ -468,9 +469,11 @@ func (a *AppModel) populateResourcePanes(v *ProjectDetailView) {
 	}
 }
 
-// refreshDetailPanes updates the current detail view's pane info from the session tracker.
+// refreshDetailPanes prunes dead panes then updates the current detail view's
+// pane info from the session tracker.
 func (a *AppModel) refreshDetailPanes() {
 	if a.Detail != nil && a.Sessions != nil {
+		a.Sessions.Prune()
 		a.populateResourcePanes(a.Detail)
 	}
 }

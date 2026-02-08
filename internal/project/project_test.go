@@ -133,6 +133,34 @@ func TestManager_ListProjectRepos_Empty(t *testing.T) {
 	}
 }
 
+func TestManager_ListProjectRepos_ExcludesPRWorktrees(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, dir)
+	_ = m.CreateProject("test-proj")
+	projDir := filepath.Join(dir, "test-proj")
+
+	// Create a normal repo worktree dir
+	repoDir := filepath.Join(projDir, "my-repo")
+	_ = os.MkdirAll(repoDir, 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
+
+	// Create a PR worktree dir (should be excluded)
+	prDir := filepath.Join(projDir, "my-repo-pr-42")
+	_ = os.MkdirAll(prDir, 0755)
+	_ = os.WriteFile(filepath.Join(prDir, ".git"), []byte("gitdir: /y"), 0644)
+
+	repos, err := m.ListProjectRepos("test-proj")
+	if err != nil {
+		t.Fatalf("ListProjectRepos: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Errorf("expected 1 repo (excluding PR worktree), got %d: %v", len(repos), repos)
+	}
+	if len(repos) > 0 && repos[0] != "my-repo" {
+		t.Errorf("expected my-repo, got %s", repos[0])
+	}
+}
+
 func TestManager_ListWorkspaceRepos_Empty(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, dir)
