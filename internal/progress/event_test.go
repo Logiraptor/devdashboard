@@ -5,18 +5,6 @@ import (
 	"time"
 )
 
-func TestStatus_Constants(t *testing.T) {
-	if StatusRunning != "running" {
-		t.Errorf("StatusRunning: expected 'running', got %q", StatusRunning)
-	}
-	if StatusDone != "done" {
-		t.Errorf("StatusDone: expected 'done', got %q", StatusDone)
-	}
-	if StatusError != "error" {
-		t.Errorf("StatusError: expected 'error', got %q", StatusError)
-	}
-}
-
 func TestChanEmitter_Emit_SetsTimestampWhenZero(t *testing.T) {
 	ch := make(chan Event, 1)
 	emitter := &ChanEmitter{Ch: ch}

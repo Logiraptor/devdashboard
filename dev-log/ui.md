@@ -8,9 +8,12 @@
 | Abstraction | Purpose |
 |-------------|---------|
 | **View** | Screen or major UI region with model, update, view |
-| **Panel** | Bounded region within a layout (hosts a View) |
-| **Focus** | Which View/Panel receives input; single global focus |
-| **Layout** | How Panels are arranged (split, stack, overlay) |
+| **AppModel** | Root model; switches between Dashboard and ProjectDetail modes |
+| **OverlayStack** | Modal/popup views layered on top of the active mode |
+| **KeyHandler** | Leader-key (SPC) keybind system with mode-aware bindings |
+
+> **Note**: Earlier designs included Panel, Layout, FocusManager, and ViewStack abstractions.
+> These were removed (2026-02-07) as unused — the app uses AppModel mode switching + OverlayStack instead.
 
 ## Chosen Layout: Dashboard + Detail (Option E)
 
