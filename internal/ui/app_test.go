@@ -869,6 +869,212 @@ func TestRemoveResourceConfirmModal_EnterConfirms(t *testing.T) {
 	}
 }
 
+// --- End-to-end resource workflow tests (devdeploy-7uj.8) ---
+
+// TestResourceKeyFromResource validates the helper that builds session keys from resources.
+func TestResourceKeyFromResource(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource project.Resource
+		want     string
+	}{
+		{
+			name:     "repo resource",
+			resource: project.Resource{Kind: project.ResourceRepo, RepoName: "devdeploy"},
+			want:     "repo:devdeploy",
+		},
+		{
+			name: "PR resource",
+			resource: project.Resource{
+				Kind:     project.ResourcePR,
+				RepoName: "devdeploy",
+				PR:       &project.PRInfo{Number: 42},
+			},
+			want: "pr:devdeploy:#42",
+		},
+		{
+			name:     "repo resource no PR info",
+			resource: project.Resource{Kind: project.ResourceRepo, RepoName: "grafana"},
+			want:     "repo:grafana",
+		},
+		{
+			name: "PR resource nil PR struct treated as repo",
+			resource: project.Resource{
+				Kind:     project.ResourcePR,
+				RepoName: "grafana",
+				PR:       nil,
+			},
+			want: "repo:grafana",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resourceKeyFromResource(tt.resource)
+			if got != tt.want {
+				t.Errorf("resourceKeyFromResource() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPopulateResourcePanes validates that session tracker panes are
+// attached to resources in the detail view.
+func TestPopulateResourcePanes(t *testing.T) {
+	ta := newTestApp(t)
+
+	ta.Sessions.Register("repo:myrepo", "%1", session.PaneShell)
+	ta.Sessions.Register("repo:myrepo", "%2", session.PaneAgent)
+	ta.Sessions.Register("pr:myrepo:#42", "%3", session.PaneAgent)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test"}},
+		{Kind: project.ResourceRepo, RepoName: "other"},
+	}
+
+	ta.AppModel.populateResourcePanes(detail)
+
+	// myrepo repo should have 2 panes (1 shell, 1 agent).
+	if len(detail.Resources[0].Panes) != 2 {
+		t.Errorf("expected 2 panes for myrepo repo, got %d", len(detail.Resources[0].Panes))
+	} else {
+		if detail.Resources[0].Panes[0].IsAgent {
+			t.Error("expected first pane to be shell")
+		}
+		if !detail.Resources[0].Panes[1].IsAgent {
+			t.Error("expected second pane to be agent")
+		}
+	}
+
+	// PR should have 1 agent pane.
+	if len(detail.Resources[1].Panes) != 1 {
+		t.Errorf("expected 1 pane for PR, got %d", len(detail.Resources[1].Panes))
+	} else if !detail.Resources[1].Panes[0].IsAgent {
+		t.Error("expected PR pane to be agent")
+	}
+
+	// other repo should have 0 panes.
+	if len(detail.Resources[2].Panes) != 0 {
+		t.Errorf("expected 0 panes for other repo, got %d", len(detail.Resources[2].Panes))
+	}
+}
+
+// TestProjectSwitchPanesPersist validates that panes survive project switches
+// (switching from detail to dashboard and back preserves session tracker state).
+func TestProjectSwitchPanesPersist(t *testing.T) {
+	ta := newTestApp(t)
+
+	// Register panes for a resource.
+	rk := "repo:myrepo"
+	ta.Sessions.Register(rk, "%10", session.PaneShell)
+	ta.Sessions.Register(rk, "%11", session.PaneAgent)
+
+	// Verify panes exist before switch.
+	if ta.Sessions.Count() != 2 {
+		t.Fatalf("expected 2 panes before switch, got %d", ta.Sessions.Count())
+	}
+
+	// Simulate switching to dashboard (Esc from detail).
+	ta.Mode = ModeProjectDetail
+	ta.Detail = NewProjectDetailView("test-proj")
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(keyMsg("esc"))
+	if ta.Mode != ModeDashboard {
+		t.Fatalf("expected ModeDashboard after Esc, got %v", ta.Mode)
+	}
+
+	// Panes should still be tracked.
+	if ta.Sessions.Count() != 2 {
+		t.Errorf("expected 2 panes after switching to dashboard, got %d", ta.Sessions.Count())
+	}
+	panes := ta.Sessions.PanesForResource(rk)
+	if len(panes) != 2 {
+		t.Errorf("expected 2 panes for resource after switch, got %d", len(panes))
+	}
+}
+
+// TestDeleteProjectMsg_KillsPanesForAllResources validates that deleting a project
+// cleans up all tracked panes for the project's resources.
+func TestDeleteProjectMsg_KillsPanesForAllResources(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("doomed-proj")
+
+	// Create a fake repo worktree so ListProjectResources returns it.
+	projDir := ta.ArtifactStore.BaseDir()
+	repoDir := filepath.Join(projDir, "doomed-proj", "myrepo")
+	_ = os.MkdirAll(repoDir, 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
+
+	// Register panes for the resource.
+	rk := "repo:myrepo"
+	ta.Sessions.Register(rk, "%20", session.PaneShell)
+	ta.Sessions.Register(rk, "%21", session.PaneAgent)
+
+	ta.Dashboard.Projects = []ProjectSummary{{Name: "doomed-proj"}}
+	ta.Dashboard.Selected = 0
+	adapter := ta.adapter()
+
+	// Push delete confirmation modal and confirm.
+	_, _ = adapter.Update(ShowDeleteProjectMsg{})
+	if ta.Overlays.Len() != 1 {
+		t.Fatalf("expected delete confirmation modal, got %d overlays", ta.Overlays.Len())
+	}
+	// Confirm with Enter.
+	_, cmd := adapter.Update(keyMsg("enter"))
+	if cmd != nil {
+		msg := cmd()
+		_, cmd = adapter.Update(msg)
+		if cmd != nil {
+			cmd()
+		}
+	}
+
+	// Panes should be unregistered from session tracker.
+	if ta.Sessions.Count() != 0 {
+		t.Errorf("expected 0 panes after project delete, got %d", ta.Sessions.Count())
+	}
+	if panes := ta.Sessions.PanesForResource(rk); panes != nil {
+		t.Errorf("expected no panes for resource after project delete, got %+v", panes)
+	}
+}
+
+// TestRefreshDetailPanes_PrunesDeadPanes validates that refreshDetailPanes
+// removes dead panes and updates the detail view.
+func TestRefreshDetailPanes_PrunesDeadPanes(t *testing.T) {
+	// Use a liveness checker that reports only %1 as alive.
+	tracker := session.New(func() (map[string]bool, error) {
+		return map[string]bool{"%1": true}, nil
+	})
+	ta := newTestApp(t)
+	ta.Sessions = tracker
+
+	rk := "repo:myrepo"
+	ta.Sessions.Register(rk, "%1", session.PaneShell)
+	ta.Sessions.Register(rk, "%2", session.PaneAgent) // dead
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+	}
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+
+	ta.AppModel.refreshDetailPanes()
+
+	// Only %1 should remain.
+	if ta.Sessions.Count() != 1 {
+		t.Errorf("expected 1 pane after prune, got %d", ta.Sessions.Count())
+	}
+	if len(ta.Detail.Resources[0].Panes) != 1 {
+		t.Errorf("expected 1 pane in detail view, got %d", len(ta.Detail.Resources[0].Panes))
+	}
+	if ta.Detail.Resources[0].Panes[0].ID != "%1" {
+		t.Errorf("expected pane %%1, got %s", ta.Detail.Resources[0].Panes[0].ID)
+	}
+}
+
 // TestRemoveResourceConfirmModal_YConfirms validates that 'y' also confirms.
 func TestRemoveResourceConfirmModal_YConfirms(t *testing.T) {
 	r := project.Resource{Kind: project.ResourceRepo, RepoName: "myrepo"}

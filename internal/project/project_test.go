@@ -267,6 +267,108 @@ func TestManager_EnsurePRWorktree_WorktreePathFormat(t *testing.T) {
 	}
 }
 
+func TestManager_ListProjectResources_ReposAndPRs(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+
+	// Create a fake source repo in workspace.
+	srcRepo := filepath.Join(wsDir, "my-repo")
+	_ = os.MkdirAll(filepath.Join(srcRepo, ".git"), 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+	projDir := filepath.Join(dir, "projects", "test-proj")
+
+	// Create a repo worktree dir.
+	repoDir := filepath.Join(projDir, "my-repo")
+	_ = os.MkdirAll(repoDir, 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
+
+	// Create a PR worktree dir.
+	prDir := filepath.Join(projDir, "my-repo-pr-42")
+	_ = os.MkdirAll(prDir, 0755)
+	_ = os.WriteFile(filepath.Join(prDir, ".git"), []byte("gitdir: /y"), 0644)
+
+	resources := m.ListProjectResources("test-proj")
+	// gh pr list is not available in tests, so PRs come from disk scanning.
+	// We should at least get the repo resource.
+	if len(resources) == 0 {
+		t.Fatal("expected at least 1 resource, got 0")
+	}
+
+	// First resource must be the repo.
+	if resources[0].Kind != ResourceRepo {
+		t.Errorf("expected first resource kind=repo, got %s", resources[0].Kind)
+	}
+	if resources[0].RepoName != "my-repo" {
+		t.Errorf("expected first resource RepoName=my-repo, got %s", resources[0].RepoName)
+	}
+	if resources[0].WorktreePath != repoDir {
+		t.Errorf("expected WorktreePath=%s, got %s", repoDir, resources[0].WorktreePath)
+	}
+}
+
+func TestManager_ListProjectResources_Empty(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, dir)
+	_ = m.CreateProject("empty-proj")
+
+	resources := m.ListProjectResources("empty-proj")
+	if len(resources) != 0 {
+		t.Errorf("expected 0 resources for empty project, got %d", len(resources))
+	}
+}
+
+func TestManager_ListProjectResources_PRWorktreeDetection(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+	srcRepo := filepath.Join(wsDir, "my-repo")
+	_ = os.MkdirAll(filepath.Join(srcRepo, ".git"), 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+	projDir := filepath.Join(dir, "projects", "test-proj")
+
+	// Repo worktree.
+	repoDir := filepath.Join(projDir, "my-repo")
+	_ = os.MkdirAll(repoDir, 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
+
+	// PR worktree exists on disk (e.g. from a previous session).
+	prDir := filepath.Join(projDir, "my-repo-pr-99")
+	_ = os.MkdirAll(prDir, 0755)
+	_ = os.WriteFile(filepath.Join(prDir, ".git"), []byte("gitdir: /y"), 0644)
+
+	resources := m.ListProjectResources("test-proj")
+	// Without gh pr list, only the repo shows up. But the PR worktree dir
+	// is excluded from the repo list (tested separately). When PRs ARE returned
+	// by gh, ListProjectResources would populate WorktreePath for PR resources
+	// that match the dir on disk. We test the repo portion here.
+	foundRepo := false
+	for _, r := range resources {
+		if r.Kind == ResourceRepo && r.RepoName == "my-repo" {
+			foundRepo = true
+		}
+	}
+	if !foundRepo {
+		t.Error("expected repo resource 'my-repo' in resources")
+	}
+}
+
+func TestManager_RemovePRWorktree_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, dir)
+	_ = m.CreateProject("test-proj")
+
+	// Removing a non-existent PR worktree should be a no-op.
+	err := m.RemovePRWorktree("test-proj", "nonexistent", 42)
+	if err != nil {
+		t.Errorf("expected no error for non-existent PR worktree, got %v", err)
+	}
+}
+
 func TestManager_CountArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, dir)
