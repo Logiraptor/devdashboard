@@ -256,9 +256,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
-		workDir := r.WorktreePath
-		if workDir == "" {
-			a.Status = "No worktree for this resource (PR worktrees not yet supported)"
+		workDir, err := a.ensureResourceWorktree(r)
+		if err != nil {
+			a.Status = fmt.Sprintf("Open shell: %v", err)
 			a.StatusIsError = true
 			return a, nil
 		}
@@ -284,9 +284,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
-		workDir := r.WorktreePath
-		if workDir == "" {
-			a.Status = "No worktree for this resource (PR worktrees not yet supported)"
+		workDir, err := a.ensureResourceWorktree(r)
+		if err != nil {
+			a.Status = fmt.Sprintf("Launch agent: %v", err)
 			a.StatusIsError = true
 			return a, nil
 		}
@@ -491,6 +491,34 @@ func (a *AppModel) selectedResourceLatestPaneID() string {
 		return ""
 	}
 	return panes[len(panes)-1].PaneID
+}
+
+// ensureResourceWorktree returns the worktree path for a resource, creating
+// a PR worktree if needed. For repo resources, it uses the existing WorktreePath.
+// For PR resources with no worktree, it calls EnsurePRWorktree to create one
+// and updates the resource's WorktreePath in the detail view.
+func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
+	if r.WorktreePath != "" {
+		return r.WorktreePath, nil
+	}
+	if r.Kind != project.ResourcePR || r.PR == nil {
+		return "", fmt.Errorf("no worktree for this resource")
+	}
+	if a.ProjectManager == nil || a.Detail == nil {
+		return "", fmt.Errorf("no project manager available")
+	}
+	if r.PR.HeadRefName == "" {
+		return "", fmt.Errorf("PR #%d has no branch name", r.PR.Number)
+	}
+	wtPath, err := a.ProjectManager.EnsurePRWorktree(
+		a.Detail.ProjectName, r.RepoName, r.PR.Number, r.PR.HeadRefName,
+	)
+	if err != nil {
+		return "", err
+	}
+	// Update the resource so subsequent actions reuse the worktree.
+	r.WorktreePath = wtPath
+	return wtPath, nil
 }
 
 // resourceKeyFromResource builds a session.ResourceKey from a project.Resource.

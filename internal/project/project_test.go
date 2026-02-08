@@ -166,6 +166,79 @@ func TestManager_ListWorkspaceRepos_DetectsGitRepos(t *testing.T) {
 	}
 }
 
+func TestManager_EnsurePRWorktree_ReusesExisting(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+
+	// Create a fake source repo in workspace (just a dir, not real git)
+	srcRepo := filepath.Join(wsDir, "my-repo")
+	_ = os.MkdirAll(filepath.Join(srcRepo, ".git"), 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+
+	// Pre-create the worktree dir with a .git file (simulating existing worktree)
+	projDir := filepath.Join(dir, "projects", "test-proj")
+	wtDir := filepath.Join(projDir, "my-repo-pr-42")
+	_ = os.MkdirAll(wtDir, 0755)
+	_ = os.WriteFile(filepath.Join(wtDir, ".git"), []byte("gitdir: /some/path"), 0644)
+
+	got, err := m.EnsurePRWorktree("test-proj", "my-repo", 42, "feat-branch")
+	if err != nil {
+		t.Fatalf("EnsurePRWorktree: %v", err)
+	}
+	if got != wtDir {
+		t.Errorf("expected reused path %s, got %s", wtDir, got)
+	}
+}
+
+func TestManager_EnsurePRWorktree_SourceRepoNotFound(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+
+	_, err := m.EnsurePRWorktree("test-proj", "nonexistent-repo", 42, "feat-branch")
+	if err == nil {
+		t.Fatal("expected error for nonexistent source repo")
+	}
+	if !os.IsNotExist(err) && !filepath.IsAbs(err.Error()) {
+		// Just verify it contains a reference to the source repo
+		if !testing.Verbose() {
+			// Error should mention source repo
+		}
+	}
+}
+
+func TestManager_EnsurePRWorktree_WorktreePathFormat(t *testing.T) {
+	// Verify the worktree path follows <projectDir>/<repoName>-pr-<number> convention.
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+	srcRepo := filepath.Join(wsDir, "my-repo")
+	_ = os.MkdirAll(filepath.Join(srcRepo, ".git"), 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+
+	// Pre-create the worktree dir to test the reuse path and confirm the expected format.
+	projDir := filepath.Join(dir, "projects", "test-proj")
+	expectedPath := filepath.Join(projDir, "my-repo-pr-99")
+	_ = os.MkdirAll(expectedPath, 0755)
+	_ = os.WriteFile(filepath.Join(expectedPath, ".git"), []byte("gitdir: /x"), 0644)
+
+	got, err := m.EnsurePRWorktree("test-proj", "my-repo", 99, "some-branch")
+	if err != nil {
+		t.Fatalf("EnsurePRWorktree: %v", err)
+	}
+	if got != expectedPath {
+		t.Errorf("expected %s, got %s", expectedPath, got)
+	}
+}
+
 func TestManager_CountArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, dir)

@@ -315,8 +315,30 @@ func TestOpenShellMsg_NoResourceSelected(t *testing.T) {
 	}
 }
 
-// TestOpenShellMsg_PRNoWorktree validates error for PR resources without worktrees.
+// TestOpenShellMsg_PRNoWorktree validates that PR resources without worktrees
+// attempt to create one via EnsurePRWorktree (which fails in test because
+// there's no real source repo, producing an "Open shell:" error).
 func TestOpenShellMsg_PRNoWorktree(t *testing.T) {
+	ta := newTestApp(t)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"}},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(OpenShellMsg{})
+	if !ta.StatusIsError || !strings.Contains(ta.Status, "Open shell") {
+		t.Errorf("expected 'Open shell' error (EnsurePRWorktree fails, no source repo), got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+}
+
+// TestOpenShellMsg_PRNoBranch validates error for PR resources with no branch name.
+func TestOpenShellMsg_PRNoBranch(t *testing.T) {
 	ta := newTestApp(t)
 
 	detail := NewProjectDetailView("test-proj")
@@ -330,8 +352,8 @@ func TestOpenShellMsg_PRNoWorktree(t *testing.T) {
 	adapter := ta.adapter()
 
 	_, _ = adapter.Update(OpenShellMsg{})
-	if !ta.StatusIsError || !strings.Contains(ta.Status, "No worktree") {
-		t.Errorf("expected 'No worktree' error for PR, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	if !ta.StatusIsError || !strings.Contains(ta.Status, "no branch name") {
+		t.Errorf("expected 'no branch name' error for PR without HeadRefName, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
 	}
 }
 
@@ -459,13 +481,15 @@ func TestLaunchAgentMsg_NoResourceSelected(t *testing.T) {
 	}
 }
 
-// TestLaunchAgentMsg_PRNoWorktree validates error for PR resources without worktrees.
+// TestLaunchAgentMsg_PRNoWorktree validates that PR resources without worktrees
+// attempt to create one via EnsurePRWorktree (which fails in test because
+// there's no real source repo, producing a "Launch agent:" error).
 func TestLaunchAgentMsg_PRNoWorktree(t *testing.T) {
 	ta := newTestApp(t)
 
 	detail := NewProjectDetailView("test-proj")
 	detail.Resources = []project.Resource{
-		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test"}},
+		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"}},
 	}
 	detail.Selected = 0
 
@@ -474,8 +498,8 @@ func TestLaunchAgentMsg_PRNoWorktree(t *testing.T) {
 	adapter := ta.adapter()
 
 	_, _ = adapter.Update(LaunchAgentMsg{})
-	if !ta.StatusIsError || !strings.Contains(ta.Status, "No worktree") {
-		t.Errorf("expected 'No worktree' error for PR, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	if !ta.StatusIsError || !strings.Contains(ta.Status, "Launch agent") {
+		t.Errorf("expected 'Launch agent' error (EnsurePRWorktree fails, no source repo), got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
 	}
 }
 
@@ -515,6 +539,68 @@ func TestLaunchAgentMsg_RegistersAsAgent(t *testing.T) {
 	// Outside tmux, SplitPane fails. The error should be "Launch agent: ..." not "No resource"
 	if ta.StatusIsError && !strings.Contains(ta.Status, "Launch agent") {
 		t.Errorf("expected 'Launch agent' error (tmux not available), got Status=%q", ta.Status)
+	}
+}
+
+// TestEnsureResourceWorktree_RepoUsesExisting validates that repo resources
+// return their existing WorktreePath without calling EnsurePRWorktree.
+func TestEnsureResourceWorktree_RepoUsesExisting(t *testing.T) {
+	ta := newTestApp(t)
+	ta.Mode = ModeProjectDetail
+	ta.Detail = NewProjectDetailView("test-proj")
+
+	r := &project.Resource{
+		Kind:         project.ResourceRepo,
+		RepoName:     "myrepo",
+		WorktreePath: "/tmp/existing-worktree",
+	}
+	got, err := ta.AppModel.ensureResourceWorktree(r)
+	if err != nil {
+		t.Fatalf("ensureResourceWorktree: %v", err)
+	}
+	if got != "/tmp/existing-worktree" {
+		t.Errorf("expected /tmp/existing-worktree, got %s", got)
+	}
+}
+
+// TestEnsureResourceWorktree_PRWithWorktreeReuses validates that PR resources
+// with an existing WorktreePath reuse it.
+func TestEnsureResourceWorktree_PRWithWorktreeReuses(t *testing.T) {
+	ta := newTestApp(t)
+	ta.Mode = ModeProjectDetail
+	ta.Detail = NewProjectDetailView("test-proj")
+
+	r := &project.Resource{
+		Kind:         project.ResourcePR,
+		RepoName:     "myrepo",
+		PR:           &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat"},
+		WorktreePath: "/tmp/pr-worktree",
+	}
+	got, err := ta.AppModel.ensureResourceWorktree(r)
+	if err != nil {
+		t.Fatalf("ensureResourceWorktree: %v", err)
+	}
+	if got != "/tmp/pr-worktree" {
+		t.Errorf("expected /tmp/pr-worktree, got %s", got)
+	}
+}
+
+// TestEnsureResourceWorktree_RepoNoWorktree validates error for repo with empty worktree path.
+func TestEnsureResourceWorktree_RepoNoWorktree(t *testing.T) {
+	ta := newTestApp(t)
+	ta.Mode = ModeProjectDetail
+	ta.Detail = NewProjectDetailView("test-proj")
+
+	r := &project.Resource{
+		Kind:     project.ResourceRepo,
+		RepoName: "myrepo",
+	}
+	_, err := ta.AppModel.ensureResourceWorktree(r)
+	if err == nil {
+		t.Fatal("expected error for repo with no worktree")
+	}
+	if !strings.Contains(err.Error(), "no worktree") {
+		t.Errorf("expected 'no worktree' in error, got %q", err.Error())
 	}
 }
 

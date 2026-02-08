@@ -367,6 +367,112 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 	return out, nil
 }
 
+// EnsurePRWorktree creates or reuses a worktree for a PR branch.
+// It checks if a worktree already exists for the branch (by scanning
+// git worktree list output from the source repo), and if so reuses it.
+// Otherwise it fetches the branch from origin and creates a new worktree.
+// The worktree path is: <projectDir>/<repoName>-pr-<number>.
+// Returns the absolute worktree path.
+func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, branchName string) (string, error) {
+	srcRepo := filepath.Join(m.workspace, repoName)
+	if _, err := os.Stat(srcRepo); err != nil {
+		return "", fmt.Errorf("source repo %s: %w", srcRepo, err)
+	}
+
+	wtName := fmt.Sprintf("%s-pr-%d", repoName, prNumber)
+	dstPath := filepath.Join(m.projectDir(projectName), wtName)
+
+	// Check if our target worktree path already exists and is a git worktree.
+	if info, err := os.Stat(dstPath); err == nil && info.IsDir() {
+		gitFile := filepath.Join(dstPath, ".git")
+		if _, err := os.Stat(gitFile); err == nil {
+			return dstPath, nil
+		}
+	}
+
+	// Scan existing worktrees for one already on this branch.
+	if existing := m.findWorktreeForBranch(srcRepo, branchName); existing != "" {
+		return existing, nil
+	}
+
+	// Fetch the branch from origin (it may not exist locally yet).
+	fetchCmd := exec.Command("git", "-C", srcRepo, "fetch", "origin", branchName)
+	fetchCmd.Stderr = nil
+	_ = fetchCmd.Run() // best-effort; branch may already be local
+
+	// Empty dir for core.hooksPath to disable hooks during worktree add.
+	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
+	if err != nil {
+		return "", fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(emptyHooksDir)
+	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
+
+	// Try the local branch first; fall back to origin/<branch>.
+	ref := branchName
+	if err := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", ref).Run(); err != nil {
+		ref = "origin/" + branchName
+		if err := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", ref).Run(); err != nil {
+			return "", fmt.Errorf("branch %s not found locally or on origin", branchName)
+		}
+	}
+
+	var addStderr bytes.Buffer
+	// If we have a local branch, check it out directly. If only remote, create a tracking branch.
+	if ref == branchName {
+		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", dstPath, branchName)...)
+		addCmd.Stderr = &addStderr
+		if err := addCmd.Run(); err != nil {
+			msg := strings.TrimSpace(addStderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("git worktree add: %s", msg)
+		}
+	} else {
+		// Create local tracking branch from origin/<branch>
+		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", "-b", branchName, dstPath, ref)...)
+		addCmd.Stderr = &addStderr
+		if err := addCmd.Run(); err != nil {
+			msg := strings.TrimSpace(addStderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("git worktree add: %s", msg)
+		}
+	}
+
+	return dstPath, nil
+}
+
+// findWorktreeForBranch scans git worktree list output for a worktree
+// that has the given branch checked out. Returns the worktree path or "".
+func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
+	cmd := exec.Command("git", "-C", srcRepo, "worktree", "list", "--porcelain")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+
+	// Porcelain format: blocks separated by blank lines.
+	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
+	var currentPath string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			currentPath = strings.TrimPrefix(line, "worktree ")
+		}
+		if strings.HasPrefix(line, "branch ") {
+			branch := strings.TrimPrefix(line, "branch refs/heads/")
+			if branch == branchName && currentPath != "" && currentPath != srcRepo {
+				return currentPath
+			}
+		}
+	}
+	return ""
+}
+
 // ListProjectResources builds a flat []Resource from repos and PRs.
 // Resources are ordered repo-first: each repo Resource is followed by
 // its PR Resources, enabling tree-style rendering in the UI.
