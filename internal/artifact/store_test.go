@@ -8,8 +8,7 @@ import (
 
 func TestNewStore_UsesEnvOverride(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv(ProjectDirEnv, dir)
-	defer os.Unsetenv(ProjectDirEnv)
+	t.Setenv(ProjectDirEnv, dir)
 
 	store, err := NewStore()
 	if err != nil {
@@ -22,8 +21,7 @@ func TestNewStore_UsesEnvOverride(t *testing.T) {
 
 func TestStore_ProjectDir_NormalizesName(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv(ProjectDirEnv, dir)
-	defer os.Unsetenv(ProjectDirEnv)
+	t.Setenv(ProjectDirEnv, dir)
 
 	store, err := NewStore()
 	if err != nil {
@@ -39,8 +37,7 @@ func TestStore_ProjectDir_NormalizesName(t *testing.T) {
 
 func TestStore_Load_MissingProject(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv(ProjectDirEnv, dir)
-	defer os.Unsetenv(ProjectDirEnv)
+	t.Setenv(ProjectDirEnv, dir)
 
 	store, err := NewStore()
 	if err != nil {
@@ -55,8 +52,7 @@ func TestStore_Load_MissingProject(t *testing.T) {
 
 func TestStore_Load_PlanOnly(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv(ProjectDirEnv, dir)
-	defer os.Unsetenv(ProjectDirEnv)
+	t.Setenv(ProjectDirEnv, dir)
 
 	projDir := filepath.Join(dir, "test-proj")
 	_ = os.MkdirAll(projDir, 0755)
@@ -78,8 +74,7 @@ func TestStore_Load_PlanOnly(t *testing.T) {
 
 func TestStore_Load_DesignOnly(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv(ProjectDirEnv, dir)
-	defer os.Unsetenv(ProjectDirEnv)
+	t.Setenv(ProjectDirEnv, dir)
 
 	projDir := filepath.Join(dir, "test-proj")
 	_ = os.MkdirAll(projDir, 0755)
@@ -101,8 +96,7 @@ func TestStore_Load_DesignOnly(t *testing.T) {
 
 func TestStore_Load_Both(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv(ProjectDirEnv, dir)
-	defer os.Unsetenv(ProjectDirEnv)
+	t.Setenv(ProjectDirEnv, dir)
 
 	projDir := filepath.Join(dir, "full-proj")
 	_ = os.MkdirAll(projDir, 0755)
