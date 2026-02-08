@@ -10,26 +10,21 @@ import (
 	"devdeploy/internal/project"
 )
 
-// ProjectDetailView shows a selected project with resources (repos + PRs) and artifact area.
+// ProjectDetailView shows a selected project with resources (repos + PRs).
 type ProjectDetailView struct {
-	ProjectName   string
-	Resources     []project.Resource // unified resource list (repos + PRs)
-	Selected      int                // index into Resources for cursor highlight
-	PlanContent   string             // from plan.md; empty = "no plan yet"
-	DesignContent string             // from design.md; empty = "no design yet"
+	ProjectName string
+	Resources   []project.Resource // unified resource list (repos + PRs)
+	Selected    int                // index into Resources for cursor highlight
 }
 
 // Ensure ProjectDetailView implements View.
 var _ View = (*ProjectDetailView)(nil)
 
 // NewProjectDetailView creates a detail view for a project.
-// PlanContent and DesignContent can be set by the caller (from ArtifactStore).
 func NewProjectDetailView(name string) *ProjectDetailView {
 	return &ProjectDetailView{
-		ProjectName:   name,
-		Resources:     nil,
-		PlanContent:   "",
-		DesignContent: "",
+		ProjectName: name,
+		Resources:   nil,
 	}
 }
 
@@ -85,14 +80,14 @@ func (p *ProjectDetailView) View() string {
 	prStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	selectedPRStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
-	artifactStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
 
 	var b strings.Builder
 	b.WriteString("← " + titleStyle.Render(p.ProjectName) + "\n\n")
 
 	b.WriteString(sectionStyle.Render("Resources") + "\n")
 	if len(p.Resources) == 0 {
-		b.WriteString("  " + artifactStyle.Render("(no repos added)") + "\n")
+		b.WriteString("  " + emptyStyle.Render("(no repos added)") + "\n")
 	}
 	for i, r := range p.Resources {
 		selected := i == p.Selected
@@ -140,18 +135,6 @@ func (p *ProjectDetailView) View() string {
 		}
 	}
 
-	planLabel := "Plan"
-	if p.PlanContent == "" {
-		planLabel = "Plan (no plan yet)"
-	}
-	designLabel := "Design"
-	if p.DesignContent == "" {
-		designLabel = "Design (no design yet)"
-	}
-	b.WriteString("\n" + sectionStyle.Render("Artifacts") + "\n")
-	b.WriteString("  " + artifactStyle.Render(planLabel+": ") + artifactContent(p.PlanContent) + "\n")
-	b.WriteString("  " + artifactStyle.Render(designLabel+": ") + artifactContent(p.DesignContent) + "\n")
-
 	return b.String()
 }
 
@@ -189,28 +172,3 @@ func resourceStatus(r project.Resource) string {
 	return strings.Join(parts, " ")
 }
 
-func artifactContent(s string) string {
-	if s == "" {
-		return "(empty)"
-	}
-	lines := splitLines(s)
-	if len(lines) == 0 {
-		return "(empty)"
-	}
-	first := lines[0]
-	if len(first) > 80 {
-		first = first[:77] + "..."
-	}
-	return first
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			lines = append(lines, trimmed)
-		}
-	}
-	return lines
-}

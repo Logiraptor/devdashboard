@@ -369,23 +369,3 @@ func TestManager_RemovePRWorktree_NoOp(t *testing.T) {
 	}
 }
 
-func TestManager_CountArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, dir)
-	_ = m.CreateProject("artifacts-proj")
-
-	projDir := filepath.Join(dir, "artifacts-proj")
-	if m.CountArtifacts("artifacts-proj") != 0 {
-		t.Errorf("expected 0 artifacts initially")
-	}
-
-	_ = os.WriteFile(filepath.Join(projDir, "plan.md"), []byte("# Plan\n"), 0644)
-	if m.CountArtifacts("artifacts-proj") != 1 {
-		t.Errorf("expected 1 artifact after plan.md")
-	}
-
-	_ = os.WriteFile(filepath.Join(projDir, "design.md"), []byte("# Design\n"), 0644)
-	if m.CountArtifacts("artifacts-proj") != 2 {
-		t.Errorf("expected 2 artifacts after design.md")
-	}
-}

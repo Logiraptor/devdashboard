@@ -20,7 +20,7 @@
 **Rationale**: Balances visibility and simplicity. Matches project-centric workflow (2–3 projects, many PRs). Artifacts integrated per project. Scales to many projects.
 
 - **Dashboard**: Lists all projects with summary. Select one to open detail.
-- **Project Detail**: Splits for repos/PRs, dedicated artifact area (plan, design doc).
+- **Project Detail**: Shows repos/PRs as a unified resource list.
 - **Overlays**: Modals for create/delete project, repo picker, progress window.
 
 **Model shape**:
@@ -28,8 +28,7 @@
 type AppModel struct {
     Mode       AppMode           // Dashboard | ProjectDetail
     Dashboard  DashboardModel    // List of projects + summaries
-    Detail     ProjectDetailModel // Selected project: splits + artifacts
-    Artifacts  ArtifactStore    // Plan, design doc per project
+    Detail     ProjectDetailModel // Selected project: resources
     Overlays   []Overlay        // Modal stack
     Focus      FocusTarget
 }
@@ -54,23 +53,15 @@ type Overlay struct {
 
 - **One directory per project**: `~/.devdeploy/projects/<project-name>/`
 - **Worktrees inside**: each repo gets a worktree subdir (`repo-a/`, `repo-b/`)
-- **Config + artifacts co-located**: `config.yaml`, `plan.md`, `design.md` in project root
+- **Config co-located**: `config.yaml` in project root
 
 ```
 ~/.devdeploy/projects/
   ha-sampler-querier/
     config.yaml       # project config
-    plan.md           # agent plan
-    design.md         # design doc
     repo-a/           # worktree for first repo
     repo-b/           # worktree for second repo
 ```
 
 - `DEVDEPLOY_PROJECTS_DIR` env overrides base path
 - Project names normalized: lowercase, spaces → hyphens
-
-## Artifacts
-
-- Plain files on disk; editable with any tool
-- "Include in every session" = agents link to file path; no special metadata
-- Missing files → empty or "no plan yet" state

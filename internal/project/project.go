@@ -17,7 +17,25 @@ const (
 	WorkspaceEnv = "DEVDEPLOY_WORKSPACE"
 	// DefaultWorkspace is the default path for listing available repos.
 	DefaultWorkspace = "workspace"
+
+	// ProjectDirEnv is the env var override for the projects base directory.
+	ProjectDirEnv = "DEVDEPLOY_PROJECTS_DIR"
+	// DefaultProjectsBase is the default base for project directories under $HOME.
+	DefaultProjectsBase = ".devdeploy/projects"
 )
+
+// ResolveProjectsBase returns the projects base directory, using the
+// DEVDEPLOY_PROJECTS_DIR env var if set, otherwise ~/.devdeploy/projects.
+func ResolveProjectsBase() (string, error) {
+	if base := os.Getenv(ProjectDirEnv); base != "" {
+		return base, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, DefaultProjectsBase), nil
+}
 
 const alnumChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 
@@ -39,7 +57,7 @@ type Manager struct {
 	workspace    string
 }
 
-// NewManager creates a manager using the same base as artifact.Store.
+// NewManager creates a manager for the given projects base directory.
 func NewManager(projectsBase, workspace string) *Manager {
 	if workspace == "" {
 		workspace = os.Getenv(WorkspaceEnv)
@@ -165,8 +183,6 @@ func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
 		if prWorktreePattern.MatchString(name) {
 			continue
 		}
-		// Skip known artifact files (they're files, not dirs, but be safe)
-		// plan.md, design.md, config.yaml are files; skip non-dirs
 		subPath := filepath.Join(dir, name)
 		if info, err := os.Stat(subPath); err == nil && info.IsDir() {
 			// Check it's a git worktree (has .git file pointing to main repo)
@@ -302,22 +318,6 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 func (m *Manager) projectDir(name string) string {
 	normalized := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 	return filepath.Join(m.projectsBase, normalized)
-}
-
-// artifactFiles are the well-known artifact filenames per project layout (plan.md, design.md).
-var artifactFiles = []string{"plan.md", "design.md"}
-
-// CountArtifacts returns the number of artifact files present in the project directory.
-func (m *Manager) CountArtifacts(projectName string) int {
-	dir := m.projectDir(projectName)
-	count := 0
-	for _, name := range artifactFiles {
-		path := filepath.Join(dir, name)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			count++
-		}
-	}
-	return count
 }
 
 // PRInfo holds minimal PR metadata from gh pr list.

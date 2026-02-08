@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"devdeploy/internal/agent"
-	"devdeploy/internal/artifact"
 	"devdeploy/internal/project"
 	"devdeploy/internal/session"
 )
@@ -26,17 +25,12 @@ func newTestApp(t *testing.T) *testApp {
 	dir := t.TempDir()
 	t.Setenv("DEVDEPLOY_PROJECTS_DIR", dir)
 
-	store, err := artifact.NewStore()
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	projMgr := project.NewManager(store.BaseDir(), dir)
+	projMgr := project.NewManager(dir, dir)
 
 	a := &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),
 		KeyHandler:     NewKeyHandler(NewKeybindRegistry()),
-		ArtifactStore:  store,
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
 		Sessions:       session.New(nil),
@@ -175,7 +169,7 @@ func TestProjectKeybinds_ShowAddRepoMsg_InProjectDetail(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main"), 0644)
 
 	// Recreate project manager with workspace dir
-	ta.ProjectManager = project.NewManager(ta.ArtifactStore.BaseDir(), wsDir)
+	ta.ProjectManager = project.NewManager(ta.Dir, wsDir)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
 	ta.Mode = ModeProjectDetail
@@ -1002,7 +996,7 @@ func TestDeleteProjectMsg_KillsPanesForAllResources(t *testing.T) {
 	_ = ta.ProjectManager.CreateProject("doomed-proj")
 
 	// Create a fake repo worktree so ListProjectResources returns it.
-	projDir := ta.ArtifactStore.BaseDir()
+	projDir := ta.Dir
 	repoDir := filepath.Join(projDir, "doomed-proj", "myrepo")
 	_ = os.MkdirAll(repoDir, 0755)
 	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)

@@ -13,7 +13,6 @@ type ProjectSummary struct {
 	Name      string
 	RepoCount int
 	PRCount   int
-	Artifacts int
 	Selected  bool
 }
 
@@ -89,8 +88,8 @@ func (d *DashboardView) View() string {
 		if i == d.Selected {
 			bullet = "● "
 		}
-		line := fmt.Sprintf("%s%s  %d repos, %d PRs, %d artifacts",
-			bullet, p.Name, p.RepoCount, p.PRCount, p.Artifacts)
+		line := fmt.Sprintf("%s%s  %d repos, %d PRs",
+			bullet, p.Name, p.RepoCount, p.PRCount)
 		if i == d.Selected {
 			b.WriteString(selectedStyle.Render(line) + "\n")
 		} else {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"devdeploy/internal/agent"
-	"devdeploy/internal/artifact"
 	"devdeploy/internal/progress"
 	"devdeploy/internal/project"
 	"devdeploy/internal/session"
@@ -90,7 +89,6 @@ type AppModel struct {
 	Dashboard       *DashboardView
 	Detail          *ProjectDetailView
 	KeyHandler      *KeyHandler
-	ArtifactStore   *artifact.Store
 	ProjectManager  *project.Manager
 	AgentRunner     agent.Runner
 	Sessions        *session.Tracker // tracks panes across all resources; persists across project switches
@@ -517,14 +515,9 @@ func (a *appModelAdapter) setCurrentView(v View) {
 	}
 }
 
-// newProjectDetailView creates a detail view with artifact content and resources from disk/gh.
+// newProjectDetailView creates a detail view with resources from disk/gh.
 func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	v := NewProjectDetailView(name)
-	if a.ArtifactStore != nil {
-		art := a.ArtifactStore.Load(name)
-		v.PlanContent = art.Plan
-		v.DesignContent = art.Design
-	}
 	if a.ProjectManager != nil {
 		v.Resources = a.ProjectManager.ListProjectResources(name)
 	}
@@ -634,7 +627,6 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 				Name:      info.Name,
 				RepoCount: info.RepoCount,
 				PRCount:   m.CountPRs(info.Name),
-				Artifacts: m.CountArtifacts(info.Name),
 				Selected:  false, // Dashboard uses Selected index
 			}
 		}
@@ -644,10 +636,9 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 
 // NewAppModel creates the root application model.
 func NewAppModel() *AppModel {
-	store, _ := artifact.NewStore() // ignore err; store nil = no artifacts
 	projMgr := (*project.Manager)(nil)
-	if store != nil {
-		projMgr = project.NewManager(store.BaseDir(), "")
+	if base, err := project.ResolveProjectsBase(); err == nil {
+		projMgr = project.NewManager(base, "")
 	}
 	reg := NewKeybindRegistry()
 	reg.BindWithDesc("q", tea.Quit, "Quit")
@@ -667,7 +658,6 @@ func NewAppModel() *AppModel {
 		Dashboard:      NewDashboardView(),
 		Detail:         nil,
 		KeyHandler:     NewKeyHandler(reg),
-		ArtifactStore:  store,
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
 		Sessions:       session.New(tmux.ListPaneIDs),

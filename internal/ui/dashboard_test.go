@@ -7,9 +7,9 @@ import (
 
 func testProjects() []ProjectSummary {
 	return []ProjectSummary{
-		{Name: "alpha", RepoCount: 2, PRCount: 3, Artifacts: 1},
-		{Name: "beta", RepoCount: 1, PRCount: 0, Artifacts: 0},
-		{Name: "gamma", RepoCount: 0, PRCount: 1, Artifacts: 2},
+		{Name: "alpha", RepoCount: 2, PRCount: 3},
+		{Name: "beta", RepoCount: 1, PRCount: 0},
+		{Name: "gamma", RepoCount: 0, PRCount: 1},
 	}
 }
 
@@ -200,7 +200,7 @@ func TestDashboardView_ViewShowsSPCHint(t *testing.T) {
 func TestDashboardView_SingleProject(t *testing.T) {
 	d := NewDashboardView()
 	d.Projects = []ProjectSummary{
-		{Name: "only", RepoCount: 5, PRCount: 2, Artifacts: 1},
+		{Name: "only", RepoCount: 5, PRCount: 2},
 	}
 	d.Selected = 0
 

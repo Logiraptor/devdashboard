@@ -22,12 +22,6 @@ See `devdeploy-7uj` epic for full details.
 
 ## Phase 5: Integration
 
-### Artifact Store
-
-- `ArtifactStore` reads `plan.md`, `design.md` from `~/.devdeploy/projects/<name>/`
-- `ProjectDetailView` consumes real content from app model
-- Missing files → empty or "no plan yet"
-
 ### Progress Event Stream
 
 - `progress.Event` type: message, status, timestamp, optional metadata
