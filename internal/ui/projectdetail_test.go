@@ -23,6 +23,7 @@ func testResources() []project.Resource {
 func TestProjectDetailView_JKNavigation(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
+	v.buildItems() // Build items after setting resources
 
 	if v.Selected() != 0 {
 		t.Fatalf("expected initial Selected=0, got %d", v.Selected())
@@ -65,6 +66,7 @@ func TestProjectDetailView_JKNavigation(t *testing.T) {
 func TestProjectDetailView_GAndShiftG(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
+	v.buildItems() // Build items after setting resources
 	v.setSelected(2)
 
 	// G jumps to last
@@ -100,6 +102,7 @@ func TestProjectDetailView_NavigationWithEmptyResources(t *testing.T) {
 func TestProjectDetailView_SelectedResource(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
+	v.buildItems() // Build items after setting resources
 
 	r := v.SelectedResource()
 	if r == nil || r.Kind != project.ResourceRepo || r.RepoName != "devdeploy" {
@@ -122,6 +125,7 @@ func TestProjectDetailView_SelectedResource(t *testing.T) {
 func TestProjectDetailView_ViewSelectionCursor(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
+	v.buildItems() // Build items after setting resources
 	v.setSelected(0)
 
 	output := v.View()
@@ -163,6 +167,7 @@ func TestProjectDetailView_ViewStatusIndicators(t *testing.T) {
 		},
 		{Kind: project.ResourceRepo, RepoName: "grafana"}, // no worktree, no panes
 	}
+	v.buildItems() // Build items after setting resources
 
 	output := v.View()
 
@@ -264,6 +269,7 @@ func TestProjectDetailView_BeadsRenderedUnderRepo(t *testing.T) {
 			},
 		},
 	}
+	v.buildItems() // Build items after setting resources
 
 	output := v.View()
 
@@ -299,6 +305,7 @@ func TestProjectDetailView_BeadsRenderedUnderPR(t *testing.T) {
 			},
 		},
 	}
+	v.buildItems() // Build items after setting resources
 
 	output := v.View()
 
@@ -315,6 +322,7 @@ func TestProjectDetailView_NoBeadsNoPlaceholder(t *testing.T) {
 	v.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy"},
 	}
+	v.buildItems() // Build items after setting resources
 
 	output := v.View()
 
@@ -337,6 +345,7 @@ func TestProjectDetailView_BeadTitleTruncation(t *testing.T) {
 			},
 		},
 	}
+	v.buildItems() // Build items after setting resources
 
 	output := v.View()
 
@@ -584,6 +593,7 @@ func TestProjectDetailView_SelectedBead_IssueType(t *testing.T) {
 func TestProjectDetailView_BeadSelectionHighlight(t *testing.T) {
 	v := NewProjectDetailView("proj")
 	v.Resources = testResourcesWithBeads()
+	v.buildItems() // Build items after setting resources
 
 	// Move to bead 0.
 	v.Update(keyMsg("j"))
@@ -633,6 +643,7 @@ func TestProjectDetailView_ChildBeadsIndented(t *testing.T) {
 			},
 		},
 	}
+	v.buildItems() // Build items after setting resources
 
 	output := v.View()
 
@@ -679,6 +690,7 @@ func TestProjectDetailView_ChildBeadsIndented(t *testing.T) {
 func TestProjectDetailView_NoScrollWhenFits(t *testing.T) {
 	v := NewProjectDetailView("proj")
 	v.Resources = testResources() // 4 resources, no beads
+	v.buildItems() // Build items after setting resources
 	v.SetSize(80, 30)             // plenty of room
 
 	output := v.View()
@@ -700,6 +712,7 @@ func TestProjectDetailView_ScrollsDownWhenCursorMovesBelow(t *testing.T) {
 		})
 	}
 	v.Resources = resources
+	v.buildItems() // Build items after setting resources
 	v.SetSize(80, 12) // Small terminal: viewHeight = 12 - 4 = 8 lines
 
 	// Navigate to the bottom.
@@ -729,6 +742,7 @@ func TestProjectDetailView_ScrollsUpWhenCursorMovesAbove(t *testing.T) {
 		})
 	}
 	v.Resources = resources
+	v.buildItems() // Build items after setting resources
 	v.SetSize(80, 12) // viewHeight = 8
 
 	// Navigate to bottom first.
@@ -763,6 +777,7 @@ func TestProjectDetailView_GAndShiftG_Scroll(t *testing.T) {
 		})
 	}
 	v.Resources = resources
+	v.buildItems() // Build items after setting resources
 	v.SetSize(80, 12)
 
 	// G jumps to bottom.
@@ -806,6 +821,7 @@ func TestProjectDetailView_ScrollWithBeads(t *testing.T) {
 			},
 		},
 	}
+	v.buildItems() // Build items after setting resources
 	v.SetSize(80, 10) // viewHeight = 6
 
 	// Navigate down through beads until repo-c's bead is selected.
@@ -833,6 +849,7 @@ func TestProjectDetailView_NoScrollWithoutTermHeight(t *testing.T) {
 		})
 	}
 	v.Resources = resources
+	v.buildItems() // Build items after setting resources
 	// termHeight is 0 (default) — no scrolling.
 
 	output := v.View()
@@ -857,6 +874,7 @@ func TestProjectDetailView_WindowSizeMsgUpdatesViewport(t *testing.T) {
 		})
 	}
 	v.Resources = resources
+	v.buildItems() // Build items after setting resources
 
 	// Send WindowSizeMsg.
 	v.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
@@ -885,6 +903,7 @@ func TestProjectDetailView_WiderTerminalShowsMoreContent(t *testing.T) {
 			{Kind: project.ResourcePR, RepoName: "devdeploy",
 				PR: &project.PRInfo{Number: 99, Title: longTitle, State: "OPEN"}},
 		}
+		v.buildItems() // Build items after setting resources
 		if width > 0 {
 			v.SetSize(width, 30)
 		}
