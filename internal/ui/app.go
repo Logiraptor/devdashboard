@@ -80,6 +80,13 @@ type ProjectDetailBeadsLoadedMsg struct {
 	Resources   []project.Resource // repos + PRs + beads (complete)
 }
 
+// ResourceBeadsLoadedMsg is sent when beads are loaded for resources (phase 3: async data).
+// Contains beads grouped by resource index for efficient attachment to existing resources.
+type ResourceBeadsLoadedMsg struct {
+	ProjectName     string
+	BeadsByResource map[int][]project.BeadInfo // resource index -> beads
+}
+
 // CreateProjectMsg is sent when user creates a project (from modal).
 type CreateProjectMsg struct {
 	Name string
@@ -293,7 +300,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.buildItems() // Rebuild list items to show PRs
 			a.refreshDetailPanes()
 			// Trigger Phase 3: Load beads asynchronously
-			return a, loadProjectDetailBeadsCmd(msg.ProjectName, resources)
+			return a, loadResourceBeadsCmd(msg.ProjectName, resources)
 		}
 		return a, nil
 	case ProjectDetailPRsLoadedMsg:
@@ -305,7 +312,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.buildItems() // Rebuild list items to show PRs
 			a.refreshDetailPanes()
 			// Trigger Phase 3: Load beads asynchronously
-			return a, loadProjectDetailBeadsCmd(msg.ProjectName, msg.Resources)
+			return a, loadResourceBeadsCmd(msg.ProjectName, msg.Resources)
 		}
 		return a, nil
 	case ProjectDetailBeadsLoadedMsg:
@@ -313,6 +320,20 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
 			a.Detail.Resources = msg.Resources
 			a.Detail.loadingPRs = false
+			a.Detail.loadingBeads = false
+			a.Detail.buildItems() // Rebuild list items to show beads
+			a.refreshDetailPanes()
+		}
+		return a, nil
+	case ResourceBeadsLoadedMsg:
+		// Phase 3: Beads loaded, attach to matching resources in Detail view
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			// Attach beads to matching resources by index
+			for idx, beads := range msg.BeadsByResource {
+				if idx >= 0 && idx < len(a.Detail.Resources) {
+					a.Detail.Resources[idx].Beads = beads
+				}
+			}
 			a.Detail.loadingBeads = false
 			a.Detail.buildItems() // Rebuild list items to show beads
 			a.refreshDetailPanes()
@@ -1120,6 +1141,56 @@ func loadProjectDetailBeadsCmd(projectName string, resourcesWithPRs []project.Re
 		wg.Wait()
 		
 		return ProjectDetailBeadsLoadedMsg{ProjectName: projectName, Resources: resources}
+	}
+}
+
+// loadResourceBeadsCmd returns a command that loads beads asynchronously (phase 3: async data).
+// Spawns goroutines for each resource with a worktree, calls beads.ListForRepo/beads.ListForPR
+// in parallel, and returns ResourceBeadsLoadedMsg with beads grouped by resource index.
+func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.Cmd {
+	return func() tea.Msg {
+		beadsByResource := make(map[int][]project.BeadInfo)
+		
+		// Fetch beads concurrently across resources.
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		
+		for i := range resources {
+			r := &resources[i]
+			if r.WorktreePath == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(resIdx int) {
+				defer wg.Done()
+				var bdBeads []beads.Bead
+				switch resources[resIdx].Kind {
+				case project.ResourceRepo:
+					bdBeads = beads.ListForRepo(resources[resIdx].WorktreePath, projectName)
+				case project.ResourcePR:
+					if resources[resIdx].PR != nil {
+						bdBeads = beads.ListForPR(resources[resIdx].WorktreePath, projectName, resources[resIdx].PR.Number)
+					}
+				}
+				beadInfos := make([]project.BeadInfo, len(bdBeads))
+				for j, b := range bdBeads {
+					beadInfos[j] = project.BeadInfo{
+						ID:        b.ID,
+						Title:     b.Title,
+						Status:    b.Status,
+						IssueType: b.IssueType,
+						IsChild:   b.ParentID != "",
+					}
+				}
+				mu.Lock()
+				beadsByResource[resIdx] = beadInfos
+				mu.Unlock()
+			}(i)
+		}
+		
+		wg.Wait()
+		
+		return ResourceBeadsLoadedMsg{ProjectName: projectName, BeadsByResource: beadsByResource}
 	}
 }
 
