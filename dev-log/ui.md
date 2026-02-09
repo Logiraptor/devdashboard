@@ -68,19 +68,19 @@ type Overlay struct {
 
 ## Beads per Resource
 
-Each resource (repo or PR) displays associated **beads** (bd issues) inline in the project detail view. Beads are queried from bd using label-based scoping.
+Each resource (repo or PR) displays associated **beads** (bd issues) inline in the project detail view.
 
 ### Scoping
 
-- **Project label** (`project:<project-name>`): Only beads with this label appear under the project. This makes beads opt-in per project.
-- **PR label** (`pr:<number>`): Beads with this label appear under the specific PR resource. Beads with only a project label (no `pr:` label) appear under the repo resource.
+- **Repo resource**: All beads in the repo (excluding PR-labeled ones)
+- **PR resource**: Beads with `pr:<number>` label
 
 ### Query logic
 
 | Resource | Command | Filter |
 |----------|---------|--------|
-| Repo | `bd list --label project:<name> --json` in repo worktree | Exclude beads with any `pr:*` label |
-| PR | `bd list --label project:<name> --label pr:<number> --json` in repo worktree | None |
+| Repo | `bd list --json` in repo worktree | Exclude beads with any `pr:*` label |
+| PR | `bd list --label pr:<number> --json` in repo worktree | None |
 
 Closed beads are filtered out (only open/in_progress shown).
 

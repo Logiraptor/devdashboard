@@ -50,13 +50,12 @@ func runBDReal(dir string, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-// ListForRepo runs `bd list --label project:<project> --json` in the given
-// worktree directory. Returns beads scoped to this project, excluding any
-// with a pr:<n> label (those belong to PR resources).
+// ListForRepo runs `bd list --json` in the given worktree directory.
+// Returns all beads in the repo, excluding any with a pr:<n> label
+// (those belong to PR resources).
 func ListForRepo(worktreeDir, projectName string) []Bead {
 	out, err := runBD(worktreeDir,
 		"list",
-		"--label", fmt.Sprintf("project:%s", projectName),
 		"--json",
 		"--limit", "0",
 	)
@@ -75,12 +74,11 @@ func ListForRepo(worktreeDir, projectName string) []Bead {
 	return SortHierarchically(result)
 }
 
-// ListForPR runs `bd list --label project:<project> --label pr:<number> --json`
-// in the given worktree directory.
+// ListForPR runs `bd list --label pr:<number> --json` in the given worktree
+// directory. Returns beads associated with this specific PR.
 func ListForPR(worktreeDir, projectName string, prNumber int) []Bead {
 	out, err := runBD(worktreeDir,
 		"list",
-		"--label", fmt.Sprintf("project:%s", projectName),
 		"--label", fmt.Sprintf("pr:%d", prNumber),
 		"--json",
 		"--limit", "0",

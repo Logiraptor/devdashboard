@@ -31,13 +31,13 @@ func containsAll(args []string, want string) bool {
 
 func TestListForRepo_FiltersClosedAndPRBeads(t *testing.T) {
 	entries := []bdListEntry{
-		{ID: "a-1", Title: "Open repo bead", Status: "open", Priority: 2, Labels: []string{"project:myproj"}},
-		{ID: "a-2", Title: "In-progress bead", Status: "in_progress", Priority: 1, Labels: []string{"project:myproj"}},
-		{ID: "a-3", Title: "Closed bead", Status: "closed", Priority: 2, Labels: []string{"project:myproj"}},
-		{ID: "a-4", Title: "PR bead", Status: "open", Priority: 2, Labels: []string{"project:myproj", "pr:42"}},
+		{ID: "a-1", Title: "Open repo bead", Status: "open", Priority: 2, Labels: []string{}},
+		{ID: "a-2", Title: "In-progress bead", Status: "in_progress", Priority: 1, Labels: []string{}},
+		{ID: "a-3", Title: "Closed bead", Status: "closed", Priority: 2, Labels: []string{}},
+		{ID: "a-4", Title: "PR bead", Status: "open", Priority: 2, Labels: []string{"pr:42"}},
 	}
 
-	key := fmt.Sprintf("%v", []string{"list", "--label", "project:myproj", "--json", "--limit", "0"})
+	key := fmt.Sprintf("%v", []string{"list", "--json", "--limit", "0"})
 	old := runBD
 	runBD = mockBD(map[string][]bdListEntry{key: entries})
 	defer func() { runBD = old }()
@@ -59,11 +59,11 @@ func TestListForRepo_FiltersClosedAndPRBeads(t *testing.T) {
 
 func TestListForPR(t *testing.T) {
 	entries := []bdListEntry{
-		{ID: "b-1", Title: "PR bead", Status: "open", Priority: 1, Labels: []string{"project:myproj", "pr:7"}},
-		{ID: "b-2", Title: "Closed PR bead", Status: "closed", Priority: 2, Labels: []string{"project:myproj", "pr:7"}},
+		{ID: "b-1", Title: "PR bead", Status: "open", Priority: 1, Labels: []string{"pr:7"}},
+		{ID: "b-2", Title: "Closed PR bead", Status: "closed", Priority: 2, Labels: []string{"pr:7"}},
 	}
 
-	key := fmt.Sprintf("%v", []string{"list", "--label", "project:myproj", "--label", "pr:7", "--json", "--limit", "0"})
+	key := fmt.Sprintf("%v", []string{"list", "--label", "pr:7", "--json", "--limit", "0"})
 	old := runBD
 	runBD = mockBD(map[string][]bdListEntry{key: entries})
 	defer func() { runBD = old }()
