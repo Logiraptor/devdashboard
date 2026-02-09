@@ -480,6 +480,11 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 			commitHashBefore = strings.TrimSpace(string(outBytes))
 		}
 
+		// Set current bead for progress display
+		if currentFormatter != nil {
+			currentFormatter.SetCurrentBead(child.ID, child.Title)
+		}
+
 		// Execute agent
 		result, err := execute(ctx, prompt)
 		if err != nil {
@@ -489,6 +494,8 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 		// Print summary if formatter was used
 		if currentFormatter != nil && !cfg.Verbose {
+			// Clear progress line before printing summary
+			fmt.Fprintf(out, "\n")
 			if summaryStr := currentFormatter.Summary(); summaryStr != "" {
 				fmt.Fprintf(out, "%s\n", summaryStr)
 			}
@@ -1009,6 +1016,11 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			commitHashBefore = strings.TrimSpace(string(out))
 		}
 
+		// Set current bead for progress display
+		if currentFormatter != nil {
+			currentFormatter.SetCurrentBead(bead.ID, bead.Title)
+		}
+
 		// 4. Execute agent.
 		result, err := execute(ctx, prompt)
 		if err != nil {
@@ -1019,6 +1031,8 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 		// Print summary if formatter was used
 		if currentFormatter != nil && !cfg.Verbose {
+			// Clear progress line before printing summary
+			fmt.Fprintf(out, "\n")
 			if summaryStr := currentFormatter.Summary(); summaryStr != "" {
 				fmt.Fprintf(out, "%s\n", summaryStr)
 			}

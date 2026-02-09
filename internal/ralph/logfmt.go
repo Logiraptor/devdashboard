@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 )
 
 // LogFormatter wraps an io.Writer and formats agent stream-json output
@@ -26,6 +27,11 @@ type LogFormatter struct {
 	// Track last shell command to detect if it had output
 	lastShellCmd  string
 	shellHadOutput bool
+	// Progress display
+	beadID      string
+	beadTitle   string
+	startTime   time.Time
+	lastLine    string // Track last output to avoid flicker
 }
 
 // NewLogFormatter creates a new log formatter that writes formatted output to w.
@@ -71,6 +77,19 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 	// Write formatted output
 	formattedBytes := []byte(formatted.String())
 	n, err := f.w.Write(formattedBytes)
+	
+	// After processing, update progress line
+	f.mu.Lock()
+	if f.beadID != "" {
+		progressLine := f.renderProgressLine()
+		if progressLine != f.lastLine {
+			// Clear line and write new progress
+			fmt.Fprintf(f.w, "\r\033[K%s", progressLine)
+			f.lastLine = progressLine
+		}
+	}
+	f.mu.Unlock()
+	
 	// Return the original length to satisfy io.Writer contract
 	if err == nil && n < len(formattedBytes) {
 		// Adjust return value to match original input length
@@ -312,6 +331,45 @@ func (f *LogFormatter) Summary() string {
 	return fmt.Sprintf("[ralph] Completed: %s", strings.Join(parts, ", "))
 }
 
+// SetCurrentBead sets the current bead being worked on for progress display.
+func (f *LogFormatter) SetCurrentBead(id, title string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beadID = id
+	f.beadTitle = title
+	f.startTime = time.Now()
+	f.lastLine = "" // Reset last line to force update
+}
+
+// renderProgressLine renders the progress line showing current bead and activity counts.
+// Must be called with mutex held.
+func (f *LogFormatter) renderProgressLine() string {
+	elapsed := time.Since(f.startTime).Round(time.Second)
+	
+	// Truncate title
+	title := f.beadTitle
+	if len(title) > 30 {
+		title = title[:27] + "..."
+	}
+	
+	parts := []string{fmt.Sprintf("● %s \"%s\"", f.beadID, title)}
+	if f.readsCount > 0 {
+		parts = append(parts, fmt.Sprintf("read %d", f.readsCount))
+	}
+	if f.editsCount > 0 {
+		parts = append(parts, fmt.Sprintf("edit %d", f.editsCount))
+	}
+	if f.searchesCount > 0 {
+		parts = append(parts, fmt.Sprintf("search %d", f.searchesCount))
+	}
+	if f.shellsCount > 0 {
+		parts = append(parts, fmt.Sprintf("shell %d", f.shellsCount))
+	}
+	parts = append(parts, fmt.Sprintf("%ds", int(elapsed.Seconds())))
+	
+	return strings.Join(parts, " | ")
+}
+
 // Reset clears all counters (useful for testing or reuse).
 func (f *LogFormatter) Reset() {
 	f.mu.Lock()
@@ -325,4 +383,7 @@ func (f *LogFormatter) Reset() {
 	f.errorsCount = 0
 	f.lastShellCmd = ""
 	f.shellHadOutput = false
+	f.beadID = ""
+	f.beadTitle = ""
+	f.lastLine = ""
 }
