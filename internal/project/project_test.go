@@ -454,3 +454,52 @@ func TestManager_RemovePRWorktree_NoOp(t *testing.T) {
 	}
 }
 
+func TestMergePRs_Deduplicates(t *testing.T) {
+	a := []PRInfo{
+		{Number: 1, Title: "PR one", State: "OPEN"},
+		{Number: 2, Title: "PR two", State: "OPEN"},
+	}
+	b := []PRInfo{
+		{Number: 2, Title: "PR two (dup)", State: "OPEN"},
+		{Number: 3, Title: "PR three", State: "OPEN"},
+	}
+
+	result := mergePRs(a, b)
+	if len(result) != 3 {
+		t.Fatalf("expected 3 PRs after merge, got %d", len(result))
+	}
+
+	// First slice takes precedence for duplicates.
+	numbers := make([]int, len(result))
+	for i, pr := range result {
+		numbers[i] = pr.Number
+	}
+	if numbers[0] != 1 || numbers[1] != 2 || numbers[2] != 3 {
+		t.Errorf("expected PR numbers [1, 2, 3], got %v", numbers)
+	}
+	// PR 2 should use the title from slice a (first wins).
+	if result[1].Title != "PR two" {
+		t.Errorf("expected first-wins title 'PR two', got %q", result[1].Title)
+	}
+}
+
+func TestMergePRs_EmptySlices(t *testing.T) {
+	// Both empty.
+	result := mergePRs(nil, nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 PRs, got %d", len(result))
+	}
+
+	// One empty.
+	a := []PRInfo{{Number: 1, Title: "PR one", State: "OPEN"}}
+	result = mergePRs(a, nil)
+	if len(result) != 1 || result[0].Number != 1 {
+		t.Errorf("expected [1], got %v", result)
+	}
+
+	result = mergePRs(nil, a)
+	if len(result) != 1 || result[0].Number != 1 {
+		t.Errorf("expected [1], got %v", result)
+	}
+}
+

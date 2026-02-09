@@ -334,9 +334,15 @@ type RepoPRs struct {
 	PRs  []PRInfo
 }
 
+// reviewTeam is the GitHub team slug used to filter PRs by review request.
+// PRs requesting review from this team are included alongside the current
+// user's own PRs.
+const reviewTeam = "adaptive-telemetry"
+
 // listPRsInRepo runs gh pr list in the given worktree dir and returns PRs.
 // state: "open", "merged", "closed", or "all". limit: max PRs (0 = default 30).
-func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
+// extraArgs are appended to the gh command (e.g. --author, --search).
+func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int, extraArgs ...string) ([]PRInfo, error) {
 	args := []string{"pr", "list", "--json", "number,title,state,headRefName"}
 	if state != "" && state != "open" {
 		args = append(args, "--state", state)
@@ -344,6 +350,7 @@ func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int) ([
 	if limit > 0 {
 		args = append(args, "--limit", fmt.Sprintf("%d", limit))
 	}
+	args = append(args, extraArgs...)
 	cmd := exec.Command("gh", args...)
 	cmd.Dir = worktreePath
 	var out bytes.Buffer
@@ -359,6 +366,61 @@ func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int) ([
 	return prs, nil
 }
 
+// getRepoOwner returns the GitHub owner (org or user) for a repo worktree
+// by running `gh repo view --json owner`. Returns "" on failure.
+func getRepoOwner(worktreePath string) string {
+	cmd := exec.Command("gh", "repo", "view", "--json", "owner", "-q", ".owner.login")
+	cmd.Dir = worktreePath
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out.String())
+}
+
+// listFilteredPRsInRepo returns PRs authored by the current user OR
+// requesting review from the reviewTeam. It makes two gh pr list calls
+// and deduplicates the results by PR number.
+func (m *Manager) listFilteredPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
+	// Fetch PRs authored by the current user.
+	myPRs, err := m.listPRsInRepo(worktreePath, state, limit, "--author", "@me")
+
+	// Fetch PRs requesting review from the team.
+	var teamPRs []PRInfo
+	var teamErr error
+	if owner := getRepoOwner(worktreePath); owner != "" {
+		search := fmt.Sprintf("team-review-requested:%s/%s", owner, reviewTeam)
+		teamPRs, teamErr = m.listPRsInRepo(worktreePath, state, limit, "--search", search)
+	}
+
+	// If both calls failed, return the first error.
+	if err != nil && teamErr != nil {
+		return nil, err
+	}
+
+	return mergePRs(myPRs, teamPRs), nil
+}
+
+// mergePRs combines two PR slices and deduplicates by PR number.
+// The first slice's entries take precedence on duplicates.
+func mergePRs(a, b []PRInfo) []PRInfo {
+	seen := make(map[int]bool, len(a))
+	result := make([]PRInfo, 0, len(a)+len(b))
+	for _, pr := range a {
+		seen[pr.Number] = true
+		result = append(result, pr)
+	}
+	for _, pr := range b {
+		if !seen[pr.Number] {
+			seen[pr.Number] = true
+			result = append(result, pr)
+		}
+	}
+	return result
+}
+
 // CountPRs returns the number of open PRs across the project's repos.
 func (m *Manager) CountPRs(projectName string) int {
 	repos, err := m.ListProjectRepos(projectName)
@@ -368,7 +430,7 @@ func (m *Manager) CountPRs(projectName string) int {
 	count := 0
 	for _, repoName := range repos {
 		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
-		prs, err := m.listPRsInRepo(worktreePath, "open", 0)
+		prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
 		if err != nil {
 			continue
 		}
@@ -405,8 +467,8 @@ func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
 			WorktreePath: worktreePath,
 		})
 
-		// Fetch open PRs once per repo — the only gh call needed.
-		prs, err := m.listPRsInRepo(worktreePath, "open", 0)
+		// Fetch open PRs once per repo (filtered to mine + team review requests).
+		prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
 		if err != nil {
 			continue
 		}
@@ -445,9 +507,9 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 	for _, repoName := range repos {
 		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
 		var all []PRInfo
-		open, _ := m.listPRsInRepo(worktreePath, "open", 0)
+		open, _ := m.listFilteredPRsInRepo(worktreePath, "open", 0)
 		all = append(all, open...)
-		merged, _ := m.listPRsInRepo(worktreePath, "merged", mergedPRsLimit)
+		merged, _ := m.listFilteredPRsInRepo(worktreePath, "merged", mergedPRsLimit)
 		all = append(all, merged...)
 		if len(all) > 0 {
 			out = append(out, RepoPRs{Repo: repoName, PRs: all})
