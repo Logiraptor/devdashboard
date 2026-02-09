@@ -6,7 +6,6 @@ package tmux
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/GianlucaP106/gotmux/gotmux"
@@ -26,48 +25,6 @@ func client() (*gotmux.Tmux, error) {
 	}
 	tmuxClient = t
 	return tmuxClient, nil
-}
-
-// WindowPaneCount returns the number of panes in the current window.
-func WindowPaneCount() (int, error) {
-	t, err := client()
-	if err != nil {
-		return 0, err
-	}
-	out, err := t.Command("display-message", "-p", "#{window_panes}")
-	if err != nil {
-		return 0, fmt.Errorf("tmux display-message: %w", err)
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(out))
-	if err != nil {
-		return 0, fmt.Errorf("parse pane count: %w", err)
-	}
-	return n, nil
-}
-
-// EnsureLayout creates a two-pane layout if it doesn't exist: left = devdeploy, right = project area.
-// If the current window has only one pane, splits horizontally to create the right pane.
-// Idempotent: does nothing if layout already has 2+ panes.
-func EnsureLayout() error {
-	count, err := WindowPaneCount()
-	if err != nil {
-		return err
-	}
-	if count >= 2 {
-		return nil // layout already exists
-	}
-	t, err := client()
-	if err != nil {
-		return err
-	}
-	if _, err := t.Command("split-window", "-h"); err != nil {
-		return fmt.Errorf("tmux split-window: %w", err)
-	}
-	// split-window focuses the new pane; switch back to devdeploy (left)
-	if _, err := t.Command("select-pane", "-L"); err != nil {
-		return fmt.Errorf("tmux select-pane: %w", err)
-	}
-	return nil
 }
 
 // SplitPane creates a new pane in the current window with cwd set to workDir.

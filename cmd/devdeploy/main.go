@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"devdeploy/internal/tmux"
 	"devdeploy/internal/ui"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -12,10 +11,6 @@ import (
 func main() {
 	if os.Getenv("TMUX") == "" {
 		fmt.Fprintln(os.Stderr, "Run devdeploy inside tmux (e.g. `tmux new -s dev` then `devdeploy`)")
-		os.Exit(1)
-	}
-	if err := tmux.EnsureLayout(); err != nil {
-		fmt.Fprintf(os.Stderr, "Layout init: %v\n", err)
 		os.Exit(1)
 	}
 	model := ui.NewAppModel().AsTeaModel()
