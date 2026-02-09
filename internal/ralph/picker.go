@@ -210,3 +210,31 @@ func ComplexityScorer(beads []beads.Bead) {
 	})
 }
 
+// FetchEpicChildren fetches all ready children of an epic using bd ready --parent.
+// Returns the children sorted by priority (ascending) then creation date (oldest first).
+func FetchEpicChildren(runBD RunBDFunc, workDir string, epicID string, labels []string) ([]beads.Bead, error) {
+	if runBD == nil {
+		runBD = runBDReal
+	}
+
+	args := []string{"ready", "--json", "--parent", epicID}
+	for _, l := range labels {
+		args = append(args, "--label", l)
+	}
+
+	out, err := runBD(workDir, args...)
+	if err != nil {
+		return nil, fmt.Errorf("bd ready --parent %s: %w", epicID, err)
+	}
+
+	parsed, err := parseReadyBeads(out)
+	if err != nil {
+		return nil, fmt.Errorf("parsing bd ready output: %w", err)
+	}
+
+	// Sort by priority then creation date
+	DefaultScorer(parsed)
+
+	return parsed, nil
+}
+

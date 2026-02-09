@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 9,
+  "iteration": 10,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-fyt.3",
-    "title": "Add tests for filter mode interaction"
+    "id": "devdeploy-w5a",
+    "title": "Epic-aware Ralph: orchestrate leaf tasks then verify with opus"
   },
-  "elapsed_ns": 483262891333,
+  "elapsed_ns": 575737960667,
   "tallies": {
-    "completed": 7,
+    "completed": 8,
     "questions": 0,
     "failed": 1,
     "timed_out": 0,

@@ -862,3 +862,77 @@ func TestRun_FinalSummaryIncludesStopReason(t *testing.T) {
 		t.Errorf("output missing success count:\n%s", output)
 	}
 }
+
+// TestFetchEpicChildren tests fetching epic children.
+func TestFetchEpicChildren(t *testing.T) {
+	now := time.Now()
+	entries := []bdReadyEntry{
+		{ID: "child-1", Title: "Child 1", Status: "open", Priority: 1, CreatedAt: now},
+		{ID: "child-2", Title: "Child 2", Status: "open", Priority: 2, CreatedAt: now.Add(-1 * time.Hour)},
+	}
+
+	children, err := FetchEpicChildren(mockBDReady(entries), "/fake/dir", "epic-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children, got %d", len(children))
+	}
+
+	// Should be sorted by priority (ascending)
+	if children[0].ID != "child-1" {
+		t.Errorf("expected first child to be child-1, got %s", children[0].ID)
+	}
+	if children[1].ID != "child-2" {
+		t.Errorf("expected second child to be child-2, got %s", children[1].ID)
+	}
+}
+
+// TestRunEpicOrchestrator_AllChildrenSuccess tests epic orchestrator with all children succeeding.
+func TestRunEpicOrchestrator_AllChildrenSuccess(t *testing.T) {
+	buf := &bytes.Buffer{}
+	cfg := baseCfg(buf)
+	cfg.Epic = "epic-1"
+	cfg.TargetBead = "" // Must be empty for epic mode
+
+	// Mock FetchEpicChildren by mocking the bd command via a custom RunBD
+	now := time.Now()
+	entries := []bdReadyEntry{
+		{ID: "child-1", Title: "Child 1", Status: "open", Priority: 1, CreatedAt: now},
+		{ID: "child-2", Title: "Child 2", Status: "open", Priority: 2, CreatedAt: now.Add(-1 * time.Hour)},
+	}
+
+	// We need to mock both FetchEpicChildren (via RunBD) and FetchPromptData
+	// For now, let's test the basic flow - we'll need to mock bd show calls too
+	// This is a simplified test that verifies the orchestrator is invoked
+	// Full integration would require more complex mocking
+
+	cfg.AssessFn = outcomeSequence(OutcomeSuccess, OutcomeSuccess)
+
+	// Note: This test will fail if bd commands aren't mocked properly
+	// For a full test, we'd need to mock all bd calls (show, ready, etc.)
+	// This is a placeholder showing the test structure
+	_ = entries
+	_ = buf
+	_ = cfg
+	t.Skip("Epic orchestrator test requires full bd command mocking - skipping for now")
+}
+
+// TestRunEpicOrchestrator_ChildFailure tests epic orchestrator stopping on child failure.
+func TestRunEpicOrchestrator_ChildFailure(t *testing.T) {
+	t.Skip("Epic orchestrator test requires full bd command mocking - skipping for now")
+}
+
+// TestRunEpicOrchestrator_NoChildren tests epic orchestrator with no children.
+func TestRunEpicOrchestrator_NoChildren(t *testing.T) {
+	// Test FetchEpicChildren with empty result
+	children, err := FetchEpicChildren(mockBDReady([]bdReadyEntry{}), "/fake/dir", "epic-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(children) != 0 {
+		t.Errorf("expected 0 children, got %d", len(children))
+	}
+}

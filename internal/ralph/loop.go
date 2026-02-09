@@ -304,8 +304,279 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	return runConcurrent(ctx, cfg, concurrency)
 }
 
+// runEpicOrchestrator orchestrates epic leaf tasks sequentially, then runs opus verification.
+// This is invoked when --epic flag is set (and --bead is not set).
+func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+	out := cfg.Output
+	if out == nil {
+		out = os.Stdout
+	}
+	loopStart := time.Now()
+
+	// Resolve defaults.
+	wallTimeout := cfg.Timeout
+	if wallTimeout <= 0 {
+		wallTimeout = DefaultWallClockTimeout
+	}
+
+	// Apply wall-clock timeout to context.
+	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
+	defer cancelWall()
+
+	// Fetch all children of the epic
+	fmt.Fprintf(out, "Epic orchestrator: fetching children of epic %s\n", cfg.Epic)
+	children, err := FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic, cfg.Labels)
+	if err != nil {
+		return nil, fmt.Errorf("fetching epic children: %w", err)
+	}
+
+	if len(children) == 0 {
+		fmt.Fprintf(out, "No ready children found for epic %s\n", cfg.Epic)
+		return &RunSummary{
+			StopReason: StopNormal,
+			Duration:   time.Since(loopStart),
+		}, nil
+	}
+
+	fmt.Fprintf(out, "Found %d child task(s) for epic %s\n", len(children), cfg.Epic)
+
+	// Set up status writer for devdeploy TUI polling.
+	statusWriter := NewStatusWriter(cfg.WorkDir)
+	defer statusWriter.Clear()
+
+	summary := &RunSummary{}
+
+	// Fetch epic info for verification prompt
+	epicPromptData, err := FetchPromptData(nil, cfg.WorkDir, cfg.Epic)
+	if err != nil {
+		return nil, fmt.Errorf("fetching epic prompt data: %w", err)
+	}
+
+	fetchPrompt := cfg.FetchPrompt
+	if fetchPrompt == nil {
+		fetchPrompt = func(beadID string) (*PromptData, error) {
+			return FetchPromptData(nil, cfg.WorkDir, beadID)
+		}
+	}
+
+	render := cfg.Render
+	if render == nil {
+		render = RenderPrompt
+	}
+
+	execute := cfg.Execute
+	if execute == nil {
+		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
+			var opts []Option
+			if cfg.AgentTimeout > 0 {
+				opts = append(opts, WithTimeout(cfg.AgentTimeout))
+			}
+			if !cfg.Verbose {
+				formatter := NewLogFormatter(out, false)
+				opts = append(opts, WithStdoutWriter(formatter))
+			} else if out != os.Stdout {
+				opts = append(opts, WithStdoutWriter(out))
+			}
+			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
+		}
+	}
+
+	assessFn := cfg.AssessFn
+	if assessFn == nil {
+		assessFn = func(beadID string, result *AgentResult) (Outcome, string) {
+			return Assess(cfg.WorkDir, beadID, result)
+		}
+	}
+
+	syncFn := cfg.SyncFn
+	if syncFn == nil {
+		syncFn = func() error {
+			cmd := exec.Command("bd", "sync")
+			cmd.Dir = cfg.WorkDir
+			return cmd.Run()
+		}
+	}
+
+	// Run each child sequentially
+	for i, child := range children {
+		// Guard: context cancellation / wall-clock timeout.
+		if ctx.Err() != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				summary.StopReason = StopWallClock
+			} else {
+				summary.StopReason = StopContextCancelled
+			}
+			break
+		}
+
+		// Write status: starting iteration with current bead.
+		currentBead := &BeadInfo{ID: child.ID, Title: child.Title}
+		status := Status{
+			State:         "running",
+			Iteration:     i + 1,
+			MaxIterations: len(children),
+			CurrentBead:   currentBead,
+			Elapsed:       time.Since(loopStart).Nanoseconds(),
+		}
+		status.Tallies.Completed = summary.Succeeded
+		status.Tallies.Questions = summary.Questions
+		status.Tallies.Failed = summary.Failed
+		status.Tallies.TimedOut = summary.TimedOut
+		status.Tallies.Skipped = summary.Skipped
+		_ = statusWriter.Write(status)
+
+		// Fetch prompt data and render prompt
+		promptData, err := fetchPrompt(child.ID)
+		if err != nil {
+			summary.Duration = time.Since(loopStart)
+			return summary, fmt.Errorf("iteration %d: fetching prompt data for %s: %w", i+1, child.ID, err)
+		}
+
+		prompt, err := render(promptData)
+		if err != nil {
+			summary.Duration = time.Since(loopStart)
+			return summary, fmt.Errorf("iteration %d: rendering prompt for %s: %w", i+1, child.ID, err)
+		}
+
+		// Get commit hash before agent execution for landing check
+		cmd := exec.Command("git", "log", "-1", "--format=%H")
+		cmd.Dir = cfg.WorkDir
+		commitHashBefore := ""
+		if outBytes, err := cmd.Output(); err == nil {
+			commitHashBefore = strings.TrimSpace(string(outBytes))
+		}
+
+		// Execute agent
+		result, err := execute(ctx, prompt)
+		if err != nil {
+			summary.Duration = time.Since(loopStart)
+			return summary, fmt.Errorf("iteration %d: running agent for %s: %w", i+1, child.ID, err)
+		}
+
+		// Assess outcome
+		outcome, outcomeSummary := assessFn(child.ID, result)
+
+		// Check landing status
+		landingStatus, landingErr := CheckLanding(cfg.WorkDir, child.ID, commitHashBefore)
+		if landingErr == nil {
+			landingMsg := FormatLandingStatus(landingStatus)
+			if landingMsg != "landed successfully" {
+				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
+				if cfg.StrictLanding && outcome == OutcomeSuccess {
+					if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
+						outcome = OutcomeFailure
+						outcomeSummary = fmt.Sprintf("%s; %s", outcomeSummary, landingMsg)
+					}
+				}
+			} else {
+				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
+			}
+		}
+
+		// Print structured per-iteration log line
+		fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, len(children), child.ID, child.Title, outcome, result.Duration, outcomeSummary))
+
+		// Update counters
+		summary.Iterations++
+		switch outcome {
+		case OutcomeSuccess:
+			summary.Succeeded++
+		case OutcomeQuestion:
+			summary.Questions++
+		case OutcomeFailure:
+			summary.Failed++
+			// If a child fails, stop the epic orchestration
+			summary.StopReason = StopConsecutiveFails
+			summary.Duration = time.Since(loopStart)
+			return summary, nil
+		case OutcomeTimeout:
+			summary.TimedOut++
+			// If a child times out, stop the epic orchestration
+			summary.StopReason = StopWallClock
+			summary.Duration = time.Since(loopStart)
+			return summary, nil
+		}
+
+		// Sync beads state
+		if err := syncFn(); err != nil {
+			if cfg.Verbose {
+				fmt.Fprintf(out, "  bd sync warning: %v\n", err)
+			}
+		}
+	}
+
+	// If all children completed successfully, run opus verification
+	if summary.Failed == 0 && summary.TimedOut == 0 {
+		fmt.Fprintf(out, "\nAll %d child task(s) completed successfully. Running opus verification...\n", len(children))
+
+		// Create verification prompt
+		verificationPrompt := fmt.Sprintf(`You are verifying epic %s after all leaf tasks have been completed.
+
+# %s
+
+All child tasks have been completed. Please review the work and verify:
+1. All requirements from the epic description have been met
+2. The implementation is consistent and complete
+3. Code quality and testing standards are met
+4. Documentation is updated if needed
+
+If everything looks good, you can close the epic with: bd close %s
+
+If issues are found, create question beads or update the epic description.`, cfg.Epic, epicPromptData.Title, cfg.Epic)
+
+		// Run opus verification
+		var opts []Option
+		if cfg.AgentTimeout > 0 {
+			opts = append(opts, WithTimeout(cfg.AgentTimeout))
+		}
+		if !cfg.Verbose {
+			formatter := NewLogFormatter(out, false)
+			opts = append(opts, WithStdoutWriter(formatter))
+		} else if out != os.Stdout {
+			opts = append(opts, WithStdoutWriter(out))
+		}
+
+		opusResult, err := RunAgentOpus(ctx, cfg.WorkDir, verificationPrompt, opts...)
+		if err != nil {
+			fmt.Fprintf(out, "Opus verification failed to run: %v\n", err)
+		} else {
+			fmt.Fprintf(out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
+		}
+	}
+
+	summary.Duration = time.Since(loopStart)
+	if summary.StopReason == StopNormal && summary.Failed == 0 && summary.TimedOut == 0 {
+		summary.StopReason = StopNormal
+	}
+
+	// Write final status
+	finalStatus := Status{
+		State:         "completed",
+		Iteration:     summary.Iterations,
+		MaxIterations: len(children),
+		Elapsed:       summary.Duration.Nanoseconds(),
+		StopReason:    summary.StopReason.String(),
+	}
+	finalStatus.Tallies.Completed = summary.Succeeded
+	finalStatus.Tallies.Questions = summary.Questions
+	finalStatus.Tallies.Failed = summary.Failed
+	finalStatus.Tallies.TimedOut = summary.TimedOut
+	finalStatus.Tallies.Skipped = summary.Skipped
+	_ = statusWriter.Write(finalStatus)
+
+	// Print final summary
+	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, 0))
+
+	return summary, nil
+}
+
 // runSequential executes the sequential loop (original implementation).
 func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+	// Epic mode: when Epic is set and TargetBead is empty, orchestrate children sequentially
+	if cfg.Epic != "" && cfg.TargetBead == "" {
+		return runEpicOrchestrator(ctx, cfg)
+	}
+
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout

@@ -654,7 +654,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		// Launch ralph binary with --project and --workdir flags.
-		// If a specific bead is selected, add --bead flag.
+		// If a specific bead is selected, add --bead flag (or --epic if it's an epic).
 		paneID, err := tmux.SplitPane(workDir)
 		if err != nil {
 			a.Status = fmt.Sprintf("Ralph: %v", err)
@@ -668,7 +668,12 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := fmt.Sprintf("%s --project '%s' --workdir '%s'", ralphPath, escapedProject, escapedWorkdir)
 		if selectedBead != nil {
 			escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
-			cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
+			// If selected bead is an epic, use --epic flag for sequential leaf processing
+			if selectedBead.IssueType == "epic" {
+				cmd += fmt.Sprintf(" --epic '%s'", escapedBead)
+			} else {
+				cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
+			}
 		}
 		cmd += "\n"
 		if err := tmux.SendKeys(paneID, cmd); err != nil {

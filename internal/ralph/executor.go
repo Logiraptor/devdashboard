@@ -55,7 +55,11 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 	ctx, cancel := context.WithTimeout(ctx, cfg.timeout)
 	defer cancel()
 
-	args := []string{"--model", "composer-1", "--print", "--force", "--output-format", "stream-json", prompt}
+	model := cfg.model
+	if model == "" {
+		model = "composer-1"
+	}
+	args := []string{"--model", model, "--print", "--force", "--output-format", "stream-json", prompt}
 	cmd := cfg.commandFactory(ctx, workDir, args...)
 
 	// Capture stdout: tee to live writer + buffer.
@@ -97,6 +101,7 @@ type options struct {
 	timeout        time.Duration
 	commandFactory CommandFactory
 	stdoutWriter   io.Writer
+	model          string
 }
 
 // Option configures RunAgent behaviour.
@@ -116,4 +121,63 @@ func WithCommandFactory(f CommandFactory) Option {
 // Useful in tests to suppress or capture real-time output.
 func WithStdoutWriter(w io.Writer) Option {
 	return func(o *options) { o.stdoutWriter = w }
+}
+
+// WithModel overrides the default agent model.
+func WithModel(model string) Option {
+	return func(o *options) { o.model = model }
+}
+
+// RunAgentOpus runs an opus model agent for verification passes.
+// Uses "agent --model claude-4.5-opus-high-thinking --print --force --output-format stream-json".
+func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
+	cfg := options{
+		timeout:        DefaultTimeout,
+		commandFactory: defaultCommandFactory,
+		stdoutWriter:   os.Stdout,
+		model:          "claude-4.5-opus-high-thinking",
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	// Derive a timeout context so the process is killed on expiry.
+	ctx, cancel := context.WithTimeout(ctx, cfg.timeout)
+	defer cancel()
+
+	args := []string{"--model", cfg.model, "--print", "--force", "--output-format", "stream-json", prompt}
+	cmd := cfg.commandFactory(ctx, workDir, args...)
+
+	// Capture stdout: tee to live writer + buffer.
+	var stdoutBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
+
+	// Capture stderr into a buffer.
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	start := time.Now()
+	err := cmd.Run()
+	duration := time.Since(start)
+
+	// Detect whether the process was killed due to context timeout.
+	timedOut := ctx.Err() == context.DeadlineExceeded
+
+	exitCode := 0
+	if err != nil {
+		// Extract exit code from ExitError; otherwise treat as launch failure.
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return nil, fmt.Errorf("failed to run agent: %w", err)
+		}
+	}
+
+	return &AgentResult{
+		ExitCode: exitCode,
+		Stdout:   stdoutBuf.String(),
+		Stderr:   stderrBuf.String(),
+		Duration: duration,
+		TimedOut: timedOut,
+	}, nil
 }
