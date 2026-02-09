@@ -129,6 +129,9 @@ type ShowRemoveRepoMsg struct{}
 // ShowRemoveResourceMsg triggers the remove-resource confirmation (project detail, 'd' key).
 type ShowRemoveResourceMsg struct{}
 
+// ShowProjectSwitcherMsg triggers the project switcher modal.
+type ShowProjectSwitcherMsg struct{}
+
 // RefreshMsg triggers a manual refresh: clears PR cache and reloads current view.
 type RefreshMsg struct{}
 
@@ -505,6 +508,28 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		modal := NewRemoveResourceConfirmModal(a.Detail.ProjectName, *r)
 		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
 		return a, modal.Init()
+	case ShowProjectSwitcherMsg:
+		if a.ProjectManager != nil {
+			infos, err := a.ProjectManager.ListProjects()
+			if err != nil {
+				a.Status = fmt.Sprintf("List projects: %v", err)
+				a.StatusIsError = true
+				return a, nil
+			}
+			if len(infos) == 0 {
+				a.Status = "No projects found"
+				a.StatusIsError = true
+				return a, nil
+			}
+			names := make([]string, len(infos))
+			for i, info := range infos {
+				names[i] = info.Name
+			}
+			modal := NewProjectSwitcherModal(names)
+			a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+			return a, modal.Init()
+		}
+		return a, nil
 	case RemoveResourceMsg:
 		if a.ProjectManager == nil {
 			return a, nil
@@ -781,6 +806,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case SelectProjectMsg:
+		// Pop overlay if present (e.g., from project switcher modal)
+		if a.Overlays.Len() > 0 {
+			a.Overlays.Pop()
+		}
 		a.Mode = ModeProjectDetail
 		detail, cmd := a.newProjectDetailView(msg.Name)
 		a.Detail = detail
@@ -1430,6 +1459,7 @@ func NewAppModel() *AppModel {
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource", []AppMode{ModeProjectDetail})
+	reg.BindWithDesc("SPC p l", func() tea.Msg { return ShowProjectSwitcherMsg{} }, "Switch project")
 	// SPC r: refresh beads for all resources in project detail view
 	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
 	// SPC 1-9: focus pane by index
