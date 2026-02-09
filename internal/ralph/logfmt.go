@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -32,14 +33,20 @@ type LogFormatter struct {
 	beadTitle   string
 	startTime   time.Time
 	lastLine    string // Track last output to avoid flicker
+	lastNumLines int   // Track number of lines in last display for ANSI clearing
+	// Activity stream
+	activities    []string // Recent activities
+	maxActivities int      // Max to display (default 4)
 }
 
 // NewLogFormatter creates a new log formatter that writes formatted output to w.
 // If verbose is false, only key events are shown. If true, raw JSON is passed through.
 func NewLogFormatter(w io.Writer, verbose bool) *LogFormatter {
 	return &LogFormatter{
-		w:       w,
-		verbose: verbose,
+		w:             w,
+		verbose:       verbose,
+		maxActivities: 4,
+		activities:    make([]string, 0, 4),
 	}
 }
 
@@ -78,15 +85,10 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 	formattedBytes := []byte(formatted.String())
 	n, err := f.w.Write(formattedBytes)
 	
-	// After processing, update progress line
+	// After processing, update progress line with activities
 	f.mu.Lock()
 	if f.beadID != "" {
-		progressLine := f.renderProgressLine()
-		if progressLine != f.lastLine {
-			// Clear line and write new progress
-			fmt.Fprintf(f.w, "\r\033[K%s", progressLine)
-			f.lastLine = progressLine
-		}
+		f.updateDisplay()
 	}
 	f.mu.Unlock()
 	
@@ -154,18 +156,36 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 	switch name {
 	case "read_file":
 		f.readsCount++
-		// Skip reads - too noisy, will show in summary
+		if f.beadID != "" {
+			// Only show reads if no significant activities
+			if f.hasSignificantActivities() {
+				return "" // Skip if we have edits/shells/errors
+			}
+			if path, ok := args["file_path"].(string); ok {
+				f.addActivity(fmt.Sprintf("read %s", filepath.Base(path)))
+			}
+			return ""
+		}
+		// When no bead, skip reads (too noisy) - backward compatibility
 		return ""
 	case "write":
 		f.writesCount++
 		if path, ok := args["file_path"].(string); ok {
 			contents, _ := args["contents"].(string)
 			lines := strings.Count(contents, "\n") + 1
+			if f.beadID != "" {
+				f.addActivity(fmt.Sprintf("write %s (%d lines)", filepath.Base(path), lines))
+				return "" // Don't print inline, activity stream handles it
+			}
 			return fmt.Sprintf("[write] %s (%d lines)", path, lines)
 		}
 	case "search_replace":
 		f.editsCount++
 		if path, ok := args["file_path"].(string); ok {
+			if f.beadID != "" {
+				f.addActivity(fmt.Sprintf("edit %s", filepath.Base(path)))
+				return "" // Don't print inline, activity stream handles it
+			}
 			return fmt.Sprintf("[edit] %s", path)
 		}
 	case "run_terminal_cmd":
@@ -174,8 +194,16 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 			// Store command to check if it has output later
 			f.lastShellCmd = cmd
 			f.shellHadOutput = false
-			// Show shell commands - they're significant
-			// Truncate long commands
+			if f.beadID != "" {
+				// Add to activity stream when bead is set
+				displayCmd := cmd
+				if len(displayCmd) > 40 {
+					displayCmd = displayCmd[:37] + "..."
+				}
+				f.addActivity(fmt.Sprintf("shell: %s", displayCmd))
+				return "" // Don't print inline, activity stream handles it
+			}
+			// Return formatted string when no bead (backward compatibility)
 			displayCmd := cmd
 			if len(displayCmd) > 60 {
 				displayCmd = displayCmd[:57] + "..."
@@ -184,11 +212,39 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 		}
 	case "grep":
 		f.searchesCount++
-		// Skip searches - too noisy, will show in summary
+		if f.beadID != "" {
+			// Only show grep if no significant activities
+			if f.hasSignificantActivities() {
+				return "" // Skip if we have edits/shells/errors
+			}
+			if pattern, ok := args["pattern"].(string); ok {
+				displayPattern := pattern
+				if len(displayPattern) > 40 {
+					displayPattern = displayPattern[:37] + "..."
+				}
+				f.addActivity(fmt.Sprintf("grep \"%s\"", displayPattern))
+			}
+			return ""
+		}
+		// When no bead, skip grep (too noisy) - backward compatibility
 		return ""
 	case "codebase_search":
 		f.searchesCount++
-		// Skip searches - too noisy, will show in summary
+		if f.beadID != "" {
+			// Only show searches if no significant activities
+			if f.hasSignificantActivities() {
+				return "" // Skip if we have edits/shells/errors
+			}
+			if query, ok := args["query"].(string); ok {
+				displayQuery := query
+				if len(displayQuery) > 40 {
+					displayQuery = displayQuery[:37] + "..."
+				}
+				f.addActivity(fmt.Sprintf("search \"%s\"", displayQuery))
+			}
+			return ""
+		}
+		// When no bead, skip searches (too noisy) - backward compatibility
 		return ""
 	}
 
@@ -198,13 +254,27 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 // formatNestedToolCall formats a tool_call event with the new nested schema.
 // The tool_call object contains keys like "semSearchToolCall", "editToolCall", etc.
 // Each tool type has an "args" object with metadata and a "result" object (which we ignore).
+// Tracks activities for the activity stream instead of returning formatted strings.
 func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) string {
 	// Check for semantic search tool call
 	if sem, ok := toolCall["semSearchToolCall"].(map[string]interface{}); ok {
 		f.searchesCount++
 		if args, ok := sem["args"].(map[string]interface{}); ok {
 			if query, ok := args["query"].(string); ok {
-				// Truncate query for display
+				if f.beadID != "" {
+					// Only show searches if no significant activities
+					if f.hasSignificantActivities() {
+						return "" // Skip if we have edits/shells/errors
+					}
+					// Truncate query for display
+					displayQuery := query
+					if len(displayQuery) > 40 {
+						displayQuery = displayQuery[:37] + "..."
+					}
+					f.addActivity(fmt.Sprintf("search \"%s\"", displayQuery))
+					return "" // Don't print inline, activity stream handles it
+				}
+				// Return formatted string when no bead (backward compatibility)
 				displayQuery := query
 				if len(displayQuery) > 50 {
 					displayQuery = displayQuery[:47] + "..."
@@ -220,6 +290,12 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 		f.editsCount++
 		if args, ok := edit["args"].(map[string]interface{}); ok {
 			if path, ok := args["path"].(string); ok {
+				if f.beadID != "" {
+					// Add to activity stream when bead is set
+					f.addActivity(fmt.Sprintf("edit %s", filepath.Base(path)))
+					return "" // Don't print inline, activity stream handles it
+				}
+				// Return formatted string when no bead (backward compatibility)
 				return fmt.Sprintf("[edit] %s", path)
 			}
 		}
@@ -227,16 +303,44 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 	}
 
 	// Check for read tool call
-	if _, ok := toolCall["readToolCall"].(map[string]interface{}); ok {
+	if read, ok := toolCall["readToolCall"].(map[string]interface{}); ok {
 		f.readsCount++
-		// Skip reads - too noisy, will show in summary
+		if f.beadID != "" {
+			// Only show reads if no significant activities
+			if f.hasSignificantActivities() {
+				return "" // Skip if we have edits/shells/errors
+			}
+			if args, ok := read["args"].(map[string]interface{}); ok {
+				if path, ok := args["target_file"].(string); ok {
+					f.addActivity(fmt.Sprintf("read %s", filepath.Base(path)))
+				}
+			}
+			return ""
+		}
+		// When no bead, skip reads (too noisy) - backward compatibility
 		return ""
 	}
 
 	// Check for grep tool call
-	if _, ok := toolCall["grepToolCall"].(map[string]interface{}); ok {
+	if grep, ok := toolCall["grepToolCall"].(map[string]interface{}); ok {
 		f.searchesCount++
-		// Skip searches - too noisy, will show in summary
+		if f.beadID != "" {
+			// Only show grep if no significant activities
+			if f.hasSignificantActivities() {
+				return "" // Skip if we have edits/shells/errors
+			}
+			if args, ok := grep["args"].(map[string]interface{}); ok {
+				if pattern, ok := args["pattern"].(string); ok {
+					displayPattern := pattern
+					if len(displayPattern) > 40 {
+						displayPattern = displayPattern[:37] + "..."
+					}
+					f.addActivity(fmt.Sprintf("grep \"%s\"", displayPattern))
+				}
+			}
+			return ""
+		}
+		// When no bead, skip grep (too noisy) - backward compatibility
 		return ""
 	}
 
@@ -248,8 +352,16 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 				// Store command to check if it has output later
 				f.lastShellCmd = cmd
 				f.shellHadOutput = false
-				// Show shell commands - they're significant
-				// Truncate long commands
+				if f.beadID != "" {
+					// Add to activity stream when bead is set
+					displayCmd := cmd
+					if len(displayCmd) > 40 {
+						displayCmd = displayCmd[:37] + "..."
+					}
+					f.addActivity(fmt.Sprintf("shell: %s", displayCmd))
+					return "" // Don't print inline, activity stream handles it
+				}
+				// Return formatted string when no bead (backward compatibility)
 				displayCmd := cmd
 				if len(displayCmd) > 60 {
 					displayCmd = displayCmd[:57] + "..."
@@ -275,16 +387,26 @@ func (f *LogFormatter) formatToolResult(event map[string]interface{}) string {
 		}
 	}
 
-	// Show errors
+	// Show errors - track in activity stream when bead is set
 	if isError, _ := event["is_error"].(bool); isError {
 		f.errorsCount++
 		content, _ := event["content"].(string)
 		if content != "" {
-			// Truncate error messages
-			if len(content) > 100 {
-				content = content[:97] + "..."
+			if f.beadID != "" {
+				// Add to activity stream when bead is set
+				displayError := content
+				if len(displayError) > 40 {
+					displayError = displayError[:37] + "..."
+				}
+				f.addActivity(fmt.Sprintf("error: %s", displayError))
+				return "" // Don't print inline, activity stream handles it
 			}
-			return fmt.Sprintf("[error] %s", content)
+			// Return formatted string when no bead (backward compatibility)
+			displayError := content
+			if len(displayError) > 100 {
+				displayError = displayError[:97] + "..."
+			}
+			return fmt.Sprintf("[error] %s", displayError)
 		}
 	}
 	return ""
@@ -339,6 +461,8 @@ func (f *LogFormatter) SetCurrentBead(id, title string) {
 	f.beadTitle = title
 	f.startTime = time.Now()
 	f.lastLine = "" // Reset last line to force update
+	f.lastNumLines = 0 // Reset line count
+	f.activities = f.activities[:0] // Clear activities for new bead
 }
 
 // renderProgressLine renders the progress line showing current bead and activity counts.
@@ -370,6 +494,71 @@ func (f *LogFormatter) renderProgressLine() string {
 	return strings.Join(parts, " | ")
 }
 
+// renderProgressWithActivities renders the progress line with activity stream below it.
+// Must be called with mutex held.
+func (f *LogFormatter) renderProgressWithActivities() string {
+	var lines []string
+	lines = append(lines, f.renderProgressLine())
+	
+	// Add activity lines with tree-style prefixes
+	for i, activity := range f.activities {
+		prefix := "  ├─ "
+		if i == len(f.activities)-1 {
+			prefix = "  └─ "
+		}
+		lines = append(lines, prefix+activity)
+	}
+	
+	return strings.Join(lines, "\n")
+}
+
+// addActivity adds an activity to the activity stream.
+// Must be called with mutex held.
+func (f *LogFormatter) addActivity(activity string) {
+	f.activities = append(f.activities, activity)
+	if len(f.activities) > f.maxActivities {
+		f.activities = f.activities[1:] // Remove oldest
+	}
+}
+
+// hasSignificantActivities returns true if there are edits, shells, or errors.
+// Used to determine if we should show searches/reads in activity stream.
+// Must be called with mutex held.
+func (f *LogFormatter) hasSignificantActivities() bool {
+	return f.editsCount > 0 || f.shellsCount > 0 || f.errorsCount > 0
+}
+
+// updateDisplay updates the progress display with activities using ANSI clearing.
+// Must be called with mutex held.
+func (f *LogFormatter) updateDisplay() {
+	if f.beadID == "" {
+		return
+	}
+	
+	display := f.renderProgressWithActivities()
+	numLines := strings.Count(display, "\n") + 1
+	
+	// Move cursor up and clear lines if we've displayed before
+	if f.lastNumLines > 0 {
+		// Move up to the first line of the previous display
+		fmt.Fprintf(f.w, "\033[%dA", f.lastNumLines)
+		// Clear each line from top to bottom
+		for i := 0; i < f.lastNumLines; i++ {
+			fmt.Fprintf(f.w, "\033[K") // Clear to end of line
+			if i < f.lastNumLines-1 {
+				fmt.Fprintf(f.w, "\n") // Move to next line (except last)
+			}
+		}
+		// Move back up to the start position
+		fmt.Fprintf(f.w, "\033[%dA", f.lastNumLines)
+	}
+	
+	// Write the new display
+	fmt.Fprintf(f.w, "%s", display)
+	f.lastNumLines = numLines
+	f.lastLine = display // Update lastLine for comparison
+}
+
 // Reset clears all counters (useful for testing or reuse).
 func (f *LogFormatter) Reset() {
 	f.mu.Lock()
@@ -386,4 +575,6 @@ func (f *LogFormatter) Reset() {
 	f.beadID = ""
 	f.beadTitle = ""
 	f.lastLine = ""
+	f.lastNumLines = 0
+	f.activities = f.activities[:0]
 }
