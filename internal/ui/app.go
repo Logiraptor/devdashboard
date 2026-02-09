@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -14,6 +15,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ralphPrompt is the canned prompt sent to an agent for automated work loops.
+const ralphPrompt = "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/.\n"
+
+// ralphPromptDelay is how long to wait after launching the agent before
+// sending the ralph prompt, giving the agent time to initialise.
+const ralphPromptDelay = 3 * time.Second
+
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
 	Name string
@@ -24,6 +32,10 @@ type OpenShellMsg struct{}
 
 // LaunchAgentMsg is sent when user launches an agent on the selected resource (SPC s a).
 type LaunchAgentMsg struct{}
+
+// LaunchRalphMsg is sent when user launches a Ralph loop on the selected resource (SPC s r).
+// Ralph is an automated agent that picks open work and implements it.
+type LaunchRalphMsg struct{}
 
 // HidePaneMsg hides the selected resource's most recent pane (break-pane to background window).
 type HidePaneMsg struct{}
@@ -389,6 +401,50 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.refreshDetailPanes()
 		}
 		return a, nil
+	case LaunchRalphMsg:
+		if a.Mode != ModeProjectDetail || a.Detail == nil {
+			return a, nil
+		}
+		r := a.Detail.SelectedResource()
+		if r == nil {
+			a.Status = "No resource selected"
+			a.StatusIsError = true
+			return a, nil
+		}
+		if len(r.Beads) == 0 {
+			a.Status = "No open beads for this resource"
+			a.StatusIsError = true
+			return a, nil
+		}
+		workDir, err := a.ensureResourceWorktree(r)
+		if err != nil {
+			a.Status = fmt.Sprintf("Ralph: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		paneID, err := tmux.SplitPane(workDir)
+		if err != nil {
+			a.Status = fmt.Sprintf("Ralph: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		if err := tmux.SendKeys(paneID, "agent\n"); err != nil {
+			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		// Send the ralph prompt after a delay so the agent has time to start.
+		time.AfterFunc(ralphPromptDelay, func() {
+			_ = tmux.SendKeys(paneID, ralphPrompt)
+		})
+		if a.Sessions != nil {
+			rk := resourceKeyFromResource(*r)
+			a.Sessions.Register(rk, paneID, session.PaneAgent)
+			a.refreshDetailPanes()
+		}
+		a.Status = "Ralph loop launched"
+		a.StatusIsError = false
+		return a, nil
 	case HidePaneMsg:
 		paneID := a.selectedResourceLatestPaneID()
 		if paneID == "" {
@@ -703,6 +759,7 @@ func NewAppModel() *AppModel {
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
 	reg.BindWithDescForMode("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC s a", func() tea.Msg { return LaunchAgentMsg{} }, "Launch agent", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC s r", func() tea.Msg { return LaunchRalphMsg{} }, "Ralph loop", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})

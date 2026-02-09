@@ -1129,3 +1129,139 @@ func TestRemoveResourceConfirmModal_PRView(t *testing.T) {
 		t.Error("expected PR title in modal view")
 	}
 }
+
+// --- Ralph loop tests (devdeploy-j4n.3) ---
+
+// TestLaunchRalphMsg_NotInProjectDetail validates no-op when not in project detail mode.
+func TestLaunchRalphMsg_NotInProjectDetail(t *testing.T) {
+	ta := newTestApp(t)
+	adapter := ta.adapter()
+
+	_, cmd := adapter.Update(LaunchRalphMsg{})
+	if cmd != nil {
+		t.Error("expected nil cmd when not in project detail")
+	}
+	if ta.StatusIsError {
+		t.Error("expected no error status when not in project detail")
+	}
+}
+
+// TestLaunchRalphMsg_NoResourceSelected validates error when no resource is selected.
+func TestLaunchRalphMsg_NoResourceSelected(t *testing.T) {
+	ta := newTestApp(t)
+	ta.Mode = ModeProjectDetail
+	ta.Detail = NewProjectDetailView("test-proj")
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(LaunchRalphMsg{})
+	if !ta.StatusIsError || ta.Status != "No resource selected" {
+		t.Errorf("expected 'No resource selected' error, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+}
+
+// TestLaunchRalphMsg_NoOpenBeads validates error when resource has no open beads.
+func TestLaunchRalphMsg_NoOpenBeads(t *testing.T) {
+	ta := newTestApp(t)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo", Beads: nil},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(LaunchRalphMsg{})
+	if !ta.StatusIsError || ta.Status != "No open beads for this resource" {
+		t.Errorf("expected 'No open beads for this resource' error, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+}
+
+// TestLaunchRalphMsg_EmptyBeadsSlice validates error when beads slice is empty (not nil).
+func TestLaunchRalphMsg_EmptyBeadsSlice(t *testing.T) {
+	ta := newTestApp(t)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo", Beads: []project.BeadInfo{}},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(LaunchRalphMsg{})
+	if !ta.StatusIsError || ta.Status != "No open beads for this resource" {
+		t.Errorf("expected 'No open beads for this resource' error, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+}
+
+// TestLaunchRalphMsg_WithBeads validates that ralph proceeds when beads exist.
+// tmux.SplitPane will fail (no tmux), but we verify the error is from tmux, not beads.
+func TestLaunchRalphMsg_WithBeads(t *testing.T) {
+	ta := newTestApp(t)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{
+			Kind:         project.ResourceRepo,
+			RepoName:     "myrepo",
+			WorktreePath: ta.Dir,
+			Beads: []project.BeadInfo{
+				{ID: "test-abc", Title: "Fix something", Status: "open"},
+			},
+		},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(LaunchRalphMsg{})
+	// Outside tmux, SplitPane fails. The error should be "Ralph: ..." not "No open beads"
+	if ta.StatusIsError && !strings.Contains(ta.Status, "Ralph") {
+		t.Errorf("expected 'Ralph' error (tmux not available), got Status=%q", ta.Status)
+	}
+}
+
+// TestLaunchRalphMsg_PRNoWorktree validates that PR resources without worktrees
+// attempt to create one (fails in test, producing a "Ralph:" error).
+func TestLaunchRalphMsg_PRNoWorktree(t *testing.T) {
+	ta := newTestApp(t)
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{
+			Kind:     project.ResourcePR,
+			RepoName: "myrepo",
+			PR:       &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"},
+			Beads:    []project.BeadInfo{{ID: "b-1", Title: "Work", Status: "open"}},
+		},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(LaunchRalphMsg{})
+	if !ta.StatusIsError || !strings.Contains(ta.Status, "Ralph") {
+		t.Errorf("expected 'Ralph' error (EnsurePRWorktree fails), got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+}
+
+// TestRalphPromptConstant validates the ralph prompt is non-empty and contains key instructions.
+func TestRalphPromptConstant(t *testing.T) {
+	if ralphPrompt == "" {
+		t.Fatal("ralphPrompt should not be empty")
+	}
+	for _, keyword := range []string{"bd ready", "bd update", "bd close", ".cursor/rules/"} {
+		if !strings.Contains(ralphPrompt, keyword) {
+			t.Errorf("ralphPrompt should contain %q", keyword)
+		}
+	}
+}
