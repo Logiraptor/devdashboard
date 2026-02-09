@@ -27,6 +27,7 @@ type config struct {
 	project                 string
 	epic                    string
 	labels                  stringSlice
+	bead                    string // target a specific bead ID
 	maxIterations           int
 	agentTimeout            time.Duration
 	consecutiveFailureLimit int
@@ -34,6 +35,7 @@ type config struct {
 	concurrency             int
 	dryRun                  bool
 	verbose                 bool
+	strictLanding            bool
 }
 
 func parseFlags() config {
@@ -43,6 +45,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.project, "project", "", "project label filter for bd queries")
 	flag.StringVar(&cfg.epic, "epic", "", "epic filter for bd queries (filters to children of the epic)")
 	flag.Var(&cfg.labels, "label", "additional label filter (repeatable)")
+	flag.StringVar(&cfg.bead, "bead", "", "target a specific bead ID (skips picker, sets max-iterations to 1)")
 	flag.IntVar(&cfg.maxIterations, "max-iterations", 20, "safety cap on loop iterations")
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
 	flag.IntVar(&cfg.consecutiveFailureLimit, "consecutive-failures", 3, "stop after N consecutive agent failures")
@@ -50,6 +53,7 @@ func parseFlags() config {
 	flag.IntVar(&cfg.concurrency, "concurrency", 1, "number of concurrent agents to run (each uses its own git worktree)")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "print what would be done without executing agents")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "enable detailed logging")
+	flag.BoolVar(&cfg.strictLanding, "strict-landing", true, "treat incomplete landing (uncommitted changes or unclosed bead) as failure")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: ralph [flags]\n\n")
@@ -92,18 +96,26 @@ func run(cfg config) (ralph.StopReason, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// When --bead is set, implicitly set max-iterations to 1
+	maxIterations := cfg.maxIterations
+	if cfg.bead != "" {
+		maxIterations = 1
+	}
+
 	loopCfg := ralph.LoopConfig{
 		WorkDir:                 cfg.workdir,
 		Project:                 cfg.project,
 		Epic:                    cfg.epic,
 		Labels:                  cfg.labels,
-		MaxIterations:           cfg.maxIterations,
+		TargetBead:              cfg.bead,
+		MaxIterations:           maxIterations,
 		AgentTimeout:            cfg.agentTimeout,
 		ConsecutiveFailureLimit: cfg.consecutiveFailureLimit,
 		Timeout:                 cfg.timeout,
 		Concurrency:             cfg.concurrency,
 		DryRun:                  cfg.dryRun,
 		Verbose:                 cfg.verbose,
+		StrictLanding:           cfg.strictLanding,
 	}
 
 	summary, err := ralph.Run(ctx, loopCfg)

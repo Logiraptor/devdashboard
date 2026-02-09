@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -143,45 +142,14 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Detail != nil {
 			a.Detail.SetSize(wsm.Width, wsm.Height)
 		}
-		if a.RalphStatus != nil {
-			updated, _ := a.RalphStatus.Update(wsm)
-			a.RalphStatus = updated.(*RalphStatusView)
-		}
+		// RalphStatus view removed - no longer handling window size updates for it
 	}
 
 	switch msg := msg.(type) {
 	case RalphStatusMsg:
-		if a.RalphStatus != nil {
-			// Clear status view if status is nil (ralph finished and we're clearing)
-			if msg.Status == nil {
-				a.RalphStatus = nil
-				a.ralphWorkdir = ""
-				return a, nil
-			}
-			updated, cmd := a.RalphStatus.Update(msg)
-			a.RalphStatus = updated.(*RalphStatusView)
-			var cmds []tea.Cmd
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			// Stop polling if ralph completed
-			if msg.Status.State == "completed" {
-				a.ralphWorkdir = "" // Stop polling
-				// Clear status after a delay
-				cmds = append(cmds, tea.Tick(5*time.Second, func(time.Time) tea.Msg {
-					return RalphStatusMsg{Status: nil} // Clear status after delay
-				}))
-			} else if a.ralphWorkdir != "" && msg.Status.State == "running" {
-				// Continue polling if still running
-				cmds = append(cmds, tea.Tick(1*time.Second, func(time.Time) tea.Msg {
-					return pollRalphStatusCmd(a.ralphWorkdir)()
-				}))
-			}
-			if len(cmds) > 0 {
-				return a, tea.Batch(cmds...)
-			}
-			return a, nil
-		}
+		// Ralph status polling removed - status file still written for CI/scripting
+		// but UI no longer displays it (user sees output in tmux pane)
+		return a, nil
 	case progress.Event:
 		// Run finished (done or aborted); clear cancel so Esc just dismisses
 		if msg.Status == progress.StatusDone || msg.Status == progress.StatusAborted {
@@ -540,6 +508,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		// Launch ralph binary with --project and --workdir flags.
+		// If a specific bead is selected, add --bead flag.
 		paneID, err := tmux.SplitPane(workDir)
 		if err != nil {
 			a.Status = fmt.Sprintf("Ralph: %v", err)
@@ -549,7 +518,13 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Escape the workdir path for shell safety (handle spaces, special chars).
 		escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
 		escapedProject := strings.ReplaceAll(a.Detail.ProjectName, "'", `'\''`)
-		cmd := fmt.Sprintf("%s --project '%s' --workdir '%s'\n", ralphPath, escapedProject, escapedWorkdir)
+		selectedBead := a.Detail.SelectedBead()
+		cmd := fmt.Sprintf("%s --project '%s' --workdir '%s'", ralphPath, escapedProject, escapedWorkdir)
+		if selectedBead != nil {
+			escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
+			cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
+		}
+		cmd += "\n"
 		if err := tmux.SendKeys(paneID, cmd); err != nil {
 			a.Status = fmt.Sprintf("Ralph launch: %v", err)
 			a.StatusIsError = true
@@ -560,12 +535,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Sessions.Register(rk, paneID, session.PaneAgent)
 			a.refreshDetailPanes()
 		}
-		// Start ralph status polling
-		a.RalphStatus = NewRalphStatusView()
-		a.ralphWorkdir = workDir
+		// Ralph status file (.ralph-status.json) is still written for CI/scripting,
+		// but we don't poll it in the UI - user can see ralph output directly in tmux pane
 		a.Status = "Ralph loop launched"
 		a.StatusIsError = false
-		return a, startRalphStatusPolling(workDir)
+		return a, nil
 	case HidePaneMsg:
 		paneID := a.selectedResourceLatestPaneID()
 		if paneID == "" {
@@ -658,13 +632,7 @@ func (a *appModelAdapter) View() string {
 			base += "\n" + top.View.View()
 		}
 	}
-	// Show ralph status if available
-	if a.RalphStatus != nil {
-		ralphView := a.RalphStatus.View()
-		if ralphView != "" {
-			base += "\n" + ralphView
-		}
-	}
+	// Ralph status view removed - user can see ralph output directly in tmux pane
 	if a.Status != "" {
 		style := Styles.Status
 		if a.StatusIsError {

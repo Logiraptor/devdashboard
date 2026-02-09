@@ -2,6 +2,7 @@ package ralph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -79,6 +80,7 @@ type LoopConfig struct {
 	Project       string
 	Epic          string
 	Labels        []string
+	TargetBead    string // if set, skip picker and work on this specific bead
 	MaxIterations int
 	DryRun        bool
 	Verbose       bool
@@ -98,6 +100,11 @@ type LoopConfig struct {
 	// Concurrency is the number of concurrent agents to run. Default is 1 (sequential).
 	// When > 1, each agent runs in its own git worktree for isolation.
 	Concurrency int
+
+	// StrictLanding, when true, treats incomplete landing (uncommitted changes or
+	// unclosed bead) as failure. When false, warns but counts as success if bead closed.
+	// Default is true.
+	StrictLanding bool
 
 	// Test hooks — nil means use real implementations.
 	PickNext    func() (*beads.Bead, error)
@@ -324,13 +331,57 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	pickNext := cfg.PickNext
 	if pickNext == nil {
-		picker := &BeadPicker{
-			WorkDir: cfg.WorkDir,
-			Project: cfg.Project,
-			Epic:    cfg.Epic,
-			Labels:  cfg.Labels,
+		if cfg.TargetBead != "" {
+			// When TargetBead is set, create a picker that always returns that bead
+			// (only on first call, then returns nil)
+			once := false
+			pickNext = func() (*beads.Bead, error) {
+				if once {
+					return nil, nil // Signal no more beads
+				}
+				once = true
+				// Use bd list to get full bead info (includes all fields we need)
+				cmd := exec.Command("bd", "list", "--json", "--limit", "1")
+				cmd.Dir = cfg.WorkDir
+				// Filter by ID using grep-like approach, or use bd show and construct minimal Bead
+				// Actually, let's use bd list with a filter, but bd list doesn't filter by ID directly
+				// So we'll use bd show to verify it exists and get title, then construct Bead
+				showCmd := exec.Command("bd", "show", cfg.TargetBead, "--json")
+				showCmd.Dir = cfg.WorkDir
+				out, err := showCmd.Output()
+				if err != nil {
+					return nil, fmt.Errorf("bd show %s: %w", cfg.TargetBead, err)
+				}
+				// bd show returns an array with one entry containing id, title, description
+				var showEntries []struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				}
+				if err := json.Unmarshal(out, &showEntries); err != nil {
+					return nil, fmt.Errorf("parsing bd show output: %w", err)
+				}
+				if len(showEntries) == 0 {
+					return nil, fmt.Errorf("bead %s not found", cfg.TargetBead)
+				}
+				e := showEntries[0]
+				// Construct a minimal Bead - other fields will have defaults
+				// Status, Priority, Labels, CreatedAt will be empty/zero, which is fine
+				// for our purposes since we just need ID and Title for the prompt
+				return &beads.Bead{
+					ID:    e.ID,
+					Title: e.Title,
+					// Default values for other fields are fine
+				}, nil
+			}
+		} else {
+			picker := &BeadPicker{
+				WorkDir: cfg.WorkDir,
+				Project: cfg.Project,
+				Epic:    cfg.Epic,
+				Labels:  cfg.Labels,
+			}
+			pickNext = picker.Next
 		}
-		pickNext = picker.Next
 	}
 
 	fetchPrompt := cfg.FetchPrompt
@@ -351,6 +402,13 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			var opts []Option
 			if cfg.AgentTimeout > 0 {
 				opts = append(opts, WithTimeout(cfg.AgentTimeout))
+			}
+			// Wrap stdout with log formatter if not verbose
+			if !cfg.Verbose {
+				formatter := NewLogFormatter(out, false)
+				opts = append(opts, WithStdoutWriter(formatter))
+			} else if out != os.Stdout {
+				opts = append(opts, WithStdoutWriter(out))
 			}
 			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 		}
@@ -524,7 +582,15 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 				i+1, bead.ID, err)
 		}
 
-		// 3. Execute agent.
+		// 3. Get commit hash before agent execution for landing check.
+		cmd := exec.Command("git", "log", "-1", "--format=%H")
+		cmd.Dir = cfg.WorkDir
+		commitHashBefore := ""
+		if out, err := cmd.Output(); err == nil {
+			commitHashBefore = strings.TrimSpace(string(out))
+		}
+
+		// 4. Execute agent.
 		result, err := execute(ctx, prompt)
 		if err != nil {
 			summary.Duration = time.Since(loopStart)
@@ -532,8 +598,27 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 				i+1, bead.ID, err)
 		}
 
-		// 4. Assess outcome.
+		// 5. Assess outcome.
 		outcome, outcomeSummary := assessFn(bead.ID, result)
+
+		// 6. Check landing status.
+		landingStatus, landingErr := CheckLanding(cfg.WorkDir, bead.ID, commitHashBefore)
+		if landingErr == nil {
+			landingMsg := FormatLandingStatus(landingStatus)
+			if landingMsg != "landed successfully" {
+				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
+				// If strict landing is enabled and landing is incomplete, treat as failure
+				if cfg.StrictLanding && outcome == OutcomeSuccess {
+					// Override success if landing is incomplete
+					if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
+						outcome = OutcomeFailure
+						outcomeSummary = fmt.Sprintf("%s; %s", outcomeSummary, landingMsg)
+					}
+				}
+			} else {
+				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
+			}
+		}
 
 		// Print structured per-iteration log line.
 		fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
