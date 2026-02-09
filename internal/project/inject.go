@@ -15,7 +15,7 @@ import (
 var excludeEntries = []string{".cursor/", "dev-log/"}
 
 // InjectWorktreeRules writes Cursor rule files and a dev-log directory
-// into a worktree, then adds them to the per-worktree git exclude file
+// into a worktree, then adds them to the repo's git exclude file
 // so they are invisible to git.
 //
 // The operation is idempotent: existing files with matching content are
@@ -44,26 +44,34 @@ func InjectWorktreeRules(worktreePath string) error {
 		return fmt.Errorf("create dev-log dir: %w", err)
 	}
 
-	// 3. Add entries to .git/info/exclude.
-	gitDir, err := resolveGitDir(worktreePath)
+	// 3. Add entries to the common git exclude file.
+	// Git reads info/exclude from the common dir, NOT the per-worktree
+	// gitdir. For regular repos the common dir IS .git/; for worktrees
+	// it's the main repo's .git/ (found via the "commondir" file).
+	commonDir, err := resolveGitCommonDir(worktreePath)
 	if err != nil {
-		return fmt.Errorf("resolve git dir: %w", err)
+		return fmt.Errorf("resolve git common dir: %w", err)
 	}
-	if err := ensureExcludeEntries(gitDir, excludeEntries); err != nil {
+	if err := ensureExcludeEntries(commonDir, excludeEntries); err != nil {
 		return fmt.Errorf("update exclude: %w", err)
 	}
 	return nil
 }
 
-// resolveGitDir returns the actual git directory for a worktree.
-// In a regular repo, .git is a directory; in a worktree, .git is a file
-// containing "gitdir: <path>". This function handles both cases.
-func resolveGitDir(worktreePath string) (string, error) {
+// resolveGitCommonDir returns the git common directory for a worktree.
+// Git reads info/exclude from the common dir, not the per-worktree gitdir.
+//
+// For a regular repo (.git is a directory), the common dir is .git/ itself.
+// For a worktree (.git is a file with "gitdir: <path>"), the per-worktree
+// gitdir contains a "commondir" file with a relative path to the shared
+// git directory.
+func resolveGitCommonDir(worktreePath string) (string, error) {
 	dotGit := filepath.Join(worktreePath, ".git")
 	info, err := os.Stat(dotGit)
 	if err != nil {
 		return "", err
 	}
+	// Regular repo: .git is a directory and is itself the common dir.
 	if info.IsDir() {
 		return dotGit, nil
 	}
@@ -81,7 +89,23 @@ func resolveGitDir(worktreePath string) (string, error) {
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(worktreePath, gitDir)
 	}
-	return filepath.Clean(gitDir), nil
+	gitDir = filepath.Clean(gitDir)
+
+	// Read the "commondir" file to find the shared git directory.
+	// This file contains a relative path (typically "../..") from
+	// the worktree gitdir to the main repo's .git/.
+	commonDirFile := filepath.Join(gitDir, "commondir")
+	cdData, err := os.ReadFile(commonDirFile)
+	if err != nil {
+		// No commondir file — fall back to the gitdir itself.
+		// This shouldn't happen for real worktrees but is safe.
+		return gitDir, nil
+	}
+	commonRel := strings.TrimSpace(string(cdData))
+	if !filepath.IsAbs(commonRel) {
+		commonRel = filepath.Join(gitDir, commonRel)
+	}
+	return filepath.Clean(commonRel), nil
 }
 
 // ensureExcludeEntries appends entries to <gitDir>/info/exclude, skipping
