@@ -127,6 +127,9 @@ type ShowRemoveResourceMsg struct{}
 // RefreshMsg triggers a manual refresh: clears PR cache and reloads current view.
 type RefreshMsg struct{}
 
+// RefreshBeadsMsg triggers a refresh of beads for all resources in the current project detail view.
+type RefreshBeadsMsg struct{}
+
 // RemoveResourceMsg is sent when user confirms removal of a resource.
 // Kills associated panes and removes the worktree.
 type RemoveResourceMsg struct {
@@ -350,6 +353,19 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.loadingBeads = false
 			a.Detail.buildItems() // Rebuild list items to show beads
 			a.refreshDetailPanes()
+		}
+		return a, nil
+	case RefreshBeadsMsg:
+		// Refresh beads for all resources in project detail view
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName != "" {
+			a.Detail.loadingBeads = true
+			a.Detail.buildItems() // Rebuild list items to show loading state
+			a.refreshDetailPanes()
+			// Trigger async bead loading
+			return a, tea.Batch(
+				a.Detail.spinnerTickCmd(),
+				loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
+			)
 		}
 		return a, nil
 	case CreateProjectMsg:
@@ -1305,7 +1321,8 @@ func NewAppModel() *AppModel {
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource", []AppMode{ModeProjectDetail})
-	reg.BindWithDesc("SPC r", func() tea.Msg { return RefreshMsg{} }, "Refresh")
+	// SPC r: refresh beads for all resources in project detail view
+	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
 	return &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),

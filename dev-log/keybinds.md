@@ -72,6 +72,14 @@ Pressing `/` activates vim-style search mode for filtering and jumping to lines 
 | `SPC s h` | Hide shell pane |
 | `SPC s j` | Show shell pane |
 
+## SPC r — Refresh Beads
+
+| Sequence | Action | Context |
+|----------|--------|---------|
+| `SPC r` | Refresh beads for all resources | Project detail only |
+
+In project detail view, `SPC r` reloads beads for all resources without reloading repos or PRs. Useful when beads are updated externally (e.g., via CLI `bd close`).
+
 ## Help View
 
 - Triggered when `KeyHandler.LeaderWaiting` is true (after SPC)
