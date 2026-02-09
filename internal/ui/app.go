@@ -427,7 +427,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass the ralph prompt as a single-quoted positional argument to agent.
 		// Single quotes prevent the shell from interpreting backticks and $.
 		escaped := strings.ReplaceAll(ralphPrompt, "'", `'\''`)
-		cmd := fmt.Sprintf("agent '%s'\n", escaped)
+		cmd := fmt.Sprintf("agent --force '%s'\n", escaped)
 		if err := tmux.SendKeys(paneID, cmd); err != nil {
 			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
 			a.StatusIsError = true
