@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"devdeploy/internal/project"
 )
@@ -566,5 +569,248 @@ func TestProjectDetailView_NoBeadsResourceNavUnchanged(t *testing.T) {
 	v.Update(keyMsg("k"))
 	if v.Selected != 1 || v.SelectedBeadIdx != -1 {
 		t.Errorf("k: expected (1,-1), got (%d,%d)", v.Selected, v.SelectedBeadIdx)
+	}
+}
+
+// --- Scroll / viewport tests ---
+
+func TestProjectDetailView_CursorRow(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	v.Resources = testResourcesWithBeads()
+
+	// Header lines: "← proj\n\n" + "Resources\n" = 3 lines (rows 0,1,2).
+	// Resource 0 header is row 3.
+	if row := v.cursorRow(); row != 3 {
+		t.Errorf("resource 0 header: expected row 3, got %d", row)
+	}
+
+	// Bead 0 of resource 0 → row 4.
+	v.SelectedBeadIdx = 0
+	if row := v.cursorRow(); row != 4 {
+		t.Errorf("resource 0 bead 0: expected row 4, got %d", row)
+	}
+
+	// Bead 1 of resource 0 → row 5.
+	v.SelectedBeadIdx = 1
+	if row := v.cursorRow(); row != 5 {
+		t.Errorf("resource 0 bead 1: expected row 5, got %d", row)
+	}
+
+	// Resource 1 header → row 6 (resource 0: 1 header + 2 beads = 3 lines).
+	v.Selected = 1
+	v.SelectedBeadIdx = -1
+	if row := v.cursorRow(); row != 6 {
+		t.Errorf("resource 1 header: expected row 6, got %d", row)
+	}
+
+	// Resource 1 bead 0 → row 7.
+	v.SelectedBeadIdx = 0
+	if row := v.cursorRow(); row != 7 {
+		t.Errorf("resource 1 bead 0: expected row 7, got %d", row)
+	}
+
+	// Resource 2 (no beads) header → row 8.
+	v.Selected = 2
+	v.SelectedBeadIdx = -1
+	if row := v.cursorRow(); row != 8 {
+		t.Errorf("resource 2 header: expected row 8, got %d", row)
+	}
+}
+
+func TestProjectDetailView_NoScrollWhenFits(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	v.Resources = testResources() // 4 resources, no beads
+	v.SetSize(80, 30)             // plenty of room
+
+	output := v.View()
+
+	// Should NOT have scroll indicators.
+	if strings.Contains(output, "↑") || strings.Contains(output, "↓") {
+		t.Errorf("expected no scroll indicators when content fits, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_ScrollsDownWhenCursorMovesBelow(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	// Create many resources to exceed viewport.
+	var resources []project.Resource
+	for i := 0; i < 20; i++ {
+		resources = append(resources, project.Resource{
+			Kind:     project.ResourceRepo,
+			RepoName: fmt.Sprintf("repo-%02d", i),
+		})
+	}
+	v.Resources = resources
+	v.SetSize(80, 12) // Small terminal: viewHeight = 12 - 4 = 8 lines
+
+	// Navigate to the bottom.
+	for i := 0; i < 19; i++ {
+		v.Update(keyMsg("j"))
+	}
+
+	output := v.View()
+
+	// Last resource should be visible.
+	if !strings.Contains(output, "repo-19") {
+		t.Errorf("expected repo-19 visible after scrolling down, got:\n%s", output)
+	}
+	// Should have "↑ N more" indicator.
+	if !strings.Contains(output, "↑") {
+		t.Errorf("expected ↑ scroll indicator, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_ScrollsUpWhenCursorMovesAbove(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	var resources []project.Resource
+	for i := 0; i < 20; i++ {
+		resources = append(resources, project.Resource{
+			Kind:     project.ResourceRepo,
+			RepoName: fmt.Sprintf("repo-%02d", i),
+		})
+	}
+	v.Resources = resources
+	v.SetSize(80, 12) // viewHeight = 8
+
+	// Navigate to bottom first.
+	for i := 0; i < 19; i++ {
+		v.Update(keyMsg("j"))
+	}
+
+	// Now navigate back to top.
+	for i := 0; i < 19; i++ {
+		v.Update(keyMsg("k"))
+	}
+
+	output := v.View()
+
+	// First resource should be visible.
+	if !strings.Contains(output, "repo-00") {
+		t.Errorf("expected repo-00 visible after scrolling back up, got:\n%s", output)
+	}
+	// Title should be visible (no ↑ indicator).
+	if strings.Contains(output, "↑") {
+		t.Errorf("expected no ↑ indicator at top, got:\n%s", output)
+	}
+	// Should have ↓ indicator since there's more below.
+	if !strings.Contains(output, "↓") {
+		t.Errorf("expected ↓ scroll indicator, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_GAndShiftG_Scroll(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	var resources []project.Resource
+	for i := 0; i < 20; i++ {
+		resources = append(resources, project.Resource{
+			Kind:     project.ResourceRepo,
+			RepoName: fmt.Sprintf("repo-%02d", i),
+		})
+	}
+	v.Resources = resources
+	v.SetSize(80, 12)
+
+	// G jumps to bottom.
+	v.Update(keyMsg("G"))
+	output := v.View()
+	if !strings.Contains(output, "repo-19") {
+		t.Errorf("G: expected repo-19 visible, got:\n%s", output)
+	}
+
+	// g jumps to top.
+	v.Update(keyMsg("g"))
+	output = v.View()
+	if !strings.Contains(output, "repo-00") {
+		t.Errorf("g: expected repo-00 visible, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_ScrollWithBeads(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	v.Resources = []project.Resource{
+		{
+			Kind: project.ResourceRepo, RepoName: "repo-a", WorktreePath: "/tmp/a",
+			Beads: []project.BeadInfo{
+				{ID: "a-1", Title: "Bead 1"},
+				{ID: "a-2", Title: "Bead 2"},
+				{ID: "a-3", Title: "Bead 3"},
+			},
+		},
+		{
+			Kind: project.ResourceRepo, RepoName: "repo-b", WorktreePath: "/tmp/b",
+			Beads: []project.BeadInfo{
+				{ID: "b-1", Title: "Bead 4"},
+				{ID: "b-2", Title: "Bead 5"},
+				{ID: "b-3", Title: "Bead 6"},
+			},
+		},
+		{
+			Kind: project.ResourceRepo, RepoName: "repo-c", WorktreePath: "/tmp/c",
+			Beads: []project.BeadInfo{
+				{ID: "c-1", Title: "Bead 7"},
+			},
+		},
+	}
+	v.SetSize(80, 10) // viewHeight = 6
+
+	// Navigate down through beads until repo-c's bead is selected.
+	// Layout: header(3 lines) + repo-a(1) + 3 beads + repo-b(1) + 3 beads + repo-c(1) + 1 bead = 13 lines
+	// Navigate: start at (0,-1), j→(0,0), j→(0,1), j→(0,2), j→(1,-1), j→(1,0), j→(1,1), j→(1,2), j→(2,-1), j→(2,0)
+	for i := 0; i < 10; i++ {
+		v.Update(keyMsg("j"))
+	}
+
+	output := v.View()
+
+	// c-1 bead should be visible.
+	if !strings.Contains(output, "c-1") {
+		t.Errorf("expected c-1 bead visible after scrolling, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_NoScrollWithoutTermHeight(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	var resources []project.Resource
+	for i := 0; i < 30; i++ {
+		resources = append(resources, project.Resource{
+			Kind:     project.ResourceRepo,
+			RepoName: fmt.Sprintf("repo-%02d", i),
+		})
+	}
+	v.Resources = resources
+	// termHeight is 0 (default) — no scrolling.
+
+	output := v.View()
+
+	// All repos should be visible (no clipping).
+	if !strings.Contains(output, "repo-00") || !strings.Contains(output, "repo-29") {
+		t.Errorf("expected all repos visible without termHeight, got:\n%s", output)
+	}
+	// No scroll indicators.
+	if strings.Contains(output, "↑") || strings.Contains(output, "↓") {
+		t.Errorf("expected no scroll indicators without termHeight, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_WindowSizeMsgUpdatesViewport(t *testing.T) {
+	v := NewProjectDetailView("proj")
+	var resources []project.Resource
+	for i := 0; i < 20; i++ {
+		resources = append(resources, project.Resource{
+			Kind:     project.ResourceRepo,
+			RepoName: fmt.Sprintf("repo-%02d", i),
+		})
+	}
+	v.Resources = resources
+
+	// Send WindowSizeMsg.
+	v.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+
+	// Navigate to bottom.
+	v.Update(keyMsg("G"))
+	output := v.View()
+
+	if !strings.Contains(output, "repo-19") {
+		t.Errorf("expected repo-19 visible after WindowSizeMsg + G, got:\n%s", output)
 	}
 }

@@ -110,6 +110,8 @@ type AppModel struct {
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
 	agentCancelFunc func() // cancels in-flight agent run; nil when none
+	termWidth       int    // terminal width from last WindowSizeMsg
+	termHeight      int    // terminal height from last WindowSizeMsg
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -130,6 +132,15 @@ func (a *appModelAdapter) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Store terminal size so it can be passed to views created later.
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		a.termWidth = wsm.Width
+		a.termHeight = wsm.Height
+		if a.Detail != nil {
+			a.Detail.SetSize(wsm.Width, wsm.Height)
+		}
+	}
+
 	switch msg := msg.(type) {
 	case progress.Event:
 		// Run finished (done or aborted); clear cancel so Esc just dismisses
@@ -586,6 +597,9 @@ func (a *appModelAdapter) setCurrentView(v View) {
 // newProjectDetailView creates a detail view with resources from disk/gh.
 func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
 	v := NewProjectDetailView(name)
+	if a.termWidth > 0 || a.termHeight > 0 {
+		v.SetSize(a.termWidth, a.termHeight)
+	}
 	if a.ProjectManager != nil {
 		v.Resources = a.ProjectManager.ListProjectResources(name)
 	}

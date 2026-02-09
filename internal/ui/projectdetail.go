@@ -10,12 +10,18 @@ import (
 	"devdeploy/internal/project"
 )
 
+// reservedChromeLines is the number of terminal lines reserved for app chrome
+// (status bar, keybind hints, etc.) that appear outside the detail view.
+const reservedChromeLines = 4
+
 // ProjectDetailView shows a selected project with resources (repos + PRs).
 type ProjectDetailView struct {
 	ProjectName     string
 	Resources       []project.Resource // unified resource list (repos + PRs)
 	Selected        int                // index into Resources for cursor highlight
 	SelectedBeadIdx int                // -1 = resource header, >=0 = bead index within Selected resource
+	termHeight      int                // terminal height from WindowSizeMsg; 0 = unknown (no scroll)
+	scrollOffset    int                // first visible content line (0-based)
 }
 
 // Ensure ProjectDetailView implements View.
@@ -30,6 +36,12 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	}
 }
 
+// SetSize updates the terminal dimensions for scroll calculations.
+func (p *ProjectDetailView) SetSize(width, height int) {
+	p.termHeight = height
+	p.ensureVisible()
+}
+
 // Init implements View.
 func (p *ProjectDetailView) Init() tea.Cmd {
 	return nil
@@ -38,17 +50,23 @@ func (p *ProjectDetailView) Init() tea.Cmd {
 // Update implements View.
 func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		p.SetSize(msg.Width, msg.Height)
+		return p, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
 			p.moveDown()
+			p.ensureVisible()
 			return p, nil
 		case "k", "up":
 			p.moveUp()
+			p.ensureVisible()
 			return p, nil
 		case "g":
 			p.Selected = 0
 			p.SelectedBeadIdx = -1
+			p.ensureVisible()
 			return p, nil
 		case "G":
 			if last := len(p.Resources) - 1; last >= 0 {
@@ -59,12 +77,64 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 					p.SelectedBeadIdx = -1
 				}
 			}
+			p.ensureVisible()
 			return p, nil
 		case "esc":
 			return p, nil // Caller handles back navigation
 		}
 	}
 	return p, nil
+}
+
+// viewHeight returns the number of content lines visible in the viewport.
+// Returns 0 if terminal height is unknown (no scrolling).
+func (p *ProjectDetailView) viewHeight() int {
+	if p.termHeight <= 0 {
+		return 0
+	}
+	h := p.termHeight - reservedChromeLines
+	if h < 5 {
+		h = 5
+	}
+	return h
+}
+
+// cursorRow returns the 0-based line index of the cursor in the rendered content.
+func (p *ProjectDetailView) cursorRow() int {
+	// Header: "← title\n\n" (2 lines) + "Resources\n" (1 line) = 3 lines.
+	row := 3
+	if len(p.Resources) == 0 {
+		return row
+	}
+	for i := 0; i < p.Selected && i < len(p.Resources); i++ {
+		row++ // resource header line
+		row += len(p.Resources[i].Beads)
+	}
+	if p.SelectedBeadIdx >= 0 {
+		row++ // skip selected resource's header
+		row += p.SelectedBeadIdx
+	}
+	return row
+}
+
+// ensureVisible adjusts scrollOffset so the cursor row is within the viewport.
+func (p *ProjectDetailView) ensureVisible() {
+	vh := p.viewHeight()
+	if vh <= 0 {
+		return
+	}
+	row := p.cursorRow()
+	if row < p.scrollOffset {
+		p.scrollOffset = row
+	}
+	if row >= p.scrollOffset+vh {
+		p.scrollOffset = row - vh + 1
+	}
+	// When near the top, snap to 0 to keep the header (title + "Resources")
+	// visible. The header occupies the first 3 lines (rows 0-2).
+	if p.scrollOffset > 0 && p.scrollOffset <= 3 {
+		p.scrollOffset = 0
+	}
 }
 
 // moveDown advances the cursor one row: through beads within a resource,
@@ -232,7 +302,48 @@ func (p *ProjectDetailView) View() string {
 		}
 	}
 
-	return b.String()
+	content := b.String()
+
+	// Apply viewport scrolling when terminal height is known.
+	vh := p.viewHeight()
+	if vh <= 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	// strings.Split produces a trailing empty element from the final "\n".
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) <= vh {
+		return content // everything fits, no clipping needed
+	}
+
+	start := p.scrollOffset
+	if start < 0 {
+		start = 0
+	}
+	end := start + vh
+	if end > len(lines) {
+		end = len(lines)
+		start = end - vh
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	scrollHintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	var out strings.Builder
+	if start > 0 {
+		out.WriteString(scrollHintStyle.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
+	}
+	out.WriteString(strings.Join(lines[start:end], "\n"))
+	if end < len(lines) {
+		out.WriteString("\n" + scrollHintStyle.Render(fmt.Sprintf("  ↓ %d more", len(lines)-end)))
+	}
+	out.WriteString("\n")
+
+	return out.String()
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").
