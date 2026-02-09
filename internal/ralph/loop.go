@@ -7,9 +7,69 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"time"
 
 	"devdeploy/internal/beads"
 )
+
+// StopReason indicates why the ralph loop terminated.
+type StopReason int
+
+const (
+	StopNormal           StopReason = iota // No more beads or all iterations completed.
+	StopMaxIterations                      // Hit --max-iterations cap.
+	StopConsecutiveFails                   // Too many consecutive failures.
+	StopWallClock                          // Total --timeout wall-clock exceeded.
+	StopContextCancelled                   // Context cancelled (e.g. SIGINT).
+	StopAllBeadsSkipped                    // All available beads were skipped (retry detection).
+)
+
+// String returns a human-readable label for the stop reason.
+func (r StopReason) String() string {
+	switch r {
+	case StopNormal:
+		return "normal"
+	case StopMaxIterations:
+		return "max-iterations"
+	case StopConsecutiveFails:
+		return "consecutive-failures"
+	case StopWallClock:
+		return "wall-clock-timeout"
+	case StopContextCancelled:
+		return "context-cancelled"
+	case StopAllBeadsSkipped:
+		return "all-beads-skipped"
+	default:
+		return "unknown"
+	}
+}
+
+// ExitCode returns a distinct process exit code for each stop reason.
+func (r StopReason) ExitCode() int {
+	switch r {
+	case StopNormal:
+		return 0
+	case StopMaxIterations:
+		return 2
+	case StopConsecutiveFails:
+		return 3
+	case StopWallClock:
+		return 4
+	case StopContextCancelled:
+		return 5
+	case StopAllBeadsSkipped:
+		return 6
+	default:
+		return 1
+	}
+}
+
+// DefaultConsecutiveFailureLimit is the default number of consecutive failures
+// before the loop stops.
+const DefaultConsecutiveFailureLimit = 3
+
+// DefaultWallClockTimeout is the default total wall-clock timeout for a ralph session.
+const DefaultWallClockTimeout = 2 * time.Hour
 
 // LoopConfig configures the ralph autonomous work loop.
 type LoopConfig struct {
@@ -19,6 +79,18 @@ type LoopConfig struct {
 	MaxIterations int
 	DryRun        bool
 	Verbose       bool
+
+	// AgentTimeout is the per-agent execution timeout. Zero means use the
+	// executor's DefaultTimeout (10m).
+	AgentTimeout time.Duration
+
+	// ConsecutiveFailureLimit stops the loop after N consecutive failures.
+	// Zero means use DefaultConsecutiveFailureLimit (3).
+	ConsecutiveFailureLimit int
+
+	// Timeout is the total wall-clock timeout for the entire ralph session.
+	// Zero means use DefaultWallClockTimeout (2h).
+	Timeout time.Duration
 
 	// Test hooks — nil means use real implementations.
 	PickNext    func() (*beads.Bead, error)
@@ -37,18 +109,39 @@ type RunSummary struct {
 	Questions  int
 	Failed     int
 	TimedOut   int
+	Skipped    int
+	StopReason StopReason
 }
 
 // Run executes the ralph autonomous work loop. It picks beads, dispatches
-// agents, assesses outcomes, and tracks consecutive failures. The loop stops
-// when there are no more beads, the max iteration count is reached, the
-// context is cancelled, or 3 consecutive failures occur.
+// agents, assesses outcomes, and enforces safety guards. The loop stops when:
+//   - no more beads are available
+//   - max iteration count is reached
+//   - the context is cancelled
+//   - N consecutive failures occur
+//   - the total wall-clock timeout expires
+//   - all available beads have been skipped (same-bead retry detection)
 func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout
 	}
 	logger := log.New(out, "ralph: ", 0)
+
+	// Resolve defaults.
+	consecutiveLimit := cfg.ConsecutiveFailureLimit
+	if consecutiveLimit <= 0 {
+		consecutiveLimit = DefaultConsecutiveFailureLimit
+	}
+
+	wallTimeout := cfg.Timeout
+	if wallTimeout <= 0 {
+		wallTimeout = DefaultWallClockTimeout
+	}
+
+	// Apply wall-clock timeout to context.
+	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
+	defer cancelWall()
 
 	pickNext := cfg.PickNext
 	if pickNext == nil {
@@ -75,7 +168,11 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
-			return RunAgent(ctx, cfg.WorkDir, prompt)
+			var opts []Option
+			if cfg.AgentTimeout > 0 {
+				opts = append(opts, WithTimeout(cfg.AgentTimeout))
+			}
+			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 		}
 	}
 
@@ -97,11 +194,19 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	summary := &RunSummary{}
 	consecutiveFailures := 0
+	lastFailedBeadID := ""
+	skippedBeads := make(map[string]bool)
 
 	for i := 0; i < cfg.MaxIterations; i++ {
-		// Check for context cancellation before each iteration.
+		// Guard: context cancellation / wall-clock timeout.
 		if ctx.Err() != nil {
-			logger.Printf("context cancelled, stopping")
+			if ctx.Err() == context.DeadlineExceeded {
+				summary.StopReason = StopWallClock
+				logger.Printf("wall-clock timeout (%s) exceeded, stopping", wallTimeout)
+			} else {
+				summary.StopReason = StopContextCancelled
+				logger.Printf("context cancelled, stopping")
+			}
 			break
 		}
 
@@ -112,7 +217,37 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		}
 		if bead == nil {
 			logger.Printf("no ready beads, done")
+			summary.StopReason = StopNormal
 			break
+		}
+
+		// Guard: same-bead retry detection.
+		// If the same bead that just failed is picked again, skip it.
+		if lastFailedBeadID != "" && bead.ID == lastFailedBeadID {
+			skippedBeads[bead.ID] = true
+			summary.Skipped++
+			logger.Printf("skipping %s (same bead failed last iteration)", bead.ID)
+			lastFailedBeadID = "" // reset so we don't skip indefinitely
+
+			// Check if we should stop: if we've skipped beads and the picker
+			// keeps returning skipped beads, we're in an infinite loop.
+			// Try one more pick; if that's also skipped, stop.
+			retryBead, retryErr := pickNext()
+			if retryErr != nil {
+				return summary, fmt.Errorf("iteration %d: picking bead (retry): %w", i+1, retryErr)
+			}
+			if retryBead == nil {
+				logger.Printf("no ready beads after skip, done")
+				summary.StopReason = StopNormal
+				break
+			}
+			if skippedBeads[retryBead.ID] {
+				summary.Skipped++
+				summary.StopReason = StopAllBeadsSkipped
+				logger.Printf("all available beads have been skipped, stopping")
+				break
+			}
+			bead = retryBead
 		}
 
 		if cfg.Verbose {
@@ -160,18 +295,24 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		case OutcomeSuccess:
 			summary.Succeeded++
 			consecutiveFailures = 0
+			lastFailedBeadID = ""
 		case OutcomeQuestion:
 			summary.Questions++
 			consecutiveFailures = 0
+			lastFailedBeadID = ""
 		case OutcomeFailure:
 			summary.Failed++
 			consecutiveFailures++
+			lastFailedBeadID = bead.ID
 		case OutcomeTimeout:
 			summary.TimedOut++
 			consecutiveFailures++
+			lastFailedBeadID = bead.ID
 		}
 
-		if consecutiveFailures >= 3 {
+		// Guard: consecutive failure limit.
+		if consecutiveFailures >= consecutiveLimit {
+			summary.StopReason = StopConsecutiveFails
 			logger.Printf("too many consecutive failures (%d), stopping", consecutiveFailures)
 			break
 		}
@@ -184,9 +325,15 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		}
 	}
 
+	// If we exhausted all iterations without an earlier stop reason, set it.
+	if summary.StopReason == StopNormal && summary.Iterations >= cfg.MaxIterations {
+		summary.StopReason = StopMaxIterations
+		logger.Printf("reached max iterations (%d), stopping", cfg.MaxIterations)
+	}
+
 	// Final summary.
-	logger.Printf("done: %d iterations, %d succeeded, %d questions, %d failed, %d timed out",
-		summary.Iterations, summary.Succeeded, summary.Questions, summary.Failed, summary.TimedOut)
+	logger.Printf("done: %d iterations, %d succeeded, %d questions, %d failed, %d timed out, %d skipped [stop: %s]",
+		summary.Iterations, summary.Succeeded, summary.Questions, summary.Failed, summary.TimedOut, summary.Skipped, summary.StopReason)
 
 	return summary, nil
 }

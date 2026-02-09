@@ -88,6 +88,7 @@ func baseCfg(buf *bytes.Buffer) LoopConfig {
 	return LoopConfig{
 		WorkDir:       "/fake/dir",
 		MaxIterations: 20,
+		Timeout:       1 * time.Hour, // generous for tests
 		Output:        buf,
 		FetchPrompt:   staticPrompt(),
 		Render:        staticRender(),
@@ -96,7 +97,7 @@ func baseCfg(buf *bytes.Buffer) LoopConfig {
 	}
 }
 
-// --- Tests ---
+// --- Existing tests (updated for StopReason) ---
 
 func TestRun_SingleBeadSuccess(t *testing.T) {
 	var buf bytes.Buffer
@@ -118,8 +119,10 @@ func TestRun_SingleBeadSuccess(t *testing.T) {
 	if summary.Failed != 0 {
 		t.Errorf("failed = %d, want 0", summary.Failed)
 	}
+	if summary.StopReason != StopNormal {
+		t.Errorf("stop reason = %v, want StopNormal", summary.StopReason)
+	}
 
-	// Verify output contains the final summary.
 	output := buf.String()
 	if !strings.Contains(output, "1 succeeded") {
 		t.Errorf("output missing success count:\n%s", output)
@@ -162,6 +165,9 @@ func TestRun_NoBeadsAvailable(t *testing.T) {
 	if summary.Iterations != 0 {
 		t.Errorf("iterations = %d, want 0", summary.Iterations)
 	}
+	if summary.StopReason != StopNormal {
+		t.Errorf("stop reason = %v, want StopNormal", summary.StopReason)
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, "no ready beads") {
@@ -191,6 +197,9 @@ func TestRun_ConsecutiveFailuresStopLoop(t *testing.T) {
 	if summary.Failed != 3 {
 		t.Errorf("failed = %d, want 3", summary.Failed)
 	}
+	if summary.StopReason != StopConsecutiveFails {
+		t.Errorf("stop reason = %v, want StopConsecutiveFails", summary.StopReason)
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, "too many consecutive failures") {
@@ -199,9 +208,6 @@ func TestRun_ConsecutiveFailuresStopLoop(t *testing.T) {
 }
 
 func TestRun_QuestionResetsConsecutiveFailures(t *testing.T) {
-	// Sequence: fail, fail, question, fail, fail, fail -> stops at 3 consecutive.
-	// The question in the middle resets the counter, so we get 6 iterations
-	// instead of stopping at 3.
 	var buf bytes.Buffer
 	cfg := baseCfg(&buf)
 	cfg.PickNext = beadQueue(
@@ -236,6 +242,9 @@ func TestRun_QuestionResetsConsecutiveFailures(t *testing.T) {
 	if summary.Questions != 1 {
 		t.Errorf("questions = %d, want 1", summary.Questions)
 	}
+	if summary.StopReason != StopConsecutiveFails {
+		t.Errorf("stop reason = %v, want StopConsecutiveFails", summary.StopReason)
+	}
 }
 
 func TestRun_TimeoutCountsAsFailure(t *testing.T) {
@@ -258,6 +267,9 @@ func TestRun_TimeoutCountsAsFailure(t *testing.T) {
 	}
 	if summary.TimedOut != 3 {
 		t.Errorf("timed_out = %d, want 3", summary.TimedOut)
+	}
+	if summary.StopReason != StopConsecutiveFails {
+		t.Errorf("stop reason = %v, want StopConsecutiveFails", summary.StopReason)
 	}
 
 	output := buf.String()
@@ -290,6 +302,14 @@ func TestRun_MaxIterationsCap(t *testing.T) {
 	if summary.Succeeded != 3 {
 		t.Errorf("succeeded = %d, want 3", summary.Succeeded)
 	}
+	if summary.StopReason != StopMaxIterations {
+		t.Errorf("stop reason = %v, want StopMaxIterations", summary.StopReason)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "reached max iterations") {
+		t.Errorf("output missing max iterations message:\n%s", output)
+	}
 }
 
 func TestRun_ContextCancellation(t *testing.T) {
@@ -309,6 +329,9 @@ func TestRun_ContextCancellation(t *testing.T) {
 
 	if summary.Iterations != 0 {
 		t.Errorf("iterations = %d, want 0 (context cancelled)", summary.Iterations)
+	}
+	if summary.StopReason != StopContextCancelled {
+		t.Errorf("stop reason = %v, want StopContextCancelled", summary.StopReason)
 	}
 
 	output := buf.String()
@@ -501,7 +524,280 @@ func TestRun_MixedOutcomes(t *testing.T) {
 func TestRunSummary_ZeroValue(t *testing.T) {
 	s := &RunSummary{}
 	if s.Iterations != 0 || s.Succeeded != 0 || s.Questions != 0 ||
-		s.Failed != 0 || s.TimedOut != 0 {
+		s.Failed != 0 || s.TimedOut != 0 || s.Skipped != 0 {
 		t.Errorf("zero-value RunSummary should have all zeros: %+v", s)
+	}
+	if s.StopReason != StopNormal {
+		t.Errorf("zero-value StopReason = %v, want StopNormal", s.StopReason)
+	}
+}
+
+// --- Guard-specific tests ---
+
+func TestRun_CustomConsecutiveFailureLimit(t *testing.T) {
+	// Set limit to 2 instead of default 3.
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.ConsecutiveFailureLimit = 2
+	cfg.PickNext = beadQueue(
+		makeBead("b-1", 1),
+		makeBead("b-2", 1),
+		makeBead("b-3", 1), // should not be reached
+	)
+	cfg.AssessFn = outcomeSequence(OutcomeFailure, OutcomeFailure)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Iterations != 2 {
+		t.Errorf("iterations = %d, want 2", summary.Iterations)
+	}
+	if summary.Failed != 2 {
+		t.Errorf("failed = %d, want 2", summary.Failed)
+	}
+	if summary.StopReason != StopConsecutiveFails {
+		t.Errorf("stop reason = %v, want StopConsecutiveFails", summary.StopReason)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "too many consecutive failures (2)") {
+		t.Errorf("output missing consecutive failure message with count:\n%s", output)
+	}
+}
+
+func TestRun_SameBeadRetryDetection_SkipsAndContinues(t *testing.T) {
+	// Picker returns: b-1 (fails), b-1 again (should be skipped), b-2 (succeeds).
+	calls := 0
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.PickNext = func() (*beads.Bead, error) {
+		calls++
+		switch calls {
+		case 1:
+			return makeBead("b-1", 1), nil
+		case 2:
+			return makeBead("b-1", 1), nil // same bead after failure
+		case 3:
+			return makeBead("b-2", 1), nil // retry pick gets different bead
+		default:
+			return nil, nil
+		}
+	}
+	cfg.AssessFn = outcomeSequence(OutcomeFailure, OutcomeSuccess)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Skipped != 1 {
+		t.Errorf("skipped = %d, want 1", summary.Skipped)
+	}
+	if summary.Iterations != 2 {
+		t.Errorf("iterations = %d, want 2", summary.Iterations)
+	}
+	if summary.Succeeded != 1 {
+		t.Errorf("succeeded = %d, want 1", summary.Succeeded)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "skipping b-1") {
+		t.Errorf("output missing skip message:\n%s", output)
+	}
+}
+
+func TestRun_SameBeadRetryDetection_AllSkipped(t *testing.T) {
+	// Picker always returns b-1, which keeps failing.
+	// After first failure: b-1 is skipped, retry returns b-1 again -> all skipped.
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.PickNext = func() (*beads.Bead, error) {
+		return makeBead("b-1", 1), nil
+	}
+	cfg.AssessFn = outcomeSequence(OutcomeFailure)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.StopReason != StopAllBeadsSkipped {
+		t.Errorf("stop reason = %v, want StopAllBeadsSkipped", summary.StopReason)
+	}
+	if summary.Iterations != 1 {
+		t.Errorf("iterations = %d, want 1", summary.Iterations)
+	}
+	if summary.Skipped < 1 {
+		t.Errorf("skipped = %d, want >= 1", summary.Skipped)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "all available beads have been skipped") {
+		t.Errorf("output missing all-beads-skipped message:\n%s", output)
+	}
+}
+
+func TestRun_SameBeadRetryDetection_NoBeadsAfterSkip(t *testing.T) {
+	// Picker: b-1 (fails), b-1 (skipped), nil (no more beads).
+	calls := 0
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.PickNext = func() (*beads.Bead, error) {
+		calls++
+		switch calls {
+		case 1:
+			return makeBead("b-1", 1), nil
+		case 2:
+			return makeBead("b-1", 1), nil // same, triggers skip
+		case 3:
+			return nil, nil // no more beads on retry
+		default:
+			return nil, nil
+		}
+	}
+	cfg.AssessFn = outcomeSequence(OutcomeFailure)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.StopReason != StopNormal {
+		t.Errorf("stop reason = %v, want StopNormal", summary.StopReason)
+	}
+	if summary.Skipped != 1 {
+		t.Errorf("skipped = %d, want 1", summary.Skipped)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "no ready beads after skip") {
+		t.Errorf("output missing no-beads-after-skip message:\n%s", output)
+	}
+}
+
+func TestRun_WallClockTimeout(t *testing.T) {
+	// Use a very short wall-clock timeout that expires during execution.
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.Timeout = 50 * time.Millisecond
+	cfg.PickNext = func() (*beads.Bead, error) {
+		return makeBead("slow-bead", 1), nil
+	}
+	cfg.Execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
+		// Simulate a slow agent.
+		time.Sleep(200 * time.Millisecond)
+		return &AgentResult{ExitCode: 0, Duration: 200 * time.Millisecond}, nil
+	}
+	cfg.AssessFn = func(beadID string, result *AgentResult) (Outcome, string) {
+		return OutcomeSuccess, "ok"
+	}
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.StopReason != StopWallClock {
+		t.Errorf("stop reason = %v, want StopWallClock", summary.StopReason)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "wall-clock timeout") {
+		t.Errorf("output missing wall-clock timeout message:\n%s", output)
+	}
+}
+
+func TestRun_SameBeadRetryDetection_SuccessResetsTracking(t *testing.T) {
+	// Sequence: b-1 fails, then picker gives b-2 which succeeds,
+	// then b-1 again (should NOT be skipped since there was a success in between).
+	calls := 0
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.PickNext = func() (*beads.Bead, error) {
+		calls++
+		switch calls {
+		case 1:
+			return makeBead("b-1", 1), nil
+		case 2:
+			return makeBead("b-2", 1), nil // different bead, no skip
+		case 3:
+			return makeBead("b-1", 1), nil // b-1 again, but last was success -> no skip
+		default:
+			return nil, nil
+		}
+	}
+	cfg.AssessFn = outcomeSequence(OutcomeFailure, OutcomeSuccess, OutcomeSuccess)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Skipped != 0 {
+		t.Errorf("skipped = %d, want 0 (success cleared tracking)", summary.Skipped)
+	}
+	if summary.Iterations != 3 {
+		t.Errorf("iterations = %d, want 3", summary.Iterations)
+	}
+}
+
+// --- StopReason tests ---
+
+func TestStopReason_String(t *testing.T) {
+	tests := []struct {
+		r    StopReason
+		want string
+	}{
+		{StopNormal, "normal"},
+		{StopMaxIterations, "max-iterations"},
+		{StopConsecutiveFails, "consecutive-failures"},
+		{StopWallClock, "wall-clock-timeout"},
+		{StopContextCancelled, "context-cancelled"},
+		{StopAllBeadsSkipped, "all-beads-skipped"},
+		{StopReason(99), "unknown"},
+	}
+	for _, tc := range tests {
+		if got := tc.r.String(); got != tc.want {
+			t.Errorf("StopReason(%d).String() = %q, want %q", tc.r, got, tc.want)
+		}
+	}
+}
+
+func TestStopReason_ExitCode(t *testing.T) {
+	tests := []struct {
+		r    StopReason
+		want int
+	}{
+		{StopNormal, 0},
+		{StopMaxIterations, 2},
+		{StopConsecutiveFails, 3},
+		{StopWallClock, 4},
+		{StopContextCancelled, 5},
+		{StopAllBeadsSkipped, 6},
+		{StopReason(99), 1},
+	}
+	for _, tc := range tests {
+		if got := tc.r.ExitCode(); got != tc.want {
+			t.Errorf("StopReason(%d).ExitCode() = %d, want %d", tc.r, got, tc.want)
+		}
+	}
+}
+
+func TestRun_FinalSummaryIncludesStopReason(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.PickNext = beadQueue(makeBead("b-1", 1))
+	cfg.AssessFn = outcomeSequence(OutcomeSuccess)
+
+	_, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "[stop: normal]") {
+		t.Errorf("output missing stop reason in summary:\n%s", output)
 	}
 }
