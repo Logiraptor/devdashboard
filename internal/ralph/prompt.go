@@ -85,9 +85,9 @@ const promptTemplateText = `You are working on bead {{.ID}}.
 If the bead is ambiguous or you need information you cannot find in the codebase:
 
 1. Create a question bead:
-   ` + "`" + `bd create "Question: <your question>" --type task --label needs-human` + "`" + `
-2. Add a blocking dependency from the question to this bead:
-   ` + "`" + `bd link <question-id> --blocks {{.ID}}` + "`" + `
+   ` + "`" + `bd create "Question: <your question>" --type task --label needs-human --parent {{.ID}}` + "`" + `
+2. Add a blocking dependency so the original bead drops off bd ready:
+   ` + "`" + `bd dep add {{.ID}} <question-id>` + "`" + `
 3. **Stop working on this bead** — do not guess. Move on.
 
 Do NOT close this bead if you created a blocking question.`

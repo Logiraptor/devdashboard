@@ -49,7 +49,8 @@ func TestRenderPrompt_ContainsAllSections(t *testing.T) {
 		{"AGENTS.md", "AGENTS.md"},
 		{"push instruction", "git push"},
 		{"question protocol", "needs-human"},
-		{"blocking link", "--blocks test-abc.1"},
+		{"blocking dependency", "bd dep add test-abc.1"},
+		{"parent relationship", "--parent test-abc.1"},
 		{"stop instruction", "Stop working on this bead"},
 	}
 
@@ -187,7 +188,7 @@ func TestFetchPromptData_EmptyArray(t *testing.T) {
 }
 
 func TestRenderPrompt_IDAppearsMultipleTimes(t *testing.T) {
-	// The bead ID should appear in: header, claim, close, and link instructions.
+	// The bead ID should appear in: header, claim, close, parent, and dep add instructions.
 	data := &PromptData{
 		ID:          "repeat-42",
 		Title:       "Test",
@@ -200,8 +201,8 @@ func TestRenderPrompt_IDAppearsMultipleTimes(t *testing.T) {
 	}
 
 	count := strings.Count(got, "repeat-42")
-	// At minimum: header, claim, close, link = 4 occurrences
-	if count < 4 {
-		t.Errorf("expected bead ID to appear at least 4 times, got %d", count)
+	// At minimum: header, claim, close, parent, dep add = 5 occurrences
+	if count < 5 {
+		t.Errorf("expected bead ID to appear at least 5 times, got %d", count)
 	}
 }
