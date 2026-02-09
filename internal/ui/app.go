@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -423,8 +424,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
-		// Pass the ralph prompt as a positional argument to agent.
-		cmd := fmt.Sprintf("agent %q\n", ralphPrompt)
+		// Pass the ralph prompt as a single-quoted positional argument to agent.
+		// Single quotes prevent the shell from interpreting backticks and $.
+		escaped := strings.ReplaceAll(ralphPrompt, "'", `'\''`)
+		cmd := fmt.Sprintf("agent '%s'\n", escaped)
 		if err := tmux.SendKeys(paneID, cmd); err != nil {
 			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
 			a.StatusIsError = true
