@@ -306,6 +306,8 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 // runEpicOrchestrator orchestrates epic leaf tasks sequentially, then runs opus verification.
 // This is invoked when --epic flag is set (and --bead is not set).
+// It queries 'bd ready --parent <epic-id>' after each completion to get fresh state
+// and handle newly ready leaves, continuing until all leaves are done.
 func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	out := cfg.Output
 	if out == nil {
@@ -322,23 +324,6 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 	// Apply wall-clock timeout to context.
 	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
 	defer cancelWall()
-
-	// Fetch all children of the epic
-	fmt.Fprintf(out, "Epic orchestrator: fetching children of epic %s\n", cfg.Epic)
-	children, err := FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic, cfg.Labels)
-	if err != nil {
-		return nil, fmt.Errorf("fetching epic children: %w", err)
-	}
-
-	if len(children) == 0 {
-		fmt.Fprintf(out, "No ready children found for epic %s\n", cfg.Epic)
-		return &RunSummary{
-			StopReason: StopNormal,
-			Duration:   time.Since(loopStart),
-		}, nil
-	}
-
-	fmt.Fprintf(out, "Found %d child task(s) for epic %s\n", len(children), cfg.Epic)
 
 	// Set up status writer for devdeploy TUI polling.
 	statusWriter := NewStatusWriter(cfg.WorkDir)
@@ -397,8 +382,17 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		}
 	}
 
-	// Run each child sequentially
-	for i, child := range children {
+	// Track processed beads to avoid infinite loops if a bead keeps appearing
+	processedBeads := make(map[string]bool)
+
+	// Fetch children function - can be overridden for testing
+	fetchChildren := func() ([]beads.Bead, error) {
+		return FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic, cfg.Labels)
+	}
+
+	// Main loop: query for ready leaves, process first one, repeat until none remain
+	iteration := 0
+	for {
 		// Guard: context cancellation / wall-clock timeout.
 		if ctx.Err() != nil {
 			if ctx.Err() == context.DeadlineExceeded {
@@ -409,12 +403,51 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 			break
 		}
 
+		// Query for ready leaf tasks
+		if iteration == 0 {
+			fmt.Fprintf(out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
+		}
+		children, err := fetchChildren()
+		if err != nil {
+			summary.Duration = time.Since(loopStart)
+			return summary, fmt.Errorf("fetching epic children: %w", err)
+		}
+
+		// Filter out already processed beads
+		readyChildren := make([]beads.Bead, 0, len(children))
+		for _, child := range children {
+			if !processedBeads[child.ID] {
+				readyChildren = append(readyChildren, child)
+			}
+		}
+
+		if len(readyChildren) == 0 {
+			if iteration == 0 {
+				fmt.Fprintf(out, "No ready children found for epic %s\n", cfg.Epic)
+			} else {
+				fmt.Fprintf(out, "No more ready children for epic %s\n", cfg.Epic)
+			}
+			summary.StopReason = StopNormal
+			break
+		}
+
+		if iteration == 0 {
+			fmt.Fprintf(out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
+		}
+
+		// Process the first ready leaf (sorted by priority)
+		child := readyChildren[0]
+		iteration++
+
+		// Mark as processed to avoid reprocessing
+		processedBeads[child.ID] = true
+
 		// Write status: starting iteration with current bead.
 		currentBead := &BeadInfo{ID: child.ID, Title: child.Title}
 		status := Status{
 			State:         "running",
-			Iteration:     i + 1,
-			MaxIterations: len(children),
+			Iteration:     iteration,
+			MaxIterations: 0, // Unknown total, will be updated
 			CurrentBead:   currentBead,
 			Elapsed:       time.Since(loopStart).Nanoseconds(),
 		}
@@ -429,13 +462,13 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		promptData, err := fetchPrompt(child.ID)
 		if err != nil {
 			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: fetching prompt data for %s: %w", i+1, child.ID, err)
+			return summary, fmt.Errorf("iteration %d: fetching prompt data for %s: %w", iteration, child.ID, err)
 		}
 
 		prompt, err := render(promptData)
 		if err != nil {
 			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: rendering prompt for %s: %w", i+1, child.ID, err)
+			return summary, fmt.Errorf("iteration %d: rendering prompt for %s: %w", iteration, child.ID, err)
 		}
 
 		// Get commit hash before agent execution for landing check
@@ -450,7 +483,7 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		result, err := execute(ctx, prompt)
 		if err != nil {
 			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: running agent for %s: %w", i+1, child.ID, err)
+			return summary, fmt.Errorf("iteration %d: running agent for %s: %w", iteration, child.ID, err)
 		}
 
 		// Assess outcome
@@ -474,7 +507,7 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		}
 
 		// Print structured per-iteration log line
-		fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, len(children), child.ID, child.Title, outcome, result.Duration, outcomeSummary))
+		fmt.Fprintf(out, "%s\n", formatIterationLog(iteration, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
 
 		// Update counters
 		summary.Iterations++
@@ -497,17 +530,19 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 			return summary, nil
 		}
 
-		// Sync beads state
+		// Sync beads state after each completion
 		if err := syncFn(); err != nil {
 			if cfg.Verbose {
 				fmt.Fprintf(out, "  bd sync warning: %v\n", err)
 			}
 		}
+
+		// Continue loop to query for next ready leaf
 	}
 
 	// If all children completed successfully, run opus verification
-	if summary.Failed == 0 && summary.TimedOut == 0 {
-		fmt.Fprintf(out, "\nAll %d child task(s) completed successfully. Running opus verification...\n", len(children))
+	if summary.Failed == 0 && summary.TimedOut == 0 && summary.Iterations > 0 {
+		fmt.Fprintf(out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", summary.Iterations)
 
 		// Create verification prompt
 		verificationPrompt := fmt.Sprintf(`You are verifying epic %s after all leaf tasks have been completed.
@@ -553,7 +588,7 @@ If issues are found, create question beads or update the epic description.`, cfg
 	finalStatus := Status{
 		State:         "completed",
 		Iteration:     summary.Iterations,
-		MaxIterations: len(children),
+		MaxIterations: summary.Iterations, // Total equals completed since we process until none remain
 		Elapsed:       summary.Duration.Nanoseconds(),
 		StopReason:    summary.StopReason.String(),
 	}
@@ -564,8 +599,18 @@ If issues are found, create question beads or update the epic description.`, cfg
 	finalStatus.Tallies.Skipped = summary.Skipped
 	_ = statusWriter.Write(finalStatus)
 
+	// Count remaining beads for summary
+	remainingBeads := 0
+	if summary.StopReason == StopNormal {
+		// Query one more time to see if any remain
+		remaining, err := fetchChildren()
+		if err == nil {
+			remainingBeads = len(remaining)
+		}
+	}
+
 	// Print final summary
-	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, 0))
+	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
 
 	return summary, nil
 }
