@@ -18,6 +18,11 @@ import (
 // ralphPrompt is the canned prompt sent to an agent for automated work loops.
 const ralphPrompt = "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
 
+// ralphTargetedPrompt returns a prompt that tells the agent to work on a specific bead.
+func ralphTargetedPrompt(beadID string) string {
+	return fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", beadID, beadID, beadID)
+}
+
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
 	Name string
@@ -424,9 +429,15 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
-		// Pass the ralph prompt as a single-quoted positional argument to agent.
+		// Use targeted prompt if cursor is on a specific bead, otherwise use generic prompt.
+		prompt := ralphPrompt
+		selectedBead := a.Detail.SelectedBead()
+		if selectedBead != nil {
+			prompt = ralphTargetedPrompt(selectedBead.ID)
+		}
+		// Pass the prompt as a single-quoted positional argument to agent.
 		// Single quotes prevent the shell from interpreting backticks and $.
-		escaped := strings.ReplaceAll(ralphPrompt, "'", `'\''`)
+		escaped := strings.ReplaceAll(prompt, "'", `'\''`)
 		cmd := fmt.Sprintf("agent --force '%s'\n", escaped)
 		if err := tmux.SendKeys(paneID, cmd); err != nil {
 			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
@@ -438,7 +449,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Sessions.Register(rk, paneID, session.PaneAgent)
 			a.refreshDetailPanes()
 		}
-		a.Status = "Ralph loop launched"
+		statusMsg := "Ralph loop launched"
+		if selectedBead != nil {
+			statusMsg = fmt.Sprintf("Ralph launched for %s", selectedBead.ID)
+		}
+		a.Status = statusMsg
 		a.StatusIsError = false
 		return a, nil
 	case HidePaneMsg:

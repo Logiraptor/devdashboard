@@ -1265,3 +1265,40 @@ func TestRalphPromptConstant(t *testing.T) {
 		}
 	}
 }
+
+// TestRalphTargetedPrompt validates the targeted prompt contains the bead ID.
+func TestRalphTargetedPrompt(t *testing.T) {
+	prompt := ralphTargetedPrompt("devdeploy-abc")
+	if !strings.Contains(prompt, "devdeploy-abc") {
+		t.Errorf("targeted prompt should contain bead ID, got: %s", prompt)
+	}
+	for _, keyword := range []string{"bd show", "bd update", "bd close", ".cursor/rules/"} {
+		if !strings.Contains(prompt, keyword) {
+			t.Errorf("targeted prompt should contain %q, got: %s", keyword, prompt)
+		}
+	}
+	// Should NOT contain "bd ready" — targeted prompt skips the picker.
+	if strings.Contains(prompt, "bd ready") {
+		t.Errorf("targeted prompt should not contain 'bd ready', got: %s", prompt)
+	}
+}
+
+// TestLaunchRalphMsg_NoBeadsError validates the "no beads" error message
+// is shown when resource has no beads, regardless of bead cursor position.
+func TestLaunchRalphMsg_NoBeadsError(t *testing.T) {
+	ta := newTestApp(t)
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: ta.Dir},
+	}
+	detail.Selected = 0
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	_, _ = adapter.Update(LaunchRalphMsg{})
+	if !ta.StatusIsError || !strings.Contains(ta.Status, "No open beads") {
+		t.Errorf("expected 'No open beads' error, got Status=%q StatusIsError=%v", ta.Status, ta.StatusIsError)
+	}
+}

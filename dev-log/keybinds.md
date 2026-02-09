@@ -26,10 +26,10 @@
 |----------|--------|
 | `q`, `ctrl+c` | Quit |
 | `SPC q` | Quit (spacemacs-style) |
-| `j`, `down` | Next item |
-| `k`, `up` | Previous item |
-| `g` | First item |
-| `G` | Last item |
+| `j`, `down` | Next item (navigates through beads within a resource before advancing) |
+| `k`, `up` | Previous item (navigates through beads within a resource before retreating) |
+| `g` | First item (resource header) |
+| `G` | Last item (last bead of last resource, or last resource header) |
 
 ## SPC p — Project Management
 
@@ -48,6 +48,7 @@
 |----------|--------|
 | `SPC s s` | Open shell (tmux pane in selected resource's worktree) |
 | `SPC s a` | Launch agent (`agent` in selected resource's worktree) |
+| `SPC s r` | Ralph loop — when cursor is on a **bead**, sends targeted prompt for that specific bead ID; when on a **resource header**, sends generic `bd ready` prompt |
 | `SPC s h` | Hide shell pane |
 | `SPC s j` | Show shell pane |
 

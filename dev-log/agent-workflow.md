@@ -16,6 +16,15 @@ As of 2026-02-07, the agent concept is simplified: **an agent is just a shell wi
 3. User interacts with the agent directly in its native interface
 4. devdeploy tracks the pane as type "agent" in the session tracker
 
+### Targeted Ralph (SPC s r)
+
+The Ralph loop (`SPC s r`) supports two modes based on cursor position:
+
+- **Bead selected** (cursor on a specific bead): sends a targeted prompt with `bd show <id>`, `bd update <id> --status in_progress`, and `bd close <id>` — the agent works on exactly that bead.
+- **Resource header** (no bead selected): sends the generic `bd ready` prompt — the agent picks the highest-priority available bead.
+
+Navigation uses a two-level cursor: `j`/`k` move through beads within a resource before advancing to the next resource header.
+
 This replaces the earlier `AgentRunner` interface / `StubRunner` / progress event stream approach for agent execution. The progress/abort infrastructure remains for potential future use but is not the primary agent interaction model.
 
 See `devdeploy-7uj` epic for full details.
