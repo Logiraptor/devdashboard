@@ -572,6 +572,55 @@ func TestProjectDetailView_NoBeadsResourceNavUnchanged(t *testing.T) {
 	}
 }
 
+func TestProjectDetailView_ChildBeadsIndented(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{
+			Kind:         project.ResourceRepo,
+			RepoName:     "devdeploy",
+			WorktreePath: "/tmp/devdeploy",
+			Beads: []project.BeadInfo{
+				{ID: "epic-1", Title: "Epic One", Status: "open", IssueType: "epic"},
+				{ID: "child-1", Title: "Child One", Status: "open", IsChild: true},
+				{ID: "standalone", Title: "Standalone task", Status: "open"},
+			},
+		},
+	}
+
+	output := v.View()
+
+	// All bead IDs should be present.
+	if !strings.Contains(output, "epic-1") {
+		t.Errorf("expected epic-1 in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "child-1") {
+		t.Errorf("expected child-1 in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "standalone") {
+		t.Errorf("expected standalone in output, got:\n%s", output)
+	}
+
+	// Check that child bead line has more leading spaces than the epic line.
+	lines := strings.Split(output, "\n")
+	var epicLine, childLine string
+	for _, line := range lines {
+		if strings.Contains(line, "epic-1") {
+			epicLine = line
+		}
+		if strings.Contains(line, "child-1") {
+			childLine = line
+		}
+	}
+	if epicLine == "" || childLine == "" {
+		t.Fatalf("could not find epic/child lines in output:\n%s", output)
+	}
+	epicIndent := len(epicLine) - len(strings.TrimLeft(epicLine, " "))
+	childIndent := len(childLine) - len(strings.TrimLeft(childLine, " "))
+	if childIndent <= epicIndent {
+		t.Errorf("child bead should have more indent (%d) than epic (%d)\nepic:  %q\nchild: %q", childIndent, epicIndent, epicLine, childLine)
+	}
+}
+
 // --- Scroll / viewport tests ---
 
 func TestProjectDetailView_CursorRow(t *testing.T) {

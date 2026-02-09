@@ -635,9 +635,11 @@ func (a *AppModel) populateResourceBeads(v *ProjectDetailView) {
 		r.Beads = make([]project.BeadInfo, len(bdBeads))
 		for j, b := range bdBeads {
 			r.Beads[j] = project.BeadInfo{
-				ID:     b.ID,
-				Title:  b.Title,
-				Status: b.Status,
+				ID:        b.ID,
+				Title:     b.Title,
+				Status:    b.Status,
+				IssueType: b.IssueType,
+				IsChild:   b.ParentID != "",
 			}
 		}
 	}

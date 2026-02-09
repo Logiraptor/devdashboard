@@ -283,15 +283,26 @@ func (p *ProjectDetailView) View() string {
 		// Render beads under the resource.
 		for bi, bd := range r.Beads {
 			beadSelected := selected && p.SelectedBeadIdx == bi
-			beadLine := bd.ID + "  " + bd.Title
-			if len(beadLine) > 60 {
-				beadLine = beadLine[:57] + "..."
+
+			// Child beads get extra indentation to show hierarchy.
+			indent := beadIndent
+			if bd.IsChild {
+				indent += "  "
 			}
-			bullet := beadIndent
+
+			beadLine := bd.ID + "  " + bd.Title
+			maxLen := 60
+			if bd.IsChild {
+				maxLen = 56 // shorter to compensate for extra indent
+			}
+			if len(beadLine) > maxLen {
+				beadLine = beadLine[:maxLen-3] + "..."
+			}
+			bullet := indent
 			style := beadStyle
 			if beadSelected {
 				// Replace last 2 chars of indent with "▸ " for selected bead.
-				bullet = beadIndent[:len(beadIndent)-2] + "▸ "
+				bullet = indent[:len(indent)-2] + "▸ "
 				style = selectedBeadStyle
 			}
 			rendered := bullet + style.Render(beadLine)
