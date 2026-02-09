@@ -116,7 +116,8 @@ func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 		d.list.SetHeight(msg.Height - 4) // Reserve space for header and hint
 		return d, nil
 	case spinner.TickMsg:
-		if d.loading {
+		// Continue spinner when loading (enrichment) or when Projects is nil (initial load)
+		if d.loading || d.Projects == nil {
 			var cmd tea.Cmd
 			d.spinner, cmd = d.spinner.Update(msg)
 			cmds = append(cmds, cmd)
@@ -147,7 +148,8 @@ func (d *DashboardView) View() string {
 	var b strings.Builder
 	count := len(d.Projects)
 	title := fmt.Sprintf("Projects (%d)", count)
-	if d.loading {
+	// Show spinner when loading (enrichment) or when Projects is nil (initial load)
+	if d.loading || d.Projects == nil {
 		title += " " + d.spinner.View()
 	}
 	b.WriteString(title + "\n")
