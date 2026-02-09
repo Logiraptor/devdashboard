@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	_ "github.com/GianlucaP106/gotmux/gotmux" // pinned for upcoming migration (devdeploy-w6o)
 )
 
 // WindowPaneCount returns the number of panes in the current window.
