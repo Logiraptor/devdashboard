@@ -1,16 +1,16 @@
 {
   "state": "running",
-  "iteration": 6,
+  "iteration": 8,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-nh2.4",
-    "title": "Add loading indicators to project detail view"
+    "id": "devdeploy-fyt.2",
+    "title": "Remove/style the blue square filter input area"
   },
-  "elapsed_ns": 364266662833,
+  "elapsed_ns": 458631607208,
   "tallies": {
-    "completed": 5,
+    "completed": 6,
     "questions": 0,
-    "failed": 0,
+    "failed": 1,
     "timed_out": 0,
     "skipped": 0
   }

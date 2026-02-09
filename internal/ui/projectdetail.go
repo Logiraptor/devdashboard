@@ -176,6 +176,18 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 	
+	// Set filter styles with theme colors - will be adjusted dynamically in View()
+	// Default to hidden (matching background) when not filtering
+	l.Styles.FilterPrompt = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorMuted)).
+		Background(lipgloss.NoColor{})
+	l.Styles.FilterCursor = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorAccent)).
+		Background(lipgloss.NoColor{})
+	l.Styles.DefaultFilterCharacterMatch = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorAccent)).
+		Bold(true)
+	
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = Styles.Status
@@ -271,10 +283,13 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 		p.SetSize(msg.Width, msg.Height)
 		return p, nil
 	case tea.KeyMsg:
-		// Handle esc for back navigation (app.go handles this)
-		if msg.String() == "esc" {
+		// When filtering, let the list handle esc/enter to cancel/confirm filter
+		// When not filtering, esc is handled by app.go for back navigation
+		if msg.String() == "esc" && !p.IsFiltering() {
+			// Not filtering - let app.go handle esc for back navigation
 			return p, nil
 		}
+		// When filtering, or for other keys, let it pass through to list
 	case spinner.TickMsg:
 		// Continue spinner when loading
 		if p.loadingPRs || p.loadingBeads {
@@ -379,6 +394,30 @@ func (p *ProjectDetailView) View() string {
 	}
 	if p.list.Height() == 0 {
 		p.list.SetHeight(20)
+	}
+	
+	// Style filter input based on filter state to hide it when not actively filtering
+	// This prevents the "blue square" from showing when filter is enabled but not active
+	filterState := p.list.FilterState()
+	if filterState == list.Filtering {
+		// Show filter prompt when actively filtering (user is typing)
+		// Use theme colors with no background to avoid blue square
+		p.list.Styles.FilterPrompt = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorMuted)).
+			Background(lipgloss.NoColor{})
+		p.list.Styles.FilterCursor = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorAccent)).
+			Background(lipgloss.NoColor{})
+	} else {
+		// Hide filter prompt when not actively filtering (Unfiltered or FilterApplied state)
+		// Set both foreground and background to transparent/no color to completely hide it
+		// This prevents the default blue square from showing when filter is enabled but not active
+		p.list.Styles.FilterPrompt = lipgloss.NewStyle().
+			Foreground(lipgloss.NoColor{}).
+			Background(lipgloss.NoColor{})
+		p.list.Styles.FilterCursor = lipgloss.NewStyle().
+			Foreground(lipgloss.NoColor{}).
+			Background(lipgloss.NoColor{})
 	}
 	
 	// Rebuild items if Resources have changed or loading state changed
