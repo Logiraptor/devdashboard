@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"devdeploy/internal/agent"
@@ -15,13 +16,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// ralphPrompt is the canned prompt sent to an agent for automated work loops.
-const ralphPrompt = "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
-
-// ralphTargetedPrompt returns a prompt that tells the agent to work on a specific bead.
-func ralphTargetedPrompt(beadID string) string {
-	return fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", beadID, beadID, beadID)
-}
 
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
@@ -434,24 +428,53 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
+		// Check if ralph binary is available.
+		ralphPath, err := exec.LookPath("ralph")
+		if err != nil {
+			// Fall back to agent-based approach if ralph not found.
+			paneID, err := tmux.SplitPane(workDir)
+			if err != nil {
+				a.Status = fmt.Sprintf("Ralph: %v", err)
+				a.StatusIsError = true
+				return a, nil
+			}
+			// Use targeted prompt if cursor is on a specific bead, otherwise use generic prompt.
+			prompt := "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
+			selectedBead := a.Detail.SelectedBead()
+			if selectedBead != nil {
+				prompt = fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
+			}
+			// Pass the prompt as a single-quoted positional argument to agent.
+			// Single quotes prevent the shell from interpreting backticks and $.
+			escaped := strings.ReplaceAll(prompt, "'", `'\''`)
+			cmd := fmt.Sprintf("agent --model composer-1 --force '%s'\n", escaped)
+			if err := tmux.SendKeys(paneID, cmd); err != nil {
+				a.Status = fmt.Sprintf("Ralph send agent: %v", err)
+				a.StatusIsError = true
+				return a, nil
+			}
+			if a.Sessions != nil {
+				rk := resourceKeyFromResource(*r)
+				a.Sessions.Register(rk, paneID, session.PaneAgent)
+				a.refreshDetailPanes()
+			}
+			a.Status = "Ralph binary not found, using agent fallback"
+			a.StatusIsError = false
+			return a, nil
+		}
+		// Launch ralph binary with --project and --workdir flags.
 		paneID, err := tmux.SplitPane(workDir)
 		if err != nil {
 			a.Status = fmt.Sprintf("Ralph: %v", err)
 			a.StatusIsError = true
 			return a, nil
 		}
-		// Use targeted prompt if cursor is on a specific bead, otherwise use generic prompt.
-		prompt := ralphPrompt
-		selectedBead := a.Detail.SelectedBead()
-		if selectedBead != nil {
-			prompt = ralphTargetedPrompt(selectedBead.ID)
-		}
-		// Pass the prompt as a single-quoted positional argument to agent.
-		// Single quotes prevent the shell from interpreting backticks and $.
-		escaped := strings.ReplaceAll(prompt, "'", `'\''`)
-		cmd := fmt.Sprintf("agent --model composer-1 --force '%s'\n", escaped)
+		// Escape the workdir path for shell safety (handle spaces, special chars).
+		escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
+		escapedProject := strings.ReplaceAll(a.Detail.ProjectName, "'", `'\''`)
+		cmd := fmt.Sprintf("%s --project '%s' --workdir '%s'\n", ralphPath, escapedProject, escapedWorkdir)
 		if err := tmux.SendKeys(paneID, cmd); err != nil {
-			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
+			a.Status = fmt.Sprintf("Ralph launch: %v", err)
 			a.StatusIsError = true
 			return a, nil
 		}
@@ -460,11 +483,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Sessions.Register(rk, paneID, session.PaneAgent)
 			a.refreshDetailPanes()
 		}
-		statusMsg := "Ralph loop launched"
-		if selectedBead != nil {
-			statusMsg = fmt.Sprintf("Ralph launched for %s", selectedBead.ID)
-		}
-		a.Status = statusMsg
+		a.Status = "Ralph loop launched"
 		a.StatusIsError = false
 		return a, nil
 	case HidePaneMsg:

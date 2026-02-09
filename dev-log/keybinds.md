@@ -48,7 +48,7 @@
 |----------|--------|
 | `SPC s s` | Open shell (tmux pane in selected resource's worktree) |
 | `SPC s a` | Launch agent (`agent` in selected resource's worktree) |
-| `SPC s r` | Ralph loop — when cursor is on a **bead**, sends targeted prompt for that specific bead ID; when on a **resource header**, sends generic `bd ready` prompt |
+| `SPC s r` | Ralph loop — automated agent that picks work and implements it. When cursor is on a **bead**, sends targeted prompt for that specific bead ID; when on a **resource header**, sends generic `bd ready` prompt. Automatically injects `.cursor/rules/` and `dev-log/` into worktree (git-silent via `.git/info/exclude`) |
 | `SPC s h` | Hide shell pane |
 | `SPC s j` | Show shell pane |
 

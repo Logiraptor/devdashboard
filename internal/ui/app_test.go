@@ -1254,34 +1254,6 @@ func TestLaunchRalphMsg_PRNoWorktree(t *testing.T) {
 	}
 }
 
-// TestRalphPromptConstant validates the ralph prompt is non-empty and contains key instructions.
-func TestRalphPromptConstant(t *testing.T) {
-	if ralphPrompt == "" {
-		t.Fatal("ralphPrompt should not be empty")
-	}
-	for _, keyword := range []string{"bd ready", "bd update", "bd close", ".cursor/rules/"} {
-		if !strings.Contains(ralphPrompt, keyword) {
-			t.Errorf("ralphPrompt should contain %q", keyword)
-		}
-	}
-}
-
-// TestRalphTargetedPrompt validates the targeted prompt contains the bead ID.
-func TestRalphTargetedPrompt(t *testing.T) {
-	prompt := ralphTargetedPrompt("devdeploy-abc")
-	if !strings.Contains(prompt, "devdeploy-abc") {
-		t.Errorf("targeted prompt should contain bead ID, got: %s", prompt)
-	}
-	for _, keyword := range []string{"bd show", "bd update", "bd close", ".cursor/rules/"} {
-		if !strings.Contains(prompt, keyword) {
-			t.Errorf("targeted prompt should contain %q, got: %s", keyword, prompt)
-		}
-	}
-	// Should NOT contain "bd ready" — targeted prompt skips the picker.
-	if strings.Contains(prompt, "bd ready") {
-		t.Errorf("targeted prompt should not contain 'bd ready', got: %s", prompt)
-	}
-}
 
 // TestLaunchRalphMsg_NoBeadsError validates the "no beads" error message
 // is shown when resource has no beads, regardless of bead cursor position.

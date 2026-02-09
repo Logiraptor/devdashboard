@@ -29,6 +29,46 @@ This replaces the earlier `AgentRunner` interface / `StubRunner` / progress even
 
 See `devdeploy-7uj` epic for full details.
 
+### Automated Agent Loop with Rule Injection
+
+**Ralph loop** (`SPC s r`) enables automated development loops by launching an agent with a canned prompt that instructs it to pick work and implement it. For this to work seamlessly, every worktree needs the beads rule and dev-log rule injected automatically, invisible to git.
+
+#### Git-Silent Rule Injection
+
+When devdeploy creates or ensures a worktree (`AddRepo`, `EnsurePRWorktree`), it automatically:
+
+1. Creates `.cursor/rules/` in the worktree with `beads.mdc` and `devdeploy.mdc` (architecture-docs rule)
+2. Creates `dev-log/` directory (empty or with a minimal README)
+3. Adds these paths to `.git/info/exclude` so git never sees them
+
+`.git/info/exclude` is the ideal mechanism: it's per-worktree, never committed, and works exactly like `.gitignore`. The injected files are ephemeral — they exist only while the worktree lives.
+
+Rule content is stored as embedded Go files (`embed.FS`) in `internal/rules`, making them easy to update without external dependencies.
+
+#### Ralph Loop Execution
+
+When `SPC s r` is pressed on ModeProjectDetail:
+
+1. Checks the selected resource has open beads (already available via beads integration)
+2. Creates/ensures worktree (same as `SPC s a`)
+3. Ensures rules are injected (idempotent)
+4. Splits a tmux pane, runs `agent`, then sends the ralph prompt via `tmux.SendKeys`
+
+The prompt is minimal: "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the beads and dev-log rules in .cursor/rules/."
+
+#### Idempotency
+
+Rule injection is idempotent — if files already exist with matching content, skip. If `.git/info/exclude` already has the entries, skip. This means `SPC s r` can be pressed repeatedly without duplication.
+
+**Consequences**:
+- Worktrees become agent-ready automatically — no manual setup
+- Zero git noise: `.git/info/exclude` is invisible to `git status`, `git diff`, etc.
+- Dev-log entries created by agents stay local until explicitly committed
+- Ralph loop is the simplest possible autonomous agent: one prompt, one resource
+- Future: could chain ralph loops across resources, add progress tracking, or add review gates
+
+See `devdeploy-j4n` epic for implementation details.
+
 ## Phase 5: Integration (Revised)
 
 > **Note**: The original Phase 5 included an Artifact Store (plan.md / design.md) subsection. Artifacts were removed in 2026-02-08 (`devdeploy-lvr` epic) in favor of **beads integration** — see [ui.md](ui.md#beads-per-resource). The Agent Runner interface no longer references plan/design paths.
