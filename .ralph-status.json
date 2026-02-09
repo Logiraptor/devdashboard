@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 15,
+  "iteration": 16,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-w5a.5",
-    "title": "Update ralph binary to support --epic flag for sequential leaf processing"
+    "id": "devdeploy-w5a.6",
+    "title": "Add tests for epic-aware Ralph flow"
   },
-  "elapsed_ns": 841508919583,
+  "elapsed_ns": 881270623500,
   "tallies": {
-    "completed": 13,
+    "completed": 14,
     "questions": 0,
     "failed": 1,
     "timed_out": 0,
