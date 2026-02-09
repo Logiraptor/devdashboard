@@ -729,6 +729,9 @@ func resourceKeyFromResource(r project.Resource) string {
 }
 
 // loadProjectsCmd returns a command that loads projects from disk and sends ProjectsLoadedMsg.
+// It uses LoadProjectSummary to fetch open PRs once per repo (instead of
+// separate CountPRs + ListProjectResources calls which would invoke
+// gh pr list up to 3N times per N repos).
 func loadProjectsCmd(m *project.Manager) tea.Cmd {
 	return func() tea.Msg {
 		if m == nil {
@@ -740,11 +743,12 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 		}
 		projects := make([]ProjectSummary, len(infos))
 		for i, info := range infos {
+			summary := m.LoadProjectSummary(info.Name)
 			projects[i] = ProjectSummary{
 				Name:      info.Name,
 				RepoCount: info.RepoCount,
-				PRCount:   m.CountPRs(info.Name),
-				BeadCount: countProjectBeads(m, info.Name),
+				PRCount:   summary.PRCount,
+				BeadCount: countBeadsFromResources(summary.Resources, info.Name),
 				Selected:  false, // Dashboard uses Selected index
 			}
 		}
@@ -752,9 +756,10 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 	}
 }
 
-// countProjectBeads counts open beads across all resources in a project.
-func countProjectBeads(m *project.Manager, projectName string) int {
-	resources := m.ListProjectResources(projectName)
+// countBeadsFromResources counts open beads across the given resources.
+// Used by loadProjectsCmd with resources from LoadProjectSummary to avoid
+// a separate ListProjectResources call (which would redundantly fetch PRs).
+func countBeadsFromResources(resources []project.Resource, projectName string) int {
 	count := 0
 	for _, r := range resources {
 		if r.WorktreePath == "" {

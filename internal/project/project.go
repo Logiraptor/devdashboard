@@ -377,6 +377,61 @@ func (m *Manager) CountPRs(projectName string) int {
 	return count
 }
 
+// DashboardSummary holds pre-computed data for the dashboard view.
+// It is produced by LoadProjectSummary which fetches open PRs once
+// per repo, avoiding redundant gh pr list calls.
+type DashboardSummary struct {
+	PRCount   int        // total open PRs across all repos
+	Resources []Resource // repos + open PR resources (no merged PRs)
+}
+
+// LoadProjectSummary fetches open PRs once per repo and returns both
+// the PR count and a resource list suitable for bead counting.
+// Unlike ListProjectResources (which also fetches merged PRs for the
+// detail view), this method only fetches open PRs — sufficient for
+// the dashboard where merged PRs are not displayed.
+func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
+	repos, _ := m.ListProjectRepos(projectName)
+	projDir := m.projectDir(projectName)
+
+	var resources []Resource
+	prCount := 0
+
+	for _, repoName := range repos {
+		worktreePath := filepath.Join(projDir, repoName)
+		resources = append(resources, Resource{
+			Kind:         ResourceRepo,
+			RepoName:     repoName,
+			WorktreePath: worktreePath,
+		})
+
+		// Fetch open PRs once per repo — the only gh call needed.
+		prs, err := m.listPRsInRepo(worktreePath, "open", 0)
+		if err != nil {
+			continue
+		}
+		prCount += len(prs)
+
+		for i := range prs {
+			pr := &prs[i]
+			// Check if a PR worktree already exists on disk.
+			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
+			var wtPath string
+			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+				wtPath = prWT
+			}
+			resources = append(resources, Resource{
+				Kind:         ResourcePR,
+				RepoName:     repoName,
+				PR:           pr,
+				WorktreePath: wtPath,
+			})
+		}
+	}
+
+	return DashboardSummary{PRCount: prCount, Resources: resources}
+}
+
 // mergedPRsLimit is how many recently merged PRs to show per repo.
 const mergedPRsLimit = 5
 

@@ -357,6 +357,91 @@ func TestManager_ListProjectResources_PRWorktreeDetection(t *testing.T) {
 	}
 }
 
+func TestManager_LoadProjectSummary_Empty(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, dir)
+	_ = m.CreateProject("empty-proj")
+
+	summary := m.LoadProjectSummary("empty-proj")
+	if summary.PRCount != 0 {
+		t.Errorf("expected 0 PRs for empty project, got %d", summary.PRCount)
+	}
+	if len(summary.Resources) != 0 {
+		t.Errorf("expected 0 resources for empty project, got %d", len(summary.Resources))
+	}
+}
+
+func TestManager_LoadProjectSummary_ReposOnly(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+
+	srcRepo := filepath.Join(wsDir, "my-repo")
+	_ = os.MkdirAll(filepath.Join(srcRepo, ".git"), 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+	projDir := filepath.Join(dir, "projects", "test-proj")
+
+	// Create a repo worktree dir.
+	repoDir := filepath.Join(projDir, "my-repo")
+	_ = os.MkdirAll(repoDir, 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
+
+	summary := m.LoadProjectSummary("test-proj")
+	// gh pr list is not available in tests, so PRCount should be 0.
+	if summary.PRCount != 0 {
+		t.Errorf("expected 0 PRs (no gh available), got %d", summary.PRCount)
+	}
+	// Should have at least the repo resource.
+	if len(summary.Resources) == 0 {
+		t.Fatal("expected at least 1 resource, got 0")
+	}
+	if summary.Resources[0].Kind != ResourceRepo {
+		t.Errorf("expected first resource kind=repo, got %s", summary.Resources[0].Kind)
+	}
+	if summary.Resources[0].RepoName != "my-repo" {
+		t.Errorf("expected RepoName=my-repo, got %s", summary.Resources[0].RepoName)
+	}
+	if summary.Resources[0].WorktreePath != repoDir {
+		t.Errorf("expected WorktreePath=%s, got %s", repoDir, summary.Resources[0].WorktreePath)
+	}
+}
+
+func TestManager_LoadProjectSummary_PRWorktreeDetection(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	_ = os.MkdirAll(wsDir, 0755)
+	srcRepo := filepath.Join(wsDir, "my-repo")
+	_ = os.MkdirAll(filepath.Join(srcRepo, ".git"), 0755)
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	_ = m.CreateProject("test-proj")
+	projDir := filepath.Join(dir, "projects", "test-proj")
+
+	// Create repo worktree.
+	repoDir := filepath.Join(projDir, "my-repo")
+	_ = os.MkdirAll(repoDir, 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
+
+	// Create PR worktree on disk (simulates a previously created worktree).
+	prDir := filepath.Join(projDir, "my-repo-pr-99")
+	_ = os.MkdirAll(prDir, 0755)
+	_ = os.WriteFile(filepath.Join(prDir, ".git"), []byte("gitdir: /y"), 0644)
+
+	summary := m.LoadProjectSummary("test-proj")
+	// Without gh, only repos show up. PR worktree dir is excluded from repo list.
+	foundRepo := false
+	for _, r := range summary.Resources {
+		if r.Kind == ResourceRepo && r.RepoName == "my-repo" {
+			foundRepo = true
+		}
+	}
+	if !foundRepo {
+		t.Error("expected repo resource 'my-repo' in summary resources")
+	}
+}
+
 func TestManager_RemovePRWorktree_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, dir)
