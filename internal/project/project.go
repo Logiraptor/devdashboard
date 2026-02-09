@@ -664,9 +664,86 @@ func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
 	return ""
 }
 
-// ListProjectResources builds a flat []Resource from repos and PRs.
+// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
+// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
+// Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
+// Use this for dashboard/bead counting where merged PRs are not needed.
+func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
+	repos, _ := m.ListProjectRepos(projectName)
+	projDir := m.projectDir(projectName)
+
+	// Pre-allocate repo resources (filesystem-only, no network calls).
+	resources := make([]Resource, 0, len(repos))
+	for _, repoName := range repos {
+		worktreePath := filepath.Join(projDir, repoName)
+		resources = append(resources, Resource{
+			Kind:         ResourceRepo,
+			RepoName:     repoName,
+			WorktreePath: worktreePath,
+		})
+	}
+
+	// Fetch open PRs concurrently across repos.
+	type repoResult struct {
+		repoName string
+		prs      []PRInfo
+		err      error
+	}
+	resultChan := make(chan repoResult, len(repos))
+	var wg sync.WaitGroup
+
+	for _, repoName := range repos {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			worktreePath := filepath.Join(projDir, name)
+			prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
+			resultChan <- repoResult{repoName: name, prs: prs, err: err}
+		}(repoName)
+	}
+
+	// Close channel when all goroutines complete.
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results and build resource list.
+	repoPRs := make(map[string][]PRInfo)
+	for result := range resultChan {
+		if result.err != nil {
+			continue
+		}
+		repoPRs[result.repoName] = result.prs
+	}
+
+	// Append PR resources in repo order (matching the repo resource order).
+	for _, repoName := range repos {
+		prs := repoPRs[repoName]
+		for i := range prs {
+			pr := &prs[i]
+			// Check if a PR worktree already exists on disk.
+			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
+			var wtPath string
+			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+				wtPath = prWT
+			}
+			resources = append(resources, Resource{
+				Kind:         ResourcePR,
+				RepoName:     repoName,
+				PR:           pr,
+				WorktreePath: wtPath,
+			})
+		}
+	}
+
+	return resources
+}
+
+// ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
 // Resources are ordered repo-first: each repo Resource is followed by
 // its PR Resources, enabling tree-style rendering in the UI.
+// Use this for the project detail view where merged PRs are displayed.
 func (m *Manager) ListProjectResources(projectName string) []Resource {
 	repos, _ := m.ListProjectRepos(projectName)
 	prsByRepo, _ := m.ListProjectPRs(projectName)
