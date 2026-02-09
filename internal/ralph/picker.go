@@ -32,6 +32,11 @@ func runBDReal(dir string, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
+// BeadScorer is a function that sorts beads by their score.
+// Lower scores indicate higher priority (beads are sorted ascending).
+// The scorer receives a slice of beads and sorts them in-place.
+type BeadScorer func(beads []beads.Bead)
+
 // BeadPicker queries bd for ready beads and selects the next one to work on.
 // BeadPicker is safe for concurrent use.
 type BeadPicker struct {
@@ -43,6 +48,11 @@ type BeadPicker struct {
 	// RunBD is the function used to execute bd commands.
 	// Defaults to runBDReal. Override in tests for deterministic output.
 	RunBD RunBDFunc
+
+	// Scorer is the function used to sort beads by priority.
+	// Defaults to DefaultScorer (priority + creation date).
+	// Override to use alternative scoring heuristics.
+	Scorer BeadScorer
 
 	// mu protects concurrent access to bd ready queries.
 	mu sync.Mutex
@@ -86,13 +96,14 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 		return nil, nil
 	}
 
-	// Sort: priority ascending (P0 > P1 > P2), then creation date ascending (oldest first).
-	sort.Slice(parsed, func(i, j int) bool {
-		if parsed[i].Priority != parsed[j].Priority {
-			return parsed[i].Priority < parsed[j].Priority
-		}
-		return parsed[i].CreatedAt.Before(parsed[j].CreatedAt)
-	})
+	// Use scorer if provided, otherwise use default.
+	scorer := p.Scorer
+	if scorer == nil {
+		scorer = DefaultScorer
+	}
+
+	// Sort beads using the scorer.
+	scorer(parsed)
 
 	top := parsed[0]
 	return &top, nil
@@ -152,5 +163,57 @@ func parseReadyBeads(data []byte) ([]beads.Bead, error) {
 		})
 	}
 	return result, nil
+}
+
+// DefaultScorer sorts beads by priority (ascending, lower = higher priority)
+// then by creation date (ascending, oldest first).
+// This maintains the current behavior of BeadPicker.
+func DefaultScorer(beads []beads.Bead) {
+	sort.Slice(beads, func(i, j int) bool {
+		if beads[i].Priority != beads[j].Priority {
+			return beads[i].Priority < beads[j].Priority
+		}
+		return beads[i].CreatedAt.Before(beads[j].CreatedAt)
+	})
+}
+
+// ComplexityScorer sorts beads using complexity estimation heuristics:
+// - Prefers beads with longer titles (more context/specification)
+// - Prefers beads with more labels (more metadata/context)
+// - Within same complexity, uses priority as tiebreaker
+// - Finally sorts by creation date (oldest first)
+//
+// This scorer favors well-specified beads that are likely to be
+// easier to work on due to having more context.
+func ComplexityScorer(beads []beads.Bead) {
+	sort.Slice(beads, func(i, j int) bool {
+		bi, bj := beads[i], beads[j]
+
+		// Calculate complexity scores (lower = simpler = higher priority)
+		// Title length: longer titles = more context = lower complexity score
+		titleScoreI := -len(bi.Title)
+		titleScoreJ := -len(bj.Title)
+
+		// Label count: more labels = more context = lower complexity score
+		labelScoreI := -len(bi.Labels)
+		labelScoreJ := -len(bj.Labels)
+
+		// Combined complexity score
+		complexityI := titleScoreI + labelScoreI
+		complexityJ := titleScoreJ + labelScoreJ
+
+		// Sort by complexity (lower score = simpler = higher priority)
+		if complexityI != complexityJ {
+			return complexityI < complexityJ
+		}
+
+		// Tiebreaker: priority (lower number = higher priority)
+		if bi.Priority != bj.Priority {
+			return bi.Priority < bj.Priority
+		}
+
+		// Final tiebreaker: creation date (oldest first)
+		return bi.CreatedAt.Before(bj.CreatedAt)
+	})
 }
 

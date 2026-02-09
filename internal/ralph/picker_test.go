@@ -338,3 +338,165 @@ func TestParseReadyBeads_InvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON, got nil")
 	}
 }
+
+func TestDefaultScorer(t *testing.T) {
+	now := time.Now()
+	beads := []beads.Bead{
+		{ID: "low-pri", Priority: 3, CreatedAt: now.Add(-1 * time.Hour)},
+		{ID: "high-pri", Priority: 1, CreatedAt: now},
+		{ID: "mid-pri", Priority: 2, CreatedAt: now.Add(-2 * time.Hour)},
+	}
+
+	DefaultScorer(beads)
+
+	if beads[0].ID != "high-pri" {
+		t.Errorf("expected high-pri first (P1), got %s (P%d)", beads[0].ID, beads[0].Priority)
+	}
+	if beads[1].ID != "mid-pri" {
+		t.Errorf("expected mid-pri second (P2), got %s (P%d)", beads[1].ID, beads[1].Priority)
+	}
+	if beads[2].ID != "low-pri" {
+		t.Errorf("expected low-pri third (P3), got %s (P%d)", beads[2].ID, beads[2].Priority)
+	}
+}
+
+func TestDefaultScorer_SamePriority_OldestFirst(t *testing.T) {
+	now := time.Now()
+	beads := []beads.Bead{
+		{ID: "newer", Priority: 2, CreatedAt: now},
+		{ID: "oldest", Priority: 2, CreatedAt: now.Add(-48 * time.Hour)},
+		{ID: "middle", Priority: 2, CreatedAt: now.Add(-24 * time.Hour)},
+	}
+
+	DefaultScorer(beads)
+
+	if beads[0].ID != "oldest" {
+		t.Errorf("expected oldest first, got %s", beads[0].ID)
+	}
+	if beads[1].ID != "middle" {
+		t.Errorf("expected middle second, got %s", beads[1].ID)
+	}
+	if beads[2].ID != "newer" {
+		t.Errorf("expected newer third, got %s", beads[2].ID)
+	}
+}
+
+func TestComplexityScorer_PrefersLongerTitles(t *testing.T) {
+	now := time.Now()
+	beads := []beads.Bead{
+		{ID: "short", Title: "Short", Priority: 2, CreatedAt: now},
+		{ID: "very-long-title-with-more-context", Title: "Very long title with more context", Priority: 2, CreatedAt: now},
+		{ID: "medium", Title: "Medium length title", Priority: 2, CreatedAt: now},
+	}
+
+	ComplexityScorer(beads)
+
+	// Should prefer longer titles (more context)
+	if beads[0].ID != "very-long-title-with-more-context" {
+		t.Errorf("expected longest title first, got %s", beads[0].ID)
+	}
+	if beads[1].ID != "medium" {
+		t.Errorf("expected medium title second, got %s", beads[1].ID)
+	}
+	if beads[2].ID != "short" {
+		t.Errorf("expected short title third, got %s", beads[2].ID)
+	}
+}
+
+func TestComplexityScorer_PrefersMoreLabels(t *testing.T) {
+	now := time.Now()
+	beads := []beads.Bead{
+		{ID: "no-labels", Title: "Same", Priority: 2, Labels: []string{}, CreatedAt: now},
+		{ID: "many-labels", Title: "Same", Priority: 2, Labels: []string{"a", "b", "c", "d"}, CreatedAt: now},
+		{ID: "one-label", Title: "Same", Priority: 2, Labels: []string{"a"}, CreatedAt: now},
+	}
+
+	ComplexityScorer(beads)
+
+	// Should prefer more labels (more context)
+	if beads[0].ID != "many-labels" {
+		t.Errorf("expected many-labels first, got %s", beads[0].ID)
+	}
+	if beads[1].ID != "one-label" {
+		t.Errorf("expected one-label second, got %s", beads[1].ID)
+	}
+	if beads[2].ID != "no-labels" {
+		t.Errorf("expected no-labels third, got %s", beads[2].ID)
+	}
+}
+
+func TestComplexityScorer_PriorityTiebreaker(t *testing.T) {
+	now := time.Now()
+	beads := []beads.Bead{
+		{ID: "low-pri", Title: "Same", Priority: 3, Labels: []string{"a"}, CreatedAt: now},
+		{ID: "high-pri", Title: "Same", Priority: 1, Labels: []string{"a"}, CreatedAt: now},
+		{ID: "mid-pri", Title: "Same", Priority: 2, Labels: []string{"a"}, CreatedAt: now},
+	}
+
+	ComplexityScorer(beads)
+
+	// Same complexity, should use priority as tiebreaker
+	if beads[0].ID != "high-pri" {
+		t.Errorf("expected high-pri first (P1), got %s (P%d)", beads[0].ID, beads[0].Priority)
+	}
+	if beads[1].ID != "mid-pri" {
+		t.Errorf("expected mid-pri second (P2), got %s (P%d)", beads[1].ID, beads[1].Priority)
+	}
+	if beads[2].ID != "low-pri" {
+		t.Errorf("expected low-pri third (P3), got %s (P%d)", beads[2].ID, beads[2].Priority)
+	}
+}
+
+func TestBeadPicker_Next_CustomScorer(t *testing.T) {
+	now := time.Now()
+	entries := []bdReadyEntry{
+		{ID: "short", Title: "Short", Status: "open", Priority: 2, CreatedAt: now},
+		{ID: "long-title-with-more-details", Title: "Long title with more details", Status: "open", Priority: 2, CreatedAt: now},
+	}
+
+	picker := &BeadPicker{
+		WorkDir: "/fake/dir",
+		Project: "myproj",
+		RunBD:   mockBDReady(entries),
+		Scorer:  ComplexityScorer,
+	}
+
+	got, err := picker.Next()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected a bead, got nil")
+	}
+	// ComplexityScorer prefers longer titles
+	if got.ID != "long-title-with-more-details" {
+		t.Errorf("expected long-title-with-more-details (longer title), got %s", got.ID)
+	}
+}
+
+func TestBeadPicker_Next_DefaultScorerWhenNil(t *testing.T) {
+	now := time.Now()
+	entries := []bdReadyEntry{
+		{ID: "low-pri", Title: "Low priority", Status: "open", Priority: 3, CreatedAt: now.Add(-1 * time.Hour)},
+		{ID: "high-pri", Title: "High priority", Status: "open", Priority: 1, CreatedAt: now},
+	}
+
+	picker := &BeadPicker{
+		WorkDir: "/fake/dir",
+		Project: "myproj",
+		RunBD:   mockBDReady(entries),
+		Scorer:  nil, // Should default to DefaultScorer
+	}
+
+	got, err := picker.Next()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected a bead, got nil")
+	}
+	// DefaultScorer uses priority first
+	if got.ID != "high-pri" {
+		t.Errorf("expected high-pri (P1), got %s (P%d)", got.ID, got.Priority)
+	}
+}
