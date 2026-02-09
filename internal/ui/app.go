@@ -124,6 +124,9 @@ type ShowRemoveRepoMsg struct{}
 // ShowRemoveResourceMsg triggers the remove-resource confirmation (project detail, 'd' key).
 type ShowRemoveResourceMsg struct{}
 
+// RefreshMsg triggers a manual refresh: clears PR cache and reloads current view.
+type RefreshMsg struct{}
+
 // RemoveResourceMsg is sent when user confirms removal of a resource.
 // Kills associated panes and removes the worktree.
 type RemoveResourceMsg struct {
@@ -536,6 +539,20 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.Overlays.Pop()
+		return a, nil
+	case RefreshMsg:
+		// Clear PR cache
+		if a.ProjectManager != nil {
+			a.ProjectManager.ClearPRCache()
+		}
+		// Reload current view
+		if a.Mode == ModeDashboard {
+			// Reload dashboard
+			return a, loadProjectsCmd(a.ProjectManager)
+		} else if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
+			// Reload project detail
+			return a, loadProjectDetailResourcesCmd(a.ProjectManager, a.Detail.ProjectName)
+		}
 		return a, nil
 	case OpenShellMsg:
 		if a.Mode != ModeProjectDetail || a.Detail == nil {
@@ -1289,6 +1306,7 @@ func NewAppModel() *AppModel {
 	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo", []AppMode{ModeProjectDetail})
 	reg.BindWithDescForMode("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource", []AppMode{ModeProjectDetail})
+	reg.BindWithDesc("SPC r", func() tea.Msg { return RefreshMsg{} }, "Refresh")
 	return &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),

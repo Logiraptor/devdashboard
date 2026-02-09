@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 16,
+  "iteration": 17,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-w5a.6",
-    "title": "Add tests for epic-aware Ralph flow"
+    "id": "devdeploy-nh2.5",
+    "title": "Optional: Cache PR data to reduce gh API calls"
   },
-  "elapsed_ns": 881270623500,
+  "elapsed_ns": 965729640500,
   "tallies": {
-    "completed": 14,
+    "completed": 15,
     "questions": 0,
     "failed": 1,
     "timed_out": 0,

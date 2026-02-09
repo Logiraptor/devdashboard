@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -52,11 +53,22 @@ func randAlnum(n int) string {
 	return string(b)
 }
 
+// prCacheEntry holds cached PR data with a timestamp.
+type prCacheEntry struct {
+	prs       []PRInfo
+	timestamp time.Time
+}
+
 // Manager handles project CRUD and worktree operations.
 type Manager struct {
 	projectsBase string
 	workspace    string
+	prCache      map[string]prCacheEntry // key: worktreePath + state + limit
+	prCacheMu    sync.RWMutex            // protects prCache
 }
+
+// prCacheTTL is how long cached PR data remains valid.
+const prCacheTTL = 45 * time.Second
 
 // NewManager creates a manager for the given projects base directory.
 func NewManager(projectsBase, workspace string) *Manager {
@@ -70,6 +82,7 @@ func NewManager(projectsBase, workspace string) *Manager {
 	return &Manager{
 		projectsBase: projectsBase,
 		workspace:    workspace,
+		prCache:      make(map[string]prCacheEntry),
 	}
 }
 
@@ -262,10 +275,15 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 			if msg == "" {
 				msg = err.Error()
 			}
-			return fmt.Errorf("git worktree add: %s", msg)
-		}
-		return InjectWorktreeRules(dstPath)
+		return fmt.Errorf("git worktree add: %s", msg)
 	}
+	if err := InjectWorktreeRules(dstPath); err != nil {
+		return err
+	}
+	// Invalidate cache for this project since a repo was added
+	m.ClearPRCacheForProject(projectName)
+	return nil
+}
 
 	// Branch exists: add worktree, then update it with main (without touching main repo's HEAD)
 	addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", dstPath, branch)...)
@@ -288,7 +306,12 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 		}
 		return fmt.Errorf("git merge %s (in worktree): %s", mainRef, msg)
 	}
-	return InjectWorktreeRules(dstPath)
+	if err := InjectWorktreeRules(dstPath); err != nil {
+		return err
+	}
+	// Invalidate cache for this project since a repo was added
+	m.ClearPRCacheForProject(projectName)
+	return nil
 }
 
 // RemoveRepo removes a worktree from the project.
@@ -305,6 +328,8 @@ func (m *Manager) RemoveRepo(projectName, repoName string) error {
 		}
 		return fmt.Errorf("git worktree remove: %s", msg)
 	}
+	// Invalidate cache for this project since a repo was removed
+	m.ClearPRCacheForProject(projectName)
 	return nil
 }
 
@@ -331,6 +356,9 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 		}
 		return fmt.Errorf("git worktree remove (PR): %s", msg)
 	}
+	
+	// Invalidate cache for this project since a worktree was removed
+	m.ClearPRCacheForProject(projectName)
 	return nil
 }
 
@@ -363,6 +391,62 @@ type RepoPRs struct {
 // PRs requesting review from this team are included alongside the current
 // user's own PRs.
 const reviewTeam = "adaptive-telemetry"
+
+// prCacheKey generates a cache key from worktreePath, state, and limit.
+func prCacheKey(worktreePath, state string, limit int) string {
+	return fmt.Sprintf("%s:%s:%d", worktreePath, state, limit)
+}
+
+// getCachedPRs returns cached PR data if it exists and is still valid.
+func (m *Manager) getCachedPRs(key string) ([]PRInfo, bool) {
+	m.prCacheMu.RLock()
+	defer m.prCacheMu.RUnlock()
+	entry, ok := m.prCache[key]
+	if !ok {
+		return nil, false
+	}
+	if time.Since(entry.timestamp) > prCacheTTL {
+		return nil, false
+	}
+	// Return a copy to avoid external mutation
+	result := make([]PRInfo, len(entry.prs))
+	copy(result, entry.prs)
+	return result, true
+}
+
+// setCachedPRs stores PR data in the cache.
+func (m *Manager) setCachedPRs(key string, prs []PRInfo) {
+	m.prCacheMu.Lock()
+	defer m.prCacheMu.Unlock()
+	// Store a copy to avoid external mutation
+	cached := make([]PRInfo, len(prs))
+	copy(cached, prs)
+	m.prCache[key] = prCacheEntry{
+		prs:       cached,
+		timestamp: time.Now(),
+	}
+}
+
+// ClearPRCache clears all cached PR data. Call this on manual refresh.
+func (m *Manager) ClearPRCache() {
+	m.prCacheMu.Lock()
+	defer m.prCacheMu.Unlock()
+	m.prCache = make(map[string]prCacheEntry)
+}
+
+// ClearPRCacheForProject clears cached PR data for a specific project.
+// This is called when worktrees are created/deleted for a project.
+func (m *Manager) ClearPRCacheForProject(projectName string) {
+	m.prCacheMu.Lock()
+	defer m.prCacheMu.Unlock()
+	projDir := m.projectDir(projectName)
+	// Remove all cache entries for worktrees in this project
+	for key := range m.prCache {
+		if strings.HasPrefix(key, projDir) {
+			delete(m.prCache, key)
+		}
+	}
+}
 
 // listPRsInRepo runs gh pr list in the given worktree dir and returns PRs.
 // state: "open", "merged", "closed", or "all". limit: max PRs (0 = default 30).
@@ -416,7 +500,14 @@ func (m *Manager) ListFilteredPRsInRepo(worktreePath string, state string, limit
 // listFilteredPRsInRepo returns PRs authored by the current user OR
 // requesting review from the reviewTeam. It makes two gh pr list calls
 // and deduplicates the results by PR number.
+// Results are cached for prCacheTTL to reduce GitHub API calls.
 func (m *Manager) listFilteredPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
+	// Check cache first
+	cacheKey := prCacheKey(worktreePath, state, limit)
+	if cached, ok := m.getCachedPRs(cacheKey); ok {
+		return cached, nil
+	}
+
 	// Fetch PRs authored by the current user.
 	myPRs, err := m.listPRsInRepo(worktreePath, state, limit, "--author", "@me")
 
@@ -433,7 +524,10 @@ func (m *Manager) listFilteredPRsInRepo(worktreePath string, state string, limit
 		return nil, err
 	}
 
-	return mergePRs(myPRs, teamPRs), nil
+	result := mergePRs(myPRs, teamPRs)
+	// Cache successful results
+	m.setCachedPRs(cacheKey, result)
+	return result, nil
 }
 
 // mergePRs combines two PR slices and deduplicates by PR number.
@@ -669,14 +763,14 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 		if _, err := os.Stat(gitFile); err == nil {
 			// Ensure rules are injected (idempotent) even for pre-existing worktrees.
 			_ = InjectWorktreeRules(dstPath)
-			return dstPath, nil
+			return dstPath, nil // Reusing existing worktree, no cache invalidation needed
 		}
 	}
 
 	// Scan existing worktrees for one already on this branch.
 	if existing := m.findWorktreeForBranch(srcRepo, branchName); existing != "" {
 		_ = InjectWorktreeRules(existing)
-		return existing, nil
+		return existing, nil // Reusing existing worktree, no cache invalidation needed
 	}
 
 	// Fetch the branch from origin (it may not exist locally yet).
@@ -729,6 +823,9 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	if err := InjectWorktreeRules(dstPath); err != nil {
 		return "", fmt.Errorf("inject rules: %w", err)
 	}
+	
+	// Invalidate cache for this project since a new worktree was created
+	m.ClearPRCacheForProject(projectName)
 	return dstPath, nil
 }
 
