@@ -41,7 +41,7 @@ func parseFlags() config {
 	var cfg config
 
 	flag.StringVar(&cfg.workdir, "workdir", "", "path to the worktree to operate in (required)")
-	flag.StringVar(&cfg.epic, "epic", "", "epic filter for bd queries (filters to children of the epic)")
+	flag.StringVar(&cfg.epic, "epic", "", "epic ID for epic mode: processes leaf tasks sequentially via 'bd ready --parent <epic>', then runs verification pass")
 	flag.Var(&cfg.labels, "label", "additional label filter (repeatable)")
 	flag.StringVar(&cfg.bead, "bead", "", "target a specific bead ID (skips picker, sets max-iterations to 1)")
 	flag.IntVar(&cfg.maxIterations, "max-iterations", 20, "safety cap on loop iterations")
@@ -98,6 +98,11 @@ func run(cfg config) (ralph.StopReason, error) {
 	maxIterations := cfg.maxIterations
 	if cfg.bead != "" {
 		maxIterations = 1
+	}
+
+	// Epic mode requires sequential processing (concurrency=1)
+	if cfg.epic != "" && cfg.concurrency > 1 {
+		return ralph.StopNormal, fmt.Errorf("--epic requires --concurrency=1 (epic mode processes tasks sequentially)")
 	}
 
 	loopCfg := ralph.LoopConfig{
