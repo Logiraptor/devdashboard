@@ -544,20 +544,108 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 	if summary.Failed == 0 && summary.TimedOut == 0 && summary.Iterations > 0 {
 		fmt.Fprintf(out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", summary.Iterations)
 
-		// Create verification prompt
-		verificationPrompt := fmt.Sprintf(`You are verifying epic %s after all leaf tasks have been completed.
+		// Fetch all epic children (including closed) for review
+		allChildren, err := FetchAllEpicChildren(nil, cfg.WorkDir, cfg.Epic, cfg.Labels)
+		if err != nil {
+			fmt.Fprintf(out, "Warning: failed to fetch all epic children for verification: %v\n", err)
+			allChildren = nil
+		}
 
-# %s
+		// Get git log to see code changes (last 50 commits, or since epic creation if we can determine it)
+		var gitLog string
+		cmd := exec.Command("git", "log", "--oneline", "-50", "--no-decorate")
+		cmd.Dir = cfg.WorkDir
+		if outBytes, err := cmd.Output(); err == nil {
+			gitLog = strings.TrimSpace(string(outBytes))
+		}
 
-All child tasks have been completed. Please review the work and verify:
-1. All requirements from the epic description have been met
-2. The implementation is consistent and complete
-3. Code quality and testing standards are met
-4. Documentation is updated if needed
+		// Get git diff stats to see what changed
+		var gitDiffStats string
+		cmd = exec.Command("git", "diff", "--stat", "HEAD~50..HEAD")
+		cmd.Dir = cfg.WorkDir
+		if outBytes, err := cmd.Output(); err == nil {
+			gitDiffStats = strings.TrimSpace(string(outBytes))
+		}
 
-If everything looks good, you can close the epic with: bd close %s
+		// Build verification prompt with closed tasks and code changes
+		var promptBuilder strings.Builder
+		promptBuilder.WriteString(fmt.Sprintf("You are verifying epic %s after all leaf tasks have been completed.\n\n", cfg.Epic))
+		promptBuilder.WriteString(fmt.Sprintf("# %s\n\n", epicPromptData.Title))
+		promptBuilder.WriteString(fmt.Sprintf("%s\n\n", epicPromptData.Description))
+		promptBuilder.WriteString("---\n\n")
+		promptBuilder.WriteString("## Verification Task\n\n")
+		promptBuilder.WriteString("Verify the epic is fully implemented by:\n")
+		promptBuilder.WriteString("1. Reviewing all closed tasks under this epic\n")
+		promptBuilder.WriteString("2. Reviewing code changes made during implementation\n")
+		promptBuilder.WriteString("3. Checking that all requirements from the epic description have been met\n")
+		promptBuilder.WriteString("4. Ensuring implementation is consistent and complete\n")
+		promptBuilder.WriteString("5. Verifying code quality and testing standards are met\n")
+		promptBuilder.WriteString("6. Checking if documentation needs updates\n\n")
 
-If issues are found, create question beads or update the epic description.`, cfg.Epic, epicPromptData.Title, cfg.Epic)
+		if len(allChildren) > 0 {
+			promptBuilder.WriteString("## Closed Tasks\n\n")
+			closedCount := 0
+			for _, child := range allChildren {
+				if child.Status == "closed" {
+					promptBuilder.WriteString(fmt.Sprintf("- **%s**: %s\n", child.ID, child.Title))
+					closedCount++
+				}
+			}
+			if closedCount == 0 {
+				promptBuilder.WriteString("(No closed tasks found - this may indicate an issue)\n")
+			}
+			promptBuilder.WriteString("\n")
+			promptBuilder.WriteString("Review each closed task to understand what was implemented:\n")
+			for _, child := range allChildren {
+				if child.Status == "closed" {
+					promptBuilder.WriteString(fmt.Sprintf("- Run `bd show %s` to see details of task \"%s\"\n", child.ID, child.Title))
+				}
+			}
+			promptBuilder.WriteString("\n")
+		}
+
+		if gitLog != "" {
+			promptBuilder.WriteString("## Recent Code Changes\n\n")
+			promptBuilder.WriteString("Recent commit history:\n```\n")
+			// Limit to first 30 lines to avoid prompt bloat
+			lines := strings.Split(gitLog, "\n")
+			if len(lines) > 30 {
+				promptBuilder.WriteString(strings.Join(lines[:30], "\n"))
+				promptBuilder.WriteString(fmt.Sprintf("\n... (%d more commits)\n", len(lines)-30))
+			} else {
+				promptBuilder.WriteString(gitLog)
+			}
+			promptBuilder.WriteString("\n```\n\n")
+		}
+
+		if gitDiffStats != "" {
+			promptBuilder.WriteString("## Files Changed\n\n")
+			promptBuilder.WriteString("```\n")
+			promptBuilder.WriteString(gitDiffStats)
+			promptBuilder.WriteString("\n```\n\n")
+		}
+
+		promptBuilder.WriteString("## Actions\n\n")
+		promptBuilder.WriteString("After your review:\n\n")
+		promptBuilder.WriteString(fmt.Sprintf("1. **If everything is complete and correct**: Close the epic with `bd close %s`\n\n", cfg.Epic))
+		promptBuilder.WriteString("2. **If you find gaps or improvements needed**: Create follow-up beads for each issue:\n")
+		promptBuilder.WriteString("   ```bash\n")
+		promptBuilder.WriteString(fmt.Sprintf("   bd create \"<description of gap/improvement>\" --type task --parent %s\n", cfg.Epic))
+		promptBuilder.WriteString("   ```\n")
+		promptBuilder.WriteString("   Be specific about what needs to be done. Review the code changes and closed tasks to identify:\n")
+		promptBuilder.WriteString("   - Missing functionality\n")
+		promptBuilder.WriteString("   - Incomplete implementations\n")
+		promptBuilder.WriteString("   - Code quality issues\n")
+		promptBuilder.WriteString("   - Missing tests\n")
+		promptBuilder.WriteString("   - Documentation gaps\n")
+		promptBuilder.WriteString("   - Edge cases not handled\n\n")
+		promptBuilder.WriteString("3. **If you have questions**: Create question beads:\n")
+		promptBuilder.WriteString("   ```bash\n")
+		promptBuilder.WriteString(fmt.Sprintf("   bd create \"Question: <your question>\" --type task --label needs-human --parent %s\n", cfg.Epic))
+		promptBuilder.WriteString("   ```\n\n")
+		promptBuilder.WriteString("**Important**: Do not close the epic if you create any follow-up beads. Only close it when you are confident the epic is fully implemented.\n")
+
+		verificationPrompt := promptBuilder.String()
 
 		// Run opus verification
 		var opts []Option

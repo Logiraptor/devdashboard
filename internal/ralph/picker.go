@@ -238,3 +238,55 @@ func FetchEpicChildren(runBD RunBDFunc, workDir string, epicID string, labels []
 	return parsed, nil
 }
 
+// bdListEntry mirrors the JSON shape emitted by `bd list --json`.
+type bdListEntry struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Priority  int       `json:"priority"`
+	Labels    []string  `json:"labels"`
+	CreatedAt time.Time `json:"created_at"`
+	IssueType string    `json:"issue_type"`
+}
+
+// FetchAllEpicChildren fetches all children of an epic (including closed) using bd list --parent.
+// Returns the children sorted by priority (ascending) then creation date (oldest first).
+func FetchAllEpicChildren(runBD RunBDFunc, workDir string, epicID string, labels []string) ([]beads.Bead, error) {
+	if runBD == nil {
+		runBD = runBDReal
+	}
+
+	args := []string{"list", "--json", "--parent", epicID, "--limit", "0"}
+	for _, l := range labels {
+		args = append(args, "--label", l)
+	}
+
+	out, err := runBD(workDir, args...)
+	if err != nil {
+		return nil, fmt.Errorf("bd list --parent %s: %w", epicID, err)
+	}
+
+	var entries []bdListEntry
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return nil, fmt.Errorf("parsing bd list output: %w", err)
+	}
+
+	result := make([]beads.Bead, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, beads.Bead{
+			ID:        e.ID,
+			Title:     e.Title,
+			Status:    e.Status,
+			Priority:  e.Priority,
+			Labels:    e.Labels,
+			CreatedAt: e.CreatedAt,
+			IssueType: e.IssueType,
+		})
+	}
+
+	// Sort by priority then creation date
+	DefaultScorer(result)
+
+	return result, nil
+}
+
