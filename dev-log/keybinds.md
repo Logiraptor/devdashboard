@@ -90,20 +90,19 @@ In project detail view, `SPC r` reloads beads for all resources without reloadin
 
 ## Tmux Keybinds (contrib/tmux.conf)
 
-devdeploy uses SPC as leader; tmux uses **Ctrl+a** (C-a) to avoid accidental triggers in shells.
+Simple vim-style pane navigation (no prefix required):
+- **C-h**: Focus pane left
+- **C-j**: Focus pane down
+- **C-k**: Focus pane up
+- **C-l**: Focus pane right
 
-| Prefix | Submenu | Keys | Action |
-|--------|---------|------|--------|
-| C-a | **w** (windows) | w/W/n/c/0-9 | Next/prev/new/close/select window |
-| C-a | **s** (splits) | s/v/x | Split H, split V, kill pane |
-| C-a | **vim nav** | h/j/k/l | Focus pane left/down/up/right |
+Prefix (C-a) operations:
+- **C-a w/W**: Next/prev window
+- **C-a c**: New window
+- **C-a x**: Kill pane
+- **C-a s/v**: Split horizontal/vertical
+- **C-a |/-**: Split horizontal/vertical (alternative bindings)
 
-### Which-key (keybind discovery popup)
-
-| Keys | Action |
-|------|--------|
-| **C-Space** | Open which-key menu (root, no prefix) |
-| **C-a Space** | Open which-key menu (prefix + Space) |
-
+- devdeploy uses SPC as leader; tmux uses **Ctrl+a** (C-a) to avoid accidental triggers in shells
 - devdeploy (Bubble Tea) runs in one tmux pane; SPC remains its leader
 - Both systems coexist; no conflict
