@@ -1,0 +1,131 @@
+package project
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"devdeploy/internal/rules"
+)
+
+// excludeEntries are the paths added to .git/info/exclude so injected
+// files are invisible to git status, diff, etc.
+var excludeEntries = []string{".cursor/", "dev-log/"}
+
+// InjectWorktreeRules writes Cursor rule files and a dev-log directory
+// into a worktree, then adds them to the per-worktree git exclude file
+// so they are invisible to git.
+//
+// The operation is idempotent: existing files with matching content are
+// left untouched, and duplicate exclude entries are not added.
+func InjectWorktreeRules(worktreePath string) error {
+	// 1. Create .cursor/rules/ and write rule files.
+	rulesDir := filepath.Join(worktreePath, ".cursor", "rules")
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		return fmt.Errorf("create rules dir: %w", err)
+	}
+
+	for name, content := range rules.Files() {
+		dst := filepath.Join(rulesDir, name)
+		// Skip if file already exists with identical content.
+		if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, content) {
+			continue
+		}
+		if err := os.WriteFile(dst, content, 0644); err != nil {
+			return fmt.Errorf("write rule %s: %w", name, err)
+		}
+	}
+
+	// 2. Create dev-log/ directory.
+	devLogDir := filepath.Join(worktreePath, "dev-log")
+	if err := os.MkdirAll(devLogDir, 0755); err != nil {
+		return fmt.Errorf("create dev-log dir: %w", err)
+	}
+
+	// 3. Add entries to .git/info/exclude.
+	gitDir, err := resolveGitDir(worktreePath)
+	if err != nil {
+		return fmt.Errorf("resolve git dir: %w", err)
+	}
+	if err := ensureExcludeEntries(gitDir, excludeEntries); err != nil {
+		return fmt.Errorf("update exclude: %w", err)
+	}
+	return nil
+}
+
+// resolveGitDir returns the actual git directory for a worktree.
+// In a regular repo, .git is a directory; in a worktree, .git is a file
+// containing "gitdir: <path>". This function handles both cases.
+func resolveGitDir(worktreePath string) (string, error) {
+	dotGit := filepath.Join(worktreePath, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return dotGit, nil
+	}
+
+	// Worktree: .git is a file with "gitdir: <path>"
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir: ") {
+		return "", fmt.Errorf(".git file has unexpected format: %s", line)
+	}
+	gitDir := strings.TrimPrefix(line, "gitdir: ")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreePath, gitDir)
+	}
+	return filepath.Clean(gitDir), nil
+}
+
+// ensureExcludeEntries appends entries to <gitDir>/info/exclude, skipping
+// any that are already present.
+func ensureExcludeEntries(gitDir string, entries []string) error {
+	infoDir := filepath.Join(gitDir, "info")
+	if err := os.MkdirAll(infoDir, 0755); err != nil {
+		return err
+	}
+
+	excludePath := filepath.Join(infoDir, "exclude")
+	existing, err := os.ReadFile(excludePath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// Build set of existing lines for dedup.
+	lines := make(map[string]bool)
+	for _, line := range strings.Split(string(existing), "\n") {
+		lines[strings.TrimSpace(line)] = true
+	}
+
+	var toAdd []string
+	for _, entry := range entries {
+		if !lines[entry] {
+			toAdd = append(toAdd, entry)
+		}
+	}
+	if len(toAdd) == 0 {
+		return nil
+	}
+
+	// Ensure existing content ends with a newline before appending.
+	prefix := ""
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		prefix = "\n"
+	}
+
+	f, err := os.OpenFile(excludePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(prefix + strings.Join(toAdd, "\n") + "\n")
+	return err
+}
