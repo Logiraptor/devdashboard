@@ -620,7 +620,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
-		if err := tmux.SendKeys(paneID, "agent --model claude-4.5-opus-high-thinking\n"); err != nil {
+		if err := tmux.SendKeys(paneID, "agent --model claude-4.5-opus-high-thinking --force\n"); err != nil {
 			a.Status = fmt.Sprintf("Send agent command: %v", err)
 			a.StatusIsError = true
 			return a, nil
