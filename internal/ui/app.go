@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"time"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -16,11 +15,7 @@ import (
 )
 
 // ralphPrompt is the canned prompt sent to an agent for automated work loops.
-const ralphPrompt = "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/.\n"
-
-// ralphPromptDelay is how long to wait after launching the agent before
-// sending the ralph prompt, giving the agent time to initialise.
-const ralphPromptDelay = 3 * time.Second
+const ralphPrompt = "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
 
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
@@ -428,15 +423,13 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 			return a, nil
 		}
-		if err := tmux.SendKeys(paneID, "agent\n"); err != nil {
+		// Pass the ralph prompt as a positional argument to agent.
+		cmd := fmt.Sprintf("agent %q\n", ralphPrompt)
+		if err := tmux.SendKeys(paneID, cmd); err != nil {
 			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
 			a.StatusIsError = true
 			return a, nil
 		}
-		// Send the ralph prompt after a delay so the agent has time to start.
-		time.AfterFunc(ralphPromptDelay, func() {
-			_ = tmux.SendKeys(paneID, ralphPrompt)
-		})
 		if a.Sessions != nil {
 			rk := resourceKeyFromResource(*r)
 			a.Sessions.Register(rk, paneID, session.PaneAgent)
