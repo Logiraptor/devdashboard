@@ -122,26 +122,10 @@ func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		return d, tea.Batch(cmds...)
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "g":
-			// Jump to top
-			if d.list.Index() != 0 {
-				d.list.Select(0)
-			}
-			return d, nil
-		case "G":
-			// Jump to bottom
-			last := len(d.Projects) - 1
-			if last >= 0 && d.list.Index() != last {
-				d.list.Select(last)
-			}
-			return d, nil
-		case "enter":
-			return d, nil // Caller handles navigation to detail
-		}
 	}
 	
+	// Pass all messages to list.Model - it handles j/k/g/G navigation natively.
+	// Enter is handled by app.go at the application level.
 	var cmd tea.Cmd
 	d.list, cmd = d.list.Update(msg)
 	cmds = append(cmds, cmd)
