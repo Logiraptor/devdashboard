@@ -1,0 +1,49 @@
+---
+description: Document architecture decisions and assumptions in dev-log
+alwaysApply: true
+---
+
+# Architecture Documentation
+
+All major architecture decisions and assumptions must be documented in `dev-log/` as markdown files.
+
+## When to Document
+
+Create a dev-log entry when:
+- Making significant architectural decisions
+- Choosing between competing approaches
+- Introducing new dependencies or patterns
+- Establishing conventions that affect multiple parts of the codebase
+
+## Before Writing New Features
+
+1. Review `dev-log/` documents to understand:
+   - Prior decisions that may affect your implementation
+   - Established patterns and conventions
+   - Assumptions about the system architecture
+
+2. Consider how the new feature fits within documented decisions
+
+## Document Structure
+
+Core docs are topic-based. For new decisions, either:
+- **Consolidate** into the relevant topic doc when the decision fits
+- **Create** `dev-log/YYYY-MM-DD-topic-name.md` for standalone decisions; add to `dev-log/README.md`
+
+## Log Entry Format
+
+```markdown
+# Title of Decision
+
+**Date**: YYYY-MM-DD
+**Status**: proposed | accepted | deprecated
+
+## Context
+What prompted this decision?
+
+## Decision
+What was decided?
+
+## Consequences
+What are the tradeoffs and implications?
+```
