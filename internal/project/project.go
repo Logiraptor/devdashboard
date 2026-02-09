@@ -564,23 +564,87 @@ func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
 const mergedPRsLimit = 5
 
 // ListProjectPRs returns PRs grouped by repo (open + recently merged).
+// PRs are fetched in parallel across repos, and within each repo, open and merged PRs
+// are fetched concurrently for optimal performance.
 func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 	repos, err := m.ListProjectRepos(projectName)
 	if err != nil {
 		return nil, err
 	}
-	var out []RepoPRs
+	if len(repos) == 0 {
+		return nil, nil
+	}
+
+	// Parallelize across repos
+	type repoResult struct {
+		repoName string
+		prs      []PRInfo
+		err      error
+	}
+	resultChan := make(chan repoResult, len(repos))
+	var wg sync.WaitGroup
+
 	for _, repoName := range repos {
-		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
-		var all []PRInfo
-		open, _ := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-		all = append(all, open...)
-		merged, _ := m.listFilteredPRsInRepo(worktreePath, "merged", mergedPRsLimit)
-		all = append(all, merged...)
-		if len(all) > 0 {
-			out = append(out, RepoPRs{Repo: repoName, PRs: all})
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			worktreePath := filepath.Join(m.projectDir(projectName), name)
+			
+			// Fetch open and merged PRs concurrently within each repo
+			var openPRs []PRInfo
+			var mergedPRs []PRInfo
+			var openErr, mergedErr error
+			
+			var prWg sync.WaitGroup
+			prWg.Add(2)
+			
+			go func() {
+				defer prWg.Done()
+				openPRs, openErr = m.listFilteredPRsInRepo(worktreePath, "open", 0)
+			}()
+			
+			go func() {
+				defer prWg.Done()
+				mergedPRs, mergedErr = m.listFilteredPRsInRepo(worktreePath, "merged", mergedPRsLimit)
+			}()
+			
+			prWg.Wait()
+			
+			// Combine results, ignoring errors (best-effort)
+			var allPRs []PRInfo
+			if openErr == nil {
+				allPRs = append(allPRs, openPRs...)
+			}
+			if mergedErr == nil {
+				allPRs = append(allPRs, mergedPRs...)
+			}
+			
+			resultChan <- repoResult{repoName: name, prs: allPRs, err: nil}
+		}(repoName)
+	}
+
+	// Close channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	repoPRsMap := make(map[string][]PRInfo)
+	for result := range resultChan {
+		if result.err == nil && len(result.prs) > 0 {
+			repoPRsMap[result.repoName] = result.prs
 		}
 	}
+
+	// Build output in repo order
+	var out []RepoPRs
+	for _, repoName := range repos {
+		if prs, ok := repoPRsMap[repoName]; ok {
+			out = append(out, RepoPRs{Repo: repoName, PRs: prs})
+		}
+	}
+
 	return out, nil
 }
 

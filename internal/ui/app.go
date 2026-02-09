@@ -59,6 +59,13 @@ type ProjectDetailResourcesLoadedMsg struct {
 	Resources   []project.Resource // repos only, no PRs or beads yet
 }
 
+// ProjectPRsLoadedMsg is sent when PRs are loaded for a project (phase 2: async data).
+// Contains PRs grouped by repo, fetched in parallel.
+type ProjectPRsLoadedMsg struct {
+	ProjectName string
+	PRsByRepo   []project.RepoPRs
+}
+
 // ProjectDetailPRsLoadedMsg is sent when PRs are loaded for a project detail view (phase 2: async data).
 // Updates resources with PR information fetched in parallel across repos.
 type ProjectDetailPRsLoadedMsg struct {
@@ -241,8 +248,52 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.refreshDetailPanes()
 			// Trigger Phase 2: Load PRs asynchronously
 			if a.ProjectManager != nil {
-				return a, loadProjectDetailPRsCmd(a.ProjectManager, msg.ProjectName, msg.Resources)
+				return a, loadProjectPRsCmd(a.ProjectManager, msg.ProjectName)
 			}
+		}
+		return a, nil
+	case ProjectPRsLoadedMsg:
+		// Phase 2: PRs loaded, merge into existing repo resources
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			projDir := a.ProjectManager.ProjectDir(msg.ProjectName)
+			
+			// Build map of PRs by repo name for quick lookup
+			repoPRsMap := make(map[string][]project.PRInfo)
+			for _, repoPRs := range msg.PRsByRepo {
+				repoPRsMap[repoPRs.Repo] = repoPRs.PRs
+			}
+			
+			// Merge PR resources into existing repo resources
+			resources := make([]project.Resource, 0, len(a.Detail.Resources))
+			for _, repoRes := range a.Detail.Resources {
+				// Add repo resource
+				resources = append(resources, repoRes)
+				
+				// Add PR resources for this repo
+				prs := repoPRsMap[repoRes.RepoName]
+				for i := range prs {
+					pr := &prs[i]
+					prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoRes.RepoName, pr.Number))
+					var wtPath string
+					if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+						wtPath = prWT
+					}
+					resources = append(resources, project.Resource{
+						Kind:         project.ResourcePR,
+						RepoName:     repoRes.RepoName,
+						PR:           pr,
+						WorktreePath: wtPath,
+					})
+				}
+			}
+			
+			a.Detail.Resources = resources
+			a.Detail.loadingPRs = false
+			a.Detail.loadingBeads = true
+			a.Detail.buildItems() // Rebuild list items to show PRs
+			a.refreshDetailPanes()
+			// Trigger Phase 3: Load beads asynchronously
+			return a, loadProjectDetailBeadsCmd(msg.ProjectName, resources)
 		}
 		return a, nil
 	case ProjectDetailPRsLoadedMsg:
@@ -757,7 +808,7 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	}
 	// Return command to trigger async enrichment (PRs, then beads)
 	if a.ProjectManager != nil {
-		return v, loadProjectDetailPRsCmd(a.ProjectManager, name, v.Resources)
+		return v, loadProjectPRsCmd(a.ProjectManager, name)
 	}
 	return v, nil
 }
@@ -970,59 +1021,39 @@ func loadProjectDetailResourcesCmd(m *project.Manager, projectName string) tea.C
 	}
 }
 
+// loadProjectPRsCmd returns a command that loads PRs asynchronously (phase 2: async data).
+// Runs ListProjectPRs in a goroutine and returns ProjectPRsLoadedMsg with PRs grouped by repo.
+func loadProjectPRsCmd(m *project.Manager, projectName string) tea.Cmd {
+	return func() tea.Msg {
+		if m == nil {
+			return ProjectPRsLoadedMsg{ProjectName: projectName, PRsByRepo: nil}
+		}
+		prsByRepo, _ := m.ListProjectPRs(projectName)
+		return ProjectPRsLoadedMsg{ProjectName: projectName, PRsByRepo: prsByRepo}
+	}
+}
+
 // loadProjectDetailPRsCmd returns a command that loads PRs asynchronously (phase 2: async data).
-// PRs are fetched in parallel across repos for optimal performance.
+// Uses loadProjectPRsCmd to fetch PRs, then merges them into repo resources.
 func loadProjectDetailPRsCmd(m *project.Manager, projectName string, repoResources []project.Resource) tea.Cmd {
 	return func() tea.Msg {
 		if m == nil {
 			return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: repoResources}
 		}
-		repos, _ := m.ListProjectRepos(projectName)
+		prsByRepo, _ := m.ListProjectPRs(projectName)
 		projDir := m.ProjectDir(projectName)
 		
-		// Fetch PRs concurrently across repos (open + merged).
-		type repoResult struct {
-			repoName string
-			prs      []project.PRInfo
-			err      error
-		}
-		resultChan := make(chan repoResult, len(repos))
-		var wg sync.WaitGroup
-		
-		for _, repoName := range repos {
-			wg.Add(1)
-			go func(name string) {
-				defer wg.Done()
-				worktreePath := filepath.Join(projDir, name)
-				var allPRs []project.PRInfo
-				open, _ := m.ListFilteredPRsInRepo(worktreePath, "open", 0)
-				allPRs = append(allPRs, open...)
-				merged, _ := m.ListFilteredPRsInRepo(worktreePath, "merged", 5) // mergedPRsLimit
-				allPRs = append(allPRs, merged...)
-				resultChan <- repoResult{repoName: name, prs: allPRs, err: nil}
-			}(repoName)
-		}
-		
-		// Close channel when all goroutines complete.
-		go func() {
-			wg.Wait()
-			close(resultChan)
-		}()
-		
-		// Collect results and build resource list.
-		repoPRs := make(map[string][]project.PRInfo)
-		for result := range resultChan {
-			if result.err != nil {
-				continue
-			}
-			repoPRs[result.repoName] = result.prs
+		// Build map of PRs by repo name for quick lookup
+		repoPRsMap := make(map[string][]project.PRInfo)
+		for _, repoPRs := range prsByRepo {
+			repoPRsMap[repoPRs.Repo] = repoPRs.PRs
 		}
 		
 		// Build resources: repos + PRs in repo order.
 		resources := make([]project.Resource, 0, len(repoResources))
 		for _, repoRes := range repoResources {
 			resources = append(resources, repoRes)
-			prs := repoPRs[repoRes.RepoName]
+			prs := repoPRsMap[repoRes.RepoName]
 			for i := range prs {
 				pr := &prs[i]
 				prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoRes.RepoName, pr.Number))
