@@ -196,6 +196,24 @@ func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
 	return out, nil
 }
 
+// ListProjectReposOnly returns repo-only resources (filesystem scan, no GitHub API calls).
+// This is a fast, synchronous operation that returns immediately with repo resources.
+func (m *Manager) ListProjectReposOnly(projectName string) []Resource {
+	repos, _ := m.ListProjectRepos(projectName)
+	projDir := m.projectDir(projectName)
+	
+	resources := make([]Resource, 0, len(repos))
+	for _, repoName := range repos {
+		worktreePath := filepath.Join(projDir, repoName)
+		resources = append(resources, Resource{
+			Kind:         ResourceRepo,
+			RepoName:     repoName,
+			WorktreePath: worktreePath,
+		})
+	}
+	return resources
+}
+
 // AddRepo creates a worktree in the project dir from a repo in ~/workspace.
 // It creates a new branch named devdeploy/<project>-<3 random alphanumeric chars> based on main,
 // ensuring it's up to date. The random suffix reduces collisions when multiple devdeploy

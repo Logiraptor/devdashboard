@@ -161,6 +161,54 @@ func TestManager_ListProjectRepos_ExcludesPRWorktrees(t *testing.T) {
 	}
 }
 
+func TestManager_ListProjectReposOnly_ReturnsRepoResources(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, dir)
+	_ = m.CreateProject("test-proj")
+	projDir := filepath.Join(dir, "test-proj")
+
+	// Create repo worktree dirs
+	repo1Dir := filepath.Join(projDir, "repo-a")
+	_ = os.MkdirAll(repo1Dir, 0755)
+	_ = os.WriteFile(filepath.Join(repo1Dir, ".git"), []byte("gitdir: /x"), 0644)
+
+	repo2Dir := filepath.Join(projDir, "repo-b")
+	_ = os.MkdirAll(repo2Dir, 0755)
+	_ = os.WriteFile(filepath.Join(repo2Dir, ".git"), []byte("gitdir: /y"), 0644)
+
+	// Create a PR worktree dir (should be excluded)
+	prDir := filepath.Join(projDir, "repo-a-pr-42")
+	_ = os.MkdirAll(prDir, 0755)
+	_ = os.WriteFile(filepath.Join(prDir, ".git"), []byte("gitdir: /z"), 0644)
+
+	resources := m.ListProjectReposOnly("test-proj")
+	if len(resources) != 2 {
+		t.Errorf("expected 2 repo resources, got %d", len(resources))
+	}
+
+	// Verify all resources are repo-type
+	for i, r := range resources {
+		if r.Kind != ResourceRepo {
+			t.Errorf("resource[%d]: expected ResourceRepo, got %v", i, r.Kind)
+		}
+		if r.PR != nil {
+			t.Errorf("resource[%d]: expected nil PR, got %v", i, r.PR)
+		}
+	}
+
+	// Verify repo names
+	repoNames := make(map[string]bool)
+	for _, r := range resources {
+		repoNames[r.RepoName] = true
+		if r.WorktreePath != filepath.Join(projDir, r.RepoName) {
+			t.Errorf("resource %s: expected WorktreePath %s, got %s", r.RepoName, filepath.Join(projDir, r.RepoName), r.WorktreePath)
+		}
+	}
+	if !repoNames["repo-a"] || !repoNames["repo-b"] {
+		t.Errorf("expected repo-a and repo-b, got %v", repoNames)
+	}
+}
+
 func TestManager_ListWorkspaceRepos_Empty(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, dir)

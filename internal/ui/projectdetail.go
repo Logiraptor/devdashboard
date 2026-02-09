@@ -319,6 +319,30 @@ func (p *ProjectDetailView) SelectedBead() *project.BeadInfo {
 	return &p.Resources[item.resourceIdx].Beads[item.beadIdx]
 }
 
+// SelectedResourceIdx returns the index of the currently selected resource.
+// If a bead is selected, returns the resource index that contains that bead.
+func (p *ProjectDetailView) SelectedResourceIdx() int {
+	idx := p.list.Index()
+	if idx < 0 || idx >= len(p.items) {
+		return -1
+	}
+	return p.items[idx].resourceIdx
+}
+
+// SelectedBeadIdx returns the bead index within the selected resource, or -1
+// if the cursor is on a resource header (not a bead item).
+func (p *ProjectDetailView) SelectedBeadIdx() int {
+	idx := p.list.Index()
+	if idx < 0 || idx >= len(p.items) {
+		return -1
+	}
+	item := p.items[idx]
+	if item.itemType != itemTypeBead {
+		return -1
+	}
+	return item.beadIdx
+}
+
 // View implements View.
 func (p *ProjectDetailView) View() string {
 	// Set default dimensions if not set (for tests)

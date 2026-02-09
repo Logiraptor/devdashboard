@@ -232,11 +232,12 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case ProjectDetailResourcesLoadedMsg:
-		// Phase 1: Repos loaded instantly, update view and trigger PR loading
+		// Phase 1: Repos loaded (for reload scenarios), update view and trigger PR loading
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
 			a.Detail.Resources = msg.Resources
 			a.Detail.loadingPRs = true
 			a.Detail.loadingBeads = false
+			a.Detail.buildItems() // Rebuild list items
 			a.refreshDetailPanes()
 			// Trigger Phase 2: Load PRs asynchronously
 			if a.ProjectManager != nil {
@@ -250,6 +251,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.Resources = msg.Resources
 			a.Detail.loadingPRs = false
 			a.Detail.loadingBeads = true
+			a.Detail.buildItems() // Rebuild list items to show PRs
 			a.refreshDetailPanes()
 			// Trigger Phase 3: Load beads asynchronously
 			return a, loadProjectDetailBeadsCmd(msg.ProjectName, msg.Resources)
@@ -261,6 +263,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.Resources = msg.Resources
 			a.Detail.loadingPRs = false
 			a.Detail.loadingBeads = false
+			a.Detail.buildItems() // Rebuild list items to show beads
 			a.refreshDetailPanes()
 		}
 		return a, nil
@@ -740,17 +743,21 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	if a.termWidth > 0 || a.termHeight > 0 {
 		v.SetSize(a.termWidth, a.termHeight)
 	}
-	// Phase 1: Load repos instantly (filesystem-only)
-	// Resources will be empty initially, populated via messages
-	v.Resources = nil
+	// Phase 1: Load repos instantly (filesystem-only, no GitHub API calls)
+	if a.ProjectManager != nil {
+		v.Resources = a.ProjectManager.ListProjectReposOnly(name)
+		v.loadingPRs = true // PRs will be loaded asynchronously
+		v.loadingBeads = false
+		v.buildItems() // Build list items immediately so repos are visible
+	}
 	// Prune dead panes then populate pane info from session tracker
 	if a.Sessions != nil {
 		a.Sessions.Prune()
 		a.populateResourcePanes(v)
 	}
-	// Return command to start progressive loading
+	// Return command to trigger async enrichment (PRs, then beads)
 	if a.ProjectManager != nil {
-		return v, loadProjectDetailResourcesCmd(a.ProjectManager, name)
+		return v, loadProjectDetailPRsCmd(a.ProjectManager, name, v.Resources)
 	}
 	return v, nil
 }

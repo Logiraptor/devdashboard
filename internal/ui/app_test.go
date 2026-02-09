@@ -747,8 +747,8 @@ func TestRemoveResourceMsg_ClampsSelection(t *testing.T) {
 	})
 
 	// After removing the only resource, Selected should be clamped to 0.
-	if ta.Detail.Selected != 0 {
-		t.Errorf("expected Selected=0 after removing only resource, got %d", ta.Detail.Selected)
+	if ta.Detail.Selected() != 0 {
+		t.Errorf("expected Selected=0 after removing only resource, got %d", ta.Detail.Selected())
 	}
 }
 
