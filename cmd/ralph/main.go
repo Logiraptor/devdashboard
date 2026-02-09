@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
+	"os/signal"
 	"strings"
+
+	"devdeploy/internal/ralph"
 )
 
 // stringSlice implements flag.Value for repeatable string flags.
@@ -57,12 +60,7 @@ func parseFlags() config {
 }
 
 func run(cfg config) error {
-	if cfg.verbose {
-		log.Printf("config: workdir=%s project=%q labels=%v max-iterations=%d dry-run=%v",
-			cfg.workdir, cfg.project, cfg.labels, cfg.maxIterations, cfg.dryRun)
-	}
-
-	// Verify workdir exists.
+	// Verify workdir exists before constructing the loop config.
 	info, err := os.Stat(cfg.workdir)
 	if err != nil {
 		return fmt.Errorf("workdir %q: %w", cfg.workdir, err)
@@ -71,34 +69,21 @@ func run(cfg config) error {
 		return fmt.Errorf("workdir %q is not a directory", cfg.workdir)
 	}
 
-	if cfg.dryRun {
-		fmt.Println("ralph: dry-run mode, no agents will be executed")
+	// Set up context with signal handling for graceful shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	loopCfg := ralph.LoopConfig{
+		WorkDir:       cfg.workdir,
+		Project:       cfg.project,
+		Labels:        cfg.labels,
+		MaxIterations: cfg.maxIterations,
+		DryRun:        cfg.dryRun,
+		Verbose:       cfg.verbose,
 	}
 
-	for i := range cfg.maxIterations {
-		if cfg.verbose {
-			log.Printf("iteration %d/%d", i+1, cfg.maxIterations)
-		}
-
-		// TODO(devdeploy-bkp.2): query bd ready --json for next bead
-		// TODO(devdeploy-bkp.3): craft prompt from bead
-		// TODO(devdeploy-bkp.4): spawn agent --print --force
-		// TODO(devdeploy-bkp.5): assess outcome
-
-		if cfg.dryRun {
-			fmt.Printf("ralph: iteration %d/%d — no ready beads (stub)\n", i+1, cfg.maxIterations)
-			break // dry-run exits after first pass
-		}
-
-		// No real work yet; break to avoid infinite loop in scaffold.
-		break
-	}
-
-	if cfg.dryRun {
-		fmt.Println("ralph: dry-run complete")
-	}
-
-	return nil
+	_, err = ralph.Run(ctx, loopCfg)
+	return err
 }
 
 func main() {
