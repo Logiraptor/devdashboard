@@ -38,7 +38,7 @@ func TestFiles_BeadsMDCContent(t *testing.T) {
 		"bd ready",
 		"bd close",
 		"bd sync",
-		"alwaysApply: true",
+		"BEGIN BEADS INTEGRATION",
 	}
 	for _, want := range checks {
 		if !strings.Contains(content, want) {

@@ -17,7 +17,7 @@ Create a dev-log entry when:
 
 ## Before Writing New Features
 
-1. Review `dev-log/` documents to understand:
+1. Review `dev-log/` documents (architecture.md, ui.md, keybinds.md, agent-workflow.md) to understand:
    - Prior decisions that may affect your implementation
    - Established patterns and conventions
    - Assumptions about the system architecture
@@ -26,7 +26,7 @@ Create a dev-log entry when:
 
 ## Document Structure
 
-Core docs are topic-based. For new decisions, either:
+Core docs are topic-based: `architecture.md`, `ui.md`, `keybinds.md`, `agent-workflow.md`. For new decisions, either:
 - **Consolidate** into the relevant topic doc when the decision fits
 - **Create** `dev-log/YYYY-MM-DD-topic-name.md` for standalone decisions; add to `dev-log/README.md`
 
