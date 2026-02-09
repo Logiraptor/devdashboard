@@ -17,6 +17,7 @@ This directory contains architecture documentation for the devdeploy project.
 | [keybinds.md](keybinds.md) | Keybind system, SPC leader, help view, project/agent keybinds, tmux |
 | [agent-workflow.md](agent-workflow.md) | Agent integration, progress, abort, tmux orchestration, validation |
 | [2026-02-06-tmux-project-epic.plan.md](2026-02-06-tmux-project-epic.plan.md) | (Superseded) Epic plan: real PRs, selection, SPC s s, tmux organization |
+| [2026-02-08-ralph-loop-tool.md](2026-02-08-ralph-loop-tool.md) | Ralph loop tool: dedicated CLI for autonomous agent work loops |
 
 ## Adding New Decisions
 
