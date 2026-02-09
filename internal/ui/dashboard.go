@@ -40,7 +40,8 @@ func (p projectItem) Title() string {
 		// Show loading indicator for beads too
 		line += ", … beads"
 	}
-	return line
+	// Add left indentation for visual hierarchy
+	return "  " + line
 }
 func (p projectItem) Description() string { return "" }
 
@@ -57,11 +58,7 @@ var _ View = (*DashboardView)(nil)
 
 // NewDashboardView creates a dashboard. Projects are loaded from disk via ProjectsLoadedMsg.
 func NewDashboardView() *DashboardView {
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = Styles.Selected
-	delegate.Styles.SelectedDesc = Styles.Selected
-	delegate.Styles.NormalTitle = Styles.Muted
-	delegate.Styles.NormalDesc = Styles.Muted
+	delegate := NewCompactListDelegate()
 	
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "Projects"

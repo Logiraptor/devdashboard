@@ -3,10 +3,10 @@
   "iteration": 1,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-rfx",
-    "title": "Add / keybind to search/filter lines in resource view"
+    "id": "devdeploy-vpk",
+    "title": "Epic: UI Polish and Bubbles Standardization"
   },
-  "elapsed_ns": 109608208,
+  "elapsed_ns": 99801500,
   "tallies": {
     "completed": 0,
     "questions": 0,

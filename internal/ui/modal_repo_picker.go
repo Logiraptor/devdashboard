@@ -57,11 +57,11 @@ func newRepoPickerModal(projectName string, items []list.Item, mode repoPickerMo
 	if mode == repoPickerRemove {
 		title = "Remove repo from " + projectName
 	}
-	delegate := list.NewDefaultDelegate()
+	delegate := NewCompactListDelegate()
 	l := list.New(items, delegate, 40, 12)
 	l.Title = title
 	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
+	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 	l.Styles.Title = Styles.Title

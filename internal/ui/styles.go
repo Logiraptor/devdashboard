@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Theme colors used throughout the UI
 const (
@@ -75,6 +78,19 @@ var Styles = struct {
 	Label: lipgloss.NewStyle(),
 	Details: lipgloss.NewStyle().
 		Foreground(lipgloss.Color(ColorWarning)),
+}
+
+// NewCompactListDelegate returns a delegate with zero spacing and shared styles.
+// This factory standardizes list delegate configuration across the codebase.
+func NewCompactListDelegate() list.DefaultDelegate {
+	d := list.NewDefaultDelegate()
+	d.SetSpacing(0)
+	d.ShowDescription = false
+	d.Styles.SelectedTitle = Styles.Selected
+	d.Styles.SelectedDesc = Styles.Selected
+	d.Styles.NormalTitle = Styles.Muted
+	d.Styles.NormalDesc = Styles.Muted
+	return d
 }
 
 // ModalStyles is kept for backward compatibility but now delegates to Styles.

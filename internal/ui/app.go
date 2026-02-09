@@ -404,13 +404,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh the resource list and pane info.
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
 			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
-			// Clamp selection index.
-			if a.Detail.Selected >= len(a.Detail.Resources) {
-				a.Detail.Selected = len(a.Detail.Resources) - 1
-			}
-			if a.Detail.Selected < 0 {
-				a.Detail.Selected = 0
-			}
+			// List handles selection automatically, no need to clamp
 			a.refreshDetailPanes()
 		}
 		return a, nil
