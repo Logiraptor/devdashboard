@@ -1,7 +1,7 @@
 # DevDeploy Architecture
 
 **Status**: accepted  
-**Last updated**: 2026-02-06
+**Last updated**: 2026-02-08
 
 ## Vision
 
@@ -48,18 +48,18 @@ devdeploy/
 | 2 | UI abstractions: views, panels, focus, layout | Done |
 | 3 | Input: leader key (SPC), vim/spacemacs keybinds | Done |
 | 4 | Keybind hints: transient help after SPC | Done |
-| 5 | Agent workflow: artifact store, progress stream, integration | Done |
+| 5 | Agent workflow: progress stream, integration | Done |
 | 6 | Live progress windows for agent output | Done |
 | 7 | Abort/cancel for in-flight operations | Done |
 | 8 | Tmux pane orchestration (replace embedded PTY) | Done |
 | 9 | Resource-based project workflow (current) | In progress |
 
-**Phase 9 — Resource-based project workflow**: Projects contain resources (repos from ~/workspace, PRs from gh). Two actions: open shell, launch agent (`agent`). devdeploy manages worktrees, tmux panes, and sessions. See `devdeploy-7uj` epic.
+**Phase 9 — Resource-based project workflow**: Projects contain resources (repos from ~/workspace, PRs from gh). Two actions: open shell, launch agent (`agent`). devdeploy manages worktrees, tmux panes, and sessions. Resources display associated **beads** (bd issues) inline via label-based scoping. See `devdeploy-7uj` and `devdeploy-lvr` epics.
 
 ## Core Concept
 
-devdeploy is a glue tool for **git worktrees**, **agent sessions**, **GitHub PRs**, and **tmux panes**. Projects group resources; the primary actions are opening a shell or launching an agent in a worktree. Everything persists until explicitly cleaned up.
+devdeploy is a glue tool for **git worktrees**, **agent sessions**, **GitHub PRs**, **tmux panes**, and **beads** (bd issue tracker). Projects group resources; the primary actions are opening a shell or launching an agent in a worktree. Beads are displayed per resource via label-based scoping (`project:` and `pr:` labels). Everything persists until explicitly cleaned up.
 
 ## Open Questions
 
-- Persistence: where do plans/context live beyond disk?
+- Future: could add keybinds to open/close beads from within devdeploy

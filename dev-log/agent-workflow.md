@@ -1,11 +1,11 @@
 # Agent Workflow
 
 **Status**: accepted  
-**Last updated**: 2026-02-07
+**Last updated**: 2026-02-08
 
 ## Overview
 
-Agent workflow spans artifact storage, progress streaming, live display, abort capability, and shell orchestration. The app uses **tmux pane orchestration** (not embedded PTY) for interactive agent shells.
+Agent workflow spans progress streaming, live display, abort capability, and shell orchestration. The app uses **tmux pane orchestration** (not embedded PTY) for interactive agent shells.
 
 ## Resource-based Model (Current Direction)
 
@@ -20,7 +20,9 @@ This replaces the earlier `AgentRunner` interface / `StubRunner` / progress even
 
 See `devdeploy-7uj` epic for full details.
 
-## Phase 5: Integration
+## Phase 5: Integration (Revised)
+
+> **Note**: The original Phase 5 included an Artifact Store (plan.md / design.md) subsection. Artifacts were removed in 2026-02-08 (`devdeploy-lvr` epic) in favor of **beads integration** — see [ui.md](ui.md#beads-per-resource). The Agent Runner interface no longer references plan/design paths.
 
 ### Progress Event Stream
 
@@ -32,7 +34,7 @@ See `devdeploy-7uj` epic for full details.
 
 ```go
 type AgentRunner interface {
-    Run(ctx context.Context, projectDir, planPath, designPath string) (tea.Cmd or chan ProgressEvent)
+    Run(ctx context.Context, projectDir string) (tea.Cmd or chan ProgressEvent)
 }
 ```
 

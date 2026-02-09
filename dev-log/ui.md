@@ -1,7 +1,7 @@
 # UI Abstraction and Layout
 
 **Status**: accepted  
-**Last updated**: 2026-02-06
+**Last updated**: 2026-02-08
 
 ## Core Abstractions
 
@@ -17,7 +17,7 @@
 
 ## Chosen Layout: Dashboard + Detail (Option E)
 
-**Rationale**: Balances visibility and simplicity. Matches project-centric workflow (2–3 projects, many PRs). Artifacts integrated per project. Scales to many projects.
+**Rationale**: Balances visibility and simplicity. Matches project-centric workflow (2–3 projects, many PRs). Scales to many projects.
 
 - **Dashboard**: Lists all projects with summary. Select one to open detail.
 - **Project Detail**: Shows repos/PRs as a unified resource list.
@@ -65,3 +65,42 @@ type Overlay struct {
 
 - `DEVDEPLOY_PROJECTS_DIR` env overrides base path
 - Project names normalized: lowercase, spaces → hyphens
+
+## Beads per Resource
+
+Each resource (repo or PR) displays associated **beads** (bd issues) inline in the project detail view. Beads are queried from bd using label-based scoping.
+
+### Scoping
+
+- **Project label** (`project:<project-name>`): Only beads with this label appear under the project. This makes beads opt-in per project.
+- **PR label** (`pr:<number>`): Beads with this label appear under the specific PR resource. Beads with only a project label (no `pr:` label) appear under the repo resource.
+
+### Query logic
+
+| Resource | Command | Filter |
+|----------|---------|--------|
+| Repo | `bd list --label project:<name> --json` in repo worktree | Exclude beads with any `pr:*` label |
+| PR | `bd list --label project:<name> --label pr:<number> --json` in repo worktree | None |
+
+Closed beads are filtered out (only open/in_progress shown).
+
+### Display
+
+**Project detail view** — beads listed under each resource:
+
+```
+← my-project
+
+Resources
+▸ devdeploy/              ● 2 shells
+    devdeploy-abc  Fix the thing
+    devdeploy-def  Add feature X  [in_progress]
+  #42 Add dark mode (open)   ● 1 agent
+    devdeploy-ghi  Review PR feedback
+```
+
+**Dashboard** — bead count shown per project alongside repo/PR counts.
+
+### History
+
+The artifact system (plan.md / design.md) was removed in 2026-02-08 (see `devdeploy-lvr` epic). Beads integration replaced it as the primary way to track work items per resource.
