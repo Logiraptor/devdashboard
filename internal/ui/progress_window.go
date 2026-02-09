@@ -31,7 +31,7 @@ func NewProgressWindow() *ProgressWindow {
 	vp := viewport.New(defaultProgressWidth, defaultProgressHeight)
 	vp.Style = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
+		BorderForeground(lipgloss.Color(ColorHighlight)).
 		Padding(0, 1)
 	return &ProgressWindow{
 		events:   nil,
@@ -83,7 +83,6 @@ func (p *ProgressWindow) Update(msg tea.Msg) (View, tea.Cmd) {
 
 // View implements View.
 func (p *ProgressWindow) View() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	hint := "Esc: abort"
 	if len(p.events) > 0 {
 		last := p.events[len(p.events)-1]
@@ -91,7 +90,7 @@ func (p *ProgressWindow) View() string {
 			hint = "Esc: close"
 		}
 	}
-	header := titleStyle.Render("Agent progress") + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("  "+hint)
+	header := Styles.Title.Render("Agent progress") + Styles.Muted.Render("  "+hint)
 	return header + "\n" + p.viewport.View()
 }
 

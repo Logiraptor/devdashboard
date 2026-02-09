@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ProjectSummary holds minimal project info for the dashboard list.
@@ -59,13 +58,10 @@ var _ View = (*DashboardView)(nil)
 // NewDashboardView creates a dashboard. Projects are loaded from disk via ProjectsLoadedMsg.
 func NewDashboardView() *DashboardView {
 	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
-		Bold(true)
-	delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle
-	delegate.Styles.NormalTitle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241"))
-	delegate.Styles.NormalDesc = delegate.Styles.NormalTitle
+	delegate.Styles.SelectedTitle = Styles.Selected
+	delegate.Styles.SelectedDesc = Styles.Selected
+	delegate.Styles.NormalTitle = Styles.Muted
+	delegate.Styles.NormalDesc = Styles.Muted
 	
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "Projects"
@@ -73,11 +69,11 @@ func NewDashboardView() *DashboardView {
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
-	l.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	l.Styles.Title = Styles.Title
 	
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+	s.Style = Styles.Status
 	
 	return &DashboardView{
 		list:     l,
@@ -135,8 +131,6 @@ func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 
 // View implements View.
 func (d *DashboardView) View() string {
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	
 	// Set default dimensions if not set (for tests)
 	if d.list.Width() == 0 {
 		d.list.SetWidth(80)
@@ -153,7 +147,7 @@ func (d *DashboardView) View() string {
 		title += " " + d.spinner.View()
 	}
 	b.WriteString(title + "\n")
-	b.WriteString(headerStyle.Render("Press [SPC] for commands") + "\n\n")
+	b.WriteString(Styles.Muted.Render("Press [SPC] for commands") + "\n\n")
 	b.WriteString(d.list.View())
 	return b.String()
 }

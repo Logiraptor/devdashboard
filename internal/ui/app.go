@@ -14,7 +14,6 @@ import (
 	"devdeploy/internal/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 
@@ -624,11 +623,11 @@ func (a *appModelAdapter) View() string {
 		}
 	}
 	if a.Status != "" {
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+		style := Styles.Status
 		if a.StatusIsError {
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+			style = Styles.TitleWarning
 		}
-		base += "\n" + style.Render("▶ "+a.Status) + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" (any key to dismiss)")
+		base += "\n" + style.Render("▶ "+a.Status) + Styles.Muted.Render(" (any key to dismiss)")
 	}
 	return base
 }

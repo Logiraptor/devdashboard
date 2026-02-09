@@ -3,7 +3,6 @@ package ui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // RepoPickerModal is a modal for selecting a repo from a list.
@@ -65,7 +64,7 @@ func newRepoPickerModal(projectName string, items []list.Item, mode repoPickerMo
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
-	l.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	l.Styles.Title = Styles.Title
 	return &RepoPickerModal{
 		list:     l,
 		items:    items,

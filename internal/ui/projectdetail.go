@@ -256,26 +256,22 @@ func (p *ProjectDetailView) updateViewportContent() {
 
 // renderContent renders the full project detail content without scrolling.
 func (p *ProjectDetailView) renderContent() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	repoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	selectedRepoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	prStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	selectedPRStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
-	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
-	beadStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	selectedBeadStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	beadStatusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	dimSelectedRepoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	dimSelectedPRStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	repoStyle := Styles.Normal
+	selectedRepoStyle := Styles.Selected
+	prStyle := Styles.Muted
+	selectedPRStyle := Styles.Selected
+	dimSelectedRepoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorHighlight))
+	dimSelectedPRStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorHighlight))
+	beadStyle := Styles.Muted
+	selectedBeadStyle := Styles.Selected
+	beadStatusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorDim))
 
 	var b strings.Builder
-	b.WriteString("← " + titleStyle.Render(p.ProjectName) + "\n\n")
+	b.WriteString("← " + Styles.Title.Render(p.ProjectName) + "\n\n")
 
-	b.WriteString(sectionStyle.Render("Resources") + "\n")
+	b.WriteString(Styles.Section.Render("Resources") + "\n")
 	if len(p.Resources) == 0 {
-		b.WriteString("  " + emptyStyle.Render("(no repos added)") + "\n")
+		b.WriteString("  " + Styles.Empty.Render("(no repos added)") + "\n")
 	}
 	for i, r := range p.Resources {
 		selected := i == p.Selected
@@ -300,7 +296,7 @@ func (p *ProjectDetailView) renderContent() string {
 			}
 			b.WriteString(bullet + style.Render(r.RepoName+"/"))
 			if status != "" {
-				b.WriteString("  " + statusStyle.Render(status))
+				b.WriteString("  " + Styles.Status.Render(status))
 			}
 			b.WriteString("\n")
 		case project.ResourcePR:
@@ -327,7 +323,7 @@ func (p *ProjectDetailView) renderContent() string {
 					b.WriteString(bullet + prStyle.Render(line))
 				}
 				if status != "" {
-					b.WriteString("  " + statusStyle.Render(status))
+					b.WriteString("  " + Styles.Status.Render(status))
 				}
 				b.WriteString("\n")
 			}

@@ -27,13 +27,9 @@ func RenderKeybindHelp(keyHandler *KeyHandler, mode AppMode) string {
 	// Create KeyMap and help model
 	keyMap := NewKeyMap(keyHandler.Registry, keyHandler, mode)
 	helpModel := help.New()
-	helpModel.Styles.ShortKey = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
-		Bold(true)
-	helpModel.Styles.ShortDesc = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241"))
-	helpModel.Styles.ShortSeparator = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241"))
+	helpModel.Styles.ShortKey = Styles.Selected
+	helpModel.Styles.ShortDesc = Styles.Muted
+	helpModel.Styles.ShortSeparator = Styles.Muted
 
 	// Render help view using Model.View() with KeyMap
 	helpContent := helpModel.View(keyMap)
@@ -41,13 +37,11 @@ func RenderKeybindHelp(keyHandler *KeyHandler, mode AppMode) string {
 	// Wrap in box with prefix label
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("86")).
+		BorderForeground(lipgloss.Color(ColorAccent)).
 		Padding(0, 1).
 		MarginTop(1)
 
-	labelStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Bold(false)
+	labelStyle := Styles.Muted
 
 	prefix := "SPC"
 	if currentSeq != "" {
