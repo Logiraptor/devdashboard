@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 4,
+  "iteration": 5,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-nh2.3",
-    "title": "Phase 3: Async parallel bead fetching for project detail"
+    "id": "devdeploy-fyt.1",
+    "title": "Fix keybind conflicts with list filtering mode"
   },
-  "elapsed_ns": 303143750292,
+  "elapsed_ns": 336948654458,
   "tallies": {
-    "completed": 3,
+    "completed": 4,
     "questions": 0,
     "failed": 0,
     "timed_out": 0,

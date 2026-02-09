@@ -343,6 +343,11 @@ func (p *ProjectDetailView) SelectedBeadIdx() int {
 	return item.beadIdx
 }
 
+// IsFiltering returns true if the list is currently in filtering mode.
+func (p *ProjectDetailView) IsFiltering() bool {
+	return p.list.FilterState() == list.Filtering
+}
+
 // View implements View.
 func (p *ProjectDetailView) View() string {
 	// Set default dimensions if not set (for tests)

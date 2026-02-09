@@ -723,12 +723,22 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// App-level navigation
 		if a.Mode == ModeProjectDetail && msg.String() == "esc" {
-			a.Mode = ModeDashboard
-			a.Detail = nil
-			return a, nil
+			// Don't intercept esc if list is filtering - let it cancel the filter
+			if a.Detail != nil && a.Detail.IsFiltering() {
+				// Let it fall through to view update
+			} else {
+				a.Mode = ModeDashboard
+				a.Detail = nil
+				return a, nil
+			}
 		}
 		if a.Mode == ModeProjectDetail && msg.String() == "enter" {
-			return a, func() tea.Msg { return OpenShellMsg{} }
+			// Don't intercept enter if list is filtering - let it confirm the filter
+			if a.Detail != nil && a.Detail.IsFiltering() {
+				// Let it fall through to view update
+			} else {
+				return a, func() tea.Msg { return OpenShellMsg{} }
+			}
 		}
 		if a.Mode == ModeProjectDetail && msg.String() == "d" {
 			return a, func() tea.Msg { return ShowRemoveResourceMsg{} }
