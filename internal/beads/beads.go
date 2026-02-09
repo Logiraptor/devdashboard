@@ -5,24 +5,27 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Bead represents a bd issue associated with a project resource.
 type Bead struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Status   string   `json:"status"`
-	Priority int      `json:"priority"`
-	Labels   []string `json:"labels"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Priority  int       `json:"priority"`
+	Labels    []string  `json:"labels"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // bdListEntry mirrors the JSON shape emitted by `bd list --json`.
 type bdListEntry struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Status   string   `json:"status"`
-	Priority int      `json:"priority"`
-	Labels   []string `json:"labels"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Priority  int       `json:"priority"`
+	Labels    []string  `json:"labels"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // runBD is the function used to execute bd commands.
@@ -90,11 +93,12 @@ func parseBeads(data []byte) []Bead {
 			continue
 		}
 		result = append(result, Bead{
-			ID:       e.ID,
-			Title:    e.Title,
-			Status:   e.Status,
-			Priority: e.Priority,
-			Labels:   e.Labels,
+			ID:        e.ID,
+			Title:     e.Title,
+			Status:    e.Status,
+			Priority:  e.Priority,
+			Labels:    e.Labels,
+			CreatedAt: e.CreatedAt,
 		})
 	}
 	return result
