@@ -20,6 +20,7 @@ type AgentResult struct {
 	Stdout   string
 	Stderr   string
 	Duration time.Duration
+	TimedOut bool // true if the agent was killed due to timeout
 }
 
 // CommandFactory builds an *exec.Cmd for the given context, working directory,
@@ -69,6 +70,9 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 	err := cmd.Run()
 	duration := time.Since(start)
 
+	// Detect whether the process was killed due to context timeout.
+	timedOut := ctx.Err() == context.DeadlineExceeded
+
 	exitCode := 0
 	if err != nil {
 		// Extract exit code from ExitError; otherwise treat as launch failure.
@@ -84,6 +88,7 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 		Duration: duration,
+		TimedOut: timedOut,
 	}, nil
 }
 
