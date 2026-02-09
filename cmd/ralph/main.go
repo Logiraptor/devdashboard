@@ -31,6 +31,7 @@ type config struct {
 	agentTimeout            time.Duration
 	consecutiveFailureLimit int
 	timeout                 time.Duration
+	concurrency             int
 	dryRun                  bool
 	verbose                 bool
 }
@@ -46,6 +47,7 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
 	flag.IntVar(&cfg.consecutiveFailureLimit, "consecutive-failures", 3, "stop after N consecutive agent failures")
 	flag.DurationVar(&cfg.timeout, "timeout", 2*time.Hour, "total wall-clock timeout for the entire session")
+	flag.IntVar(&cfg.concurrency, "concurrency", 1, "number of concurrent agents to run (each uses its own git worktree)")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "print what would be done without executing agents")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "enable detailed logging")
 
@@ -99,6 +101,7 @@ func run(cfg config) (ralph.StopReason, error) {
 		AgentTimeout:            cfg.agentTimeout,
 		ConsecutiveFailureLimit: cfg.consecutiveFailureLimit,
 		Timeout:                 cfg.timeout,
+		Concurrency:             cfg.concurrency,
 		DryRun:                  cfg.dryRun,
 		Verbose:                 cfg.verbose,
 	}

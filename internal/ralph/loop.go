@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"devdeploy/internal/beads"
@@ -92,6 +94,10 @@ type LoopConfig struct {
 	// Timeout is the total wall-clock timeout for the entire ralph session.
 	// Zero means use DefaultWallClockTimeout (2h).
 	Timeout time.Duration
+
+	// Concurrency is the number of concurrent agents to run. Default is 1 (sequential).
+	// When > 1, each agent runs in its own git worktree for isolation.
+	Concurrency int
 
 	// Test hooks — nil means use real implementations.
 	PickNext    func() (*beads.Bead, error)
@@ -276,7 +282,25 @@ func countRemainingBeads(cfg LoopConfig) int {
 //   - N consecutive failures occur
 //   - the total wall-clock timeout expires
 //   - all available beads have been skipped (same-bead retry detection)
+//
+// When Concurrency > 1, agents run in parallel, each in its own git worktree.
 func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+
+	// Use sequential path for concurrency=1 to maintain exact current behavior
+	if concurrency == 1 {
+		return runSequential(ctx, cfg)
+	}
+
+	// Use concurrent path for concurrency > 1
+	return runConcurrent(ctx, cfg, concurrency)
+}
+
+// runSequential executes the sequential loop (original implementation).
+func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout
@@ -523,6 +547,331 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary (always printed, even on early termination).
+	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
+
+	return summary, nil
+}
+
+// runConcurrent executes the concurrent loop with worker pool pattern.
+func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSummary, error) {
+	out := cfg.Output
+	if out == nil {
+		out = os.Stdout
+	}
+	loopStart := time.Now()
+
+	// Resolve defaults.
+	consecutiveLimit := cfg.ConsecutiveFailureLimit
+	if consecutiveLimit <= 0 {
+		consecutiveLimit = DefaultConsecutiveFailureLimit
+	}
+
+	wallTimeout := cfg.Timeout
+	if wallTimeout <= 0 {
+		wallTimeout = DefaultWallClockTimeout
+	}
+
+	// Apply wall-clock timeout to context.
+	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
+	defer cancelWall()
+
+	// Initialize worktree manager
+	wtMgr, err := NewWorktreeManager(cfg.WorkDir)
+	if err != nil {
+		return nil, fmt.Errorf("creating worktree manager: %w", err)
+	}
+
+	// Set up picker
+	pickNext := cfg.PickNext
+	if pickNext == nil {
+		picker := &BeadPicker{
+			WorkDir: cfg.WorkDir,
+			Project: cfg.Project,
+			Epic:    cfg.Epic,
+			Labels:  cfg.Labels,
+		}
+		pickNext = picker.Next
+	}
+
+	fetchPrompt := cfg.FetchPrompt
+	if fetchPrompt == nil {
+		fetchPrompt = func(beadID string) (*PromptData, error) {
+			return FetchPromptData(nil, cfg.WorkDir, beadID)
+		}
+	}
+
+	render := cfg.Render
+	if render == nil {
+		render = RenderPrompt
+	}
+
+	execute := cfg.Execute
+	if execute == nil {
+		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
+			var opts []Option
+			if cfg.AgentTimeout > 0 {
+				opts = append(opts, WithTimeout(cfg.AgentTimeout))
+			}
+			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
+		}
+	}
+
+	assessFn := cfg.AssessFn
+	if assessFn == nil {
+		assessFn = func(beadID string, result *AgentResult) (Outcome, string) {
+			return Assess(cfg.WorkDir, beadID, result)
+		}
+	}
+
+	syncFn := cfg.SyncFn
+	if syncFn == nil {
+		syncFn = func() error {
+			cmd := exec.Command("bd", "sync")
+			cmd.Dir = cfg.WorkDir
+			return cmd.Run()
+		}
+	}
+
+	// Shared state protected by mutex
+	var mu sync.Mutex
+	summary := &RunSummary{}
+	consecutiveFailures := int32(0)
+	lastFailedBeadID := ""
+	skippedBeads := make(map[string]bool)
+	iterations := int32(0)
+	stopReason := StopNormal
+	shouldStop := int32(0) // atomic flag for early termination
+
+	// Worker function
+	worker := func(workerID int) {
+		for atomic.LoadInt32(&shouldStop) == 0 {
+			// Check context cancellation
+			if ctx.Err() != nil {
+				mu.Lock()
+				if ctx.Err() == context.DeadlineExceeded {
+					stopReason = StopWallClock
+				} else {
+					stopReason = StopContextCancelled
+				}
+				atomic.StoreInt32(&shouldStop, 1)
+				mu.Unlock()
+				return
+			}
+
+			// Check max iterations
+			if int(atomic.LoadInt32(&iterations)) >= cfg.MaxIterations {
+				mu.Lock()
+				if stopReason == StopNormal {
+					stopReason = StopMaxIterations
+				}
+				atomic.StoreInt32(&shouldStop, 1)
+				mu.Unlock()
+				return
+			}
+
+			// Pick next bead (thread-safe)
+			bead, err := pickNext()
+			if err != nil {
+				mu.Lock()
+				atomic.StoreInt32(&shouldStop, 1)
+				mu.Unlock()
+				return
+			}
+			if bead == nil {
+				mu.Lock()
+				if stopReason == StopNormal {
+					stopReason = StopNormal
+				}
+				atomic.StoreInt32(&shouldStop, 1)
+				mu.Unlock()
+				return
+			}
+
+			// Check if bead should be skipped
+			mu.Lock()
+			if skippedBeads[bead.ID] {
+				mu.Unlock()
+				continue
+			}
+			// Skip if this is the same bead that just failed
+			if lastFailedBeadID != "" && bead.ID == lastFailedBeadID {
+				skippedBeads[bead.ID] = true
+				summary.Skipped++
+				lastFailedBeadID = ""
+				mu.Unlock()
+				continue
+			}
+			mu.Unlock()
+
+			// Dry-run: print what would be done without executing
+			if cfg.DryRun {
+				mu.Lock()
+				iterNum := int(atomic.AddInt32(&iterations, 1))
+				fmt.Fprintf(out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+				summary.Iterations++
+				atomic.StoreInt32(&shouldStop, 1)
+				mu.Unlock()
+				return
+			}
+
+			// Create worktree for this bead
+			worktreePath, branchName, err := wtMgr.CreateWorktree(bead.ID)
+			if err != nil {
+				mu.Lock()
+				fmt.Fprintf(out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
+				mu.Unlock()
+				continue
+			}
+			defer func() {
+				if err := wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
+					mu.Lock()
+					fmt.Fprintf(out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
+					mu.Unlock()
+				}
+			}()
+
+			// Fetch prompt data (beads state is shared, so use original workdir)
+			promptData, err := fetchPrompt(bead.ID)
+			if err != nil {
+				mu.Lock()
+				fmt.Fprintf(out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
+				mu.Unlock()
+				continue
+			}
+
+			// Render prompt
+			prompt, err := render(promptData)
+			if err != nil {
+				mu.Lock()
+				fmt.Fprintf(out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
+				mu.Unlock()
+				continue
+			}
+
+			// Execute agent in worktree (use worktree path for isolation)
+			agentExecute := func(ctx context.Context, prompt string) (*AgentResult, error) {
+				var opts []Option
+				if cfg.AgentTimeout > 0 {
+					opts = append(opts, WithTimeout(cfg.AgentTimeout))
+				}
+				return RunAgent(ctx, worktreePath, prompt, opts...)
+			}
+			result, err := agentExecute(ctx, prompt)
+			if err != nil {
+				mu.Lock()
+				fmt.Fprintf(out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
+				mu.Unlock()
+				continue
+			}
+
+			// Assess outcome (beads state is shared, so use original workdir)
+			outcome, outcomeSummary := assessFn(bead.ID, result)
+
+			// Update shared state atomically
+			mu.Lock()
+			iterNum := int(atomic.AddInt32(&iterations, 1))
+			summary.Iterations++
+
+			// Print structured per-iteration log line
+			fmt.Fprintf(out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+
+			// Verbose mode output
+			if cfg.Verbose {
+				if result.Stdout != "" {
+					lines := strings.Split(result.Stdout, "\n")
+					maxLines := 10
+					if len(lines) > maxLines {
+						fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
+						for _, line := range lines[len(lines)-maxLines:] {
+							fmt.Fprintf(out, "    %s\n", line)
+						}
+					} else {
+						fmt.Fprintf(out, "  stdout:\n")
+						for _, line := range lines {
+							if line != "" {
+								fmt.Fprintf(out, "    %s\n", line)
+							}
+						}
+					}
+				}
+				if result.Stderr != "" {
+					lines := strings.Split(result.Stderr, "\n")
+					maxLines := 10
+					if len(lines) > maxLines {
+						fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
+						for _, line := range lines[len(lines)-maxLines:] {
+							fmt.Fprintf(out, "    %s\n", line)
+						}
+					} else {
+						fmt.Fprintf(out, "  stderr:\n")
+						for _, line := range lines {
+							if line != "" {
+								fmt.Fprintf(out, "    %s\n", line)
+							}
+						}
+					}
+				}
+			}
+
+			// Update counters
+			switch outcome {
+			case OutcomeSuccess:
+				summary.Succeeded++
+				atomic.StoreInt32(&consecutiveFailures, 0)
+				lastFailedBeadID = ""
+			case OutcomeQuestion:
+				summary.Questions++
+				atomic.StoreInt32(&consecutiveFailures, 0)
+				lastFailedBeadID = ""
+			case OutcomeFailure:
+				summary.Failed++
+				atomic.AddInt32(&consecutiveFailures, 1)
+				lastFailedBeadID = bead.ID
+			case OutcomeTimeout:
+				summary.TimedOut++
+				atomic.AddInt32(&consecutiveFailures, 1)
+				lastFailedBeadID = bead.ID
+			}
+
+			// Check consecutive failure limit
+			if int(atomic.LoadInt32(&consecutiveFailures)) >= consecutiveLimit {
+				stopReason = StopConsecutiveFails
+				atomic.StoreInt32(&shouldStop, 1)
+			}
+
+			// Sync beads state (best-effort, don't fail on error)
+			mu.Unlock()
+			if err := syncFn(); err != nil {
+				mu.Lock()
+				if cfg.Verbose {
+					fmt.Fprintf(out, "  bd sync warning: %v\n", err)
+				}
+				mu.Unlock()
+			}
+		}
+	}
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			worker(id)
+		}(i)
+	}
+
+	// Wait for all workers to finish
+	wg.Wait()
+
+	// Calculate total duration
+	summary.Duration = time.Since(loopStart)
+	summary.StopReason = stopReason
+
+	// Count remaining beads
+	remainingBeads := countRemainingBeads(cfg)
+
+	// Print final summary
 	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
 
 	return summary, nil

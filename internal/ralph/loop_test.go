@@ -816,6 +816,33 @@ func TestStopReason_ExitCode(t *testing.T) {
 	}
 }
 
+func TestRun_ConcurrencyOne_BehavesLikeSequential(t *testing.T) {
+	// Test that concurrency=1 behaves identically to sequential execution
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.Concurrency = 1
+	cfg.PickNext = beadQueue(
+		makeBead("b-1", 1),
+		makeBead("b-2", 2),
+	)
+	cfg.AssessFn = outcomeSequence(OutcomeSuccess, OutcomeSuccess)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Iterations != 2 {
+		t.Errorf("iterations = %d, want 2", summary.Iterations)
+	}
+	if summary.Succeeded != 2 {
+		t.Errorf("succeeded = %d, want 2", summary.Succeeded)
+	}
+	if summary.StopReason != StopNormal {
+		t.Errorf("stop reason = %v, want StopNormal", summary.StopReason)
+	}
+}
+
 func TestRun_FinalSummaryIncludesStopReason(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := baseCfg(&buf)

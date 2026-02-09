@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"sync"
 	"time"
 
 	"devdeploy/internal/beads"
@@ -32,6 +33,7 @@ func runBDReal(dir string, args ...string) ([]byte, error) {
 }
 
 // BeadPicker queries bd for ready beads and selects the next one to work on.
+// BeadPicker is safe for concurrent use.
 type BeadPicker struct {
 	WorkDir string
 	Project string
@@ -41,12 +43,19 @@ type BeadPicker struct {
 	// RunBD is the function used to execute bd commands.
 	// Defaults to runBDReal. Override in tests for deterministic output.
 	RunBD RunBDFunc
+
+	// mu protects concurrent access to bd ready queries.
+	mu sync.Mutex
 }
 
 // Next queries `bd ready --json` for available beads, filters by labels,
 // sorts by priority (lowest number = highest priority) then by creation date
 // (oldest first), and returns the top bead. Returns nil if no beads are available.
+// Next is safe for concurrent use.
 func (p *BeadPicker) Next() (*beads.Bead, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	runner := p.RunBD
 	if runner == nil {
 		runner = runBDReal
@@ -90,7 +99,11 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 }
 
 // Count returns the total number of ready beads available.
+// Count is safe for concurrent use.
 func (p *BeadPicker) Count() (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	runner := p.RunBD
 	if runner == nil {
 		runner = runBDReal
