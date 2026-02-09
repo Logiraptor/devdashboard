@@ -781,7 +781,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				a.Mode = ModeDashboard
 				a.Detail = nil
-				return a, nil
+				// Ensure Dashboard exists and initialize it to trigger re-render
+				if a.Dashboard == nil {
+					a.Dashboard = NewDashboardView()
+				}
+				return a, a.Dashboard.Init()
 			}
 		}
 		if a.Mode == ModeProjectDetail && msg.String() == "enter" {
