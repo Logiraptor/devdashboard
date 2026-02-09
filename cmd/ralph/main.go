@@ -6,26 +6,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"time"
 
 	"devdeploy/internal/ralph"
 )
 
-// stringSlice implements flag.Value for repeatable string flags.
-type stringSlice []string
-
-func (s *stringSlice) String() string { return strings.Join(*s, ", ") }
-func (s *stringSlice) Set(v string) error {
-	*s = append(*s, v)
-	return nil
-}
-
 // config holds the parsed CLI configuration for a ralph run.
 type config struct {
 	workdir                 string
 	epic                    string
-	labels                  stringSlice
 	bead                    string // target a specific bead ID
 	maxIterations           int
 	agentTimeout            time.Duration
@@ -34,7 +23,7 @@ type config struct {
 	concurrency             int
 	dryRun                  bool
 	verbose                 bool
-	strictLanding            bool
+	strictLanding           bool
 }
 
 func parseFlags() config {
@@ -42,7 +31,6 @@ func parseFlags() config {
 
 	flag.StringVar(&cfg.workdir, "workdir", "", "path to the worktree to operate in (required)")
 	flag.StringVar(&cfg.epic, "epic", "", "epic ID for epic mode: processes leaf tasks sequentially via 'bd ready --parent <epic>', then runs verification pass")
-	flag.Var(&cfg.labels, "label", "additional label filter (repeatable)")
 	flag.StringVar(&cfg.bead, "bead", "", "target a specific bead ID (skips picker, sets max-iterations to 1)")
 	flag.IntVar(&cfg.maxIterations, "max-iterations", 20, "safety cap on loop iterations")
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
@@ -108,7 +96,6 @@ func run(cfg config) (ralph.StopReason, error) {
 	loopCfg := ralph.LoopConfig{
 		WorkDir:                 cfg.workdir,
 		Epic:                    cfg.epic,
-		Labels:                  cfg.labels,
 		TargetBead:              cfg.bead,
 		MaxIterations:           maxIterations,
 		AgentTimeout:            cfg.agentTimeout,

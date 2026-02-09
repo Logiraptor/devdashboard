@@ -78,7 +78,6 @@ const DefaultWallClockTimeout = 2 * time.Hour
 type LoopConfig struct {
 	WorkDir       string
 	Epic          string
-	Labels        []string
 	TargetBead    string // if set, skip picker and work on this specific bead
 	MaxIterations int
 	DryRun        bool
@@ -261,7 +260,6 @@ func countRemainingBeads(cfg LoopConfig) int {
 		picker := &BeadPicker{
 			WorkDir: cfg.WorkDir,
 			Epic:    cfg.Epic,
-			Labels:  cfg.Labels,
 		}
 		count, err := picker.Count()
 		if err != nil {
@@ -387,7 +385,7 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 	// Fetch children function - can be overridden for testing
 	fetchChildren := func() ([]beads.Bead, error) {
-		return FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic, cfg.Labels)
+		return FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 	}
 
 	// Main loop: query for ready leaves, process first one, repeat until none remain
@@ -545,7 +543,7 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		fmt.Fprintf(out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", summary.Iterations)
 
 		// Fetch all epic children (including closed) for review
-		allChildren, err := FetchAllEpicChildren(nil, cfg.WorkDir, cfg.Epic, cfg.Labels)
+		allChildren, err := FetchAllEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 		if err != nil {
 			fmt.Fprintf(out, "Warning: failed to fetch all epic children for verification: %v\n", err)
 			allChildren = nil
@@ -779,7 +777,6 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			picker := &BeadPicker{
 				WorkDir: cfg.WorkDir,
 				Epic:    cfg.Epic,
-				Labels:  cfg.Labels,
 			}
 			pickNext = picker.Next
 		}
@@ -1182,7 +1179,6 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 		picker := &BeadPicker{
 			WorkDir: cfg.WorkDir,
 			Epic:    cfg.Epic,
-			Labels:  cfg.Labels,
 		}
 		pickNext = picker.Next
 	}

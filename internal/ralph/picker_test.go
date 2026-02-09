@@ -121,38 +121,11 @@ func TestBeadPicker_Next_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestBeadPicker_Next_PassesLabelsToCommand(t *testing.T) {
-	var capturedArgs []string
-	picker := &BeadPicker{
-		WorkDir: "/fake/dir",
-		Labels:  []string{"team:backend", "scope:api"},
-		RunBD: func(dir string, args ...string) ([]byte, error) {
-			capturedArgs = args
-			return []byte("[]"), nil
-		},
-	}
-
-	_, _ = picker.Next()
-
-	// Verify the expected arguments were passed.
-	expected := []string{"ready", "--json", "--label", "team:backend", "--label", "scope:api"}
-	if len(capturedArgs) != len(expected) {
-		t.Fatalf("expected args %v, got %v", expected, capturedArgs)
-	}
-	for i, want := range expected {
-		if capturedArgs[i] != want {
-			t.Errorf("arg[%d]: expected %q, got %q", i, want, capturedArgs[i])
-		}
-	}
-}
-
-
 func TestBeadPicker_Next_PassesEpicToCommand(t *testing.T) {
 	var capturedArgs []string
 	picker := &BeadPicker{
 		WorkDir: "/fake/dir",
 		Epic:    "devdeploy-bkp",
-		Labels:  []string{"team:backend"},
 		RunBD: func(dir string, args ...string) ([]byte, error) {
 			capturedArgs = args
 			return []byte("[]"), nil
@@ -162,7 +135,7 @@ func TestBeadPicker_Next_PassesEpicToCommand(t *testing.T) {
 	_, _ = picker.Next()
 
 	// Verify the expected arguments were passed, including --parent epic.
-	expected := []string{"ready", "--json", "--parent", "devdeploy-bkp", "--label", "team:backend"}
+	expected := []string{"ready", "--json", "--parent", "devdeploy-bkp"}
 	if len(capturedArgs) != len(expected) {
 		t.Fatalf("expected args %v, got %v", expected, capturedArgs)
 	}

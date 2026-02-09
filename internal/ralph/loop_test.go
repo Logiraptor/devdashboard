@@ -874,7 +874,7 @@ func TestFetchEpicChildren(t *testing.T) {
 		{ID: "child-3", Title: "Child 3", Status: "open", Priority: 3, CreatedAt: now.Add(-2 * time.Hour)},
 	}
 
-	children, err := FetchEpicChildren(mockBDReady(entries), "/fake/dir", "epic-1", nil)
+	children, err := FetchEpicChildren(mockBDReady(entries), "/fake/dir", "epic-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -940,7 +940,7 @@ func TestRunEpicOrchestrator_ChildFailure(t *testing.T) {
 // TestRunEpicOrchestrator_NoChildren tests epic orchestrator with no children.
 func TestRunEpicOrchestrator_NoChildren(t *testing.T) {
 	// Test FetchEpicChildren with empty result
-	children, err := FetchEpicChildren(mockBDReady([]bdReadyEntry{}), "/fake/dir", "epic-1", nil)
+	children, err := FetchEpicChildren(mockBDReady([]bdReadyEntry{}), "/fake/dir", "epic-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

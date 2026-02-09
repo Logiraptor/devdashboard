@@ -42,7 +42,6 @@ type BeadScorer func(beads []beads.Bead)
 type BeadPicker struct {
 	WorkDir string
 	Epic    string
-	Labels  []string
 
 	// RunBD is the function used to execute bd commands.
 	// Defaults to runBDReal. Override in tests for deterministic output.
@@ -57,7 +56,7 @@ type BeadPicker struct {
 	mu sync.Mutex
 }
 
-// Next queries `bd ready --json` for available beads, filters by labels,
+// Next queries `bd ready --json` for available beads,
 // sorts by priority (lowest number = highest priority) then by creation date
 // (oldest first), and returns the top bead. Returns nil if no beads are available.
 // Next is safe for concurrent use.
@@ -73,9 +72,6 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 	args := []string{"ready", "--json"}
 	if p.Epic != "" {
 		args = append(args, "--parent", p.Epic)
-	}
-	for _, l := range p.Labels {
-		args = append(args, "--label", l)
 	}
 
 	out, err := runner(p.WorkDir, args...)
@@ -119,9 +115,6 @@ func (p *BeadPicker) Count() (int, error) {
 	args := []string{"ready", "--json"}
 	if p.Epic != "" {
 		args = append(args, "--parent", p.Epic)
-	}
-	for _, l := range p.Labels {
-		args = append(args, "--label", l)
 	}
 
 	out, err := runner(p.WorkDir, args...)
@@ -212,15 +205,12 @@ func ComplexityScorer(beads []beads.Bead) {
 
 // FetchEpicChildren fetches all ready children of an epic using bd ready --parent.
 // Returns the children sorted by priority (ascending) then creation date (oldest first).
-func FetchEpicChildren(runBD RunBDFunc, workDir string, epicID string, labels []string) ([]beads.Bead, error) {
+func FetchEpicChildren(runBD RunBDFunc, workDir string, epicID string) ([]beads.Bead, error) {
 	if runBD == nil {
 		runBD = runBDReal
 	}
 
 	args := []string{"ready", "--json", "--parent", epicID}
-	for _, l := range labels {
-		args = append(args, "--label", l)
-	}
 
 	out, err := runBD(workDir, args...)
 	if err != nil {
@@ -251,15 +241,12 @@ type bdListEntry struct {
 
 // FetchAllEpicChildren fetches all children of an epic (including closed) using bd list --parent.
 // Returns the children sorted by priority (ascending) then creation date (oldest first).
-func FetchAllEpicChildren(runBD RunBDFunc, workDir string, epicID string, labels []string) ([]beads.Bead, error) {
+func FetchAllEpicChildren(runBD RunBDFunc, workDir string, epicID string) ([]beads.Bead, error) {
 	if runBD == nil {
 		runBD = runBDReal
 	}
 
 	args := []string{"list", "--json", "--parent", epicID, "--limit", "0"}
-	for _, l := range labels {
-		args = append(args, "--label", l)
-	}
 
 	out, err := runBD(workDir, args...)
 	if err != nil {
