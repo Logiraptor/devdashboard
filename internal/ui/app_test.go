@@ -325,6 +325,7 @@ func TestOpenShellMsg_PRNoWorktree(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"}},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -345,6 +346,7 @@ func TestOpenShellMsg_PRNoBranch(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test"}},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -433,6 +435,7 @@ func TestSelectedResourceLatestPaneID(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -495,6 +498,7 @@ func TestLaunchAgentMsg_PRNoWorktree(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"}},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -642,6 +646,7 @@ func TestShowRemoveResourceMsg_ShowsConfirmModal(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
