@@ -24,7 +24,6 @@ func (s *stringSlice) Set(v string) error {
 // config holds the parsed CLI configuration for a ralph run.
 type config struct {
 	workdir                 string
-	project                 string
 	epic                    string
 	labels                  stringSlice
 	bead                    string // target a specific bead ID
@@ -42,7 +41,6 @@ func parseFlags() config {
 	var cfg config
 
 	flag.StringVar(&cfg.workdir, "workdir", "", "path to the worktree to operate in (required)")
-	flag.StringVar(&cfg.project, "project", "", "project label filter for bd queries")
 	flag.StringVar(&cfg.epic, "epic", "", "epic filter for bd queries (filters to children of the epic)")
 	flag.Var(&cfg.labels, "label", "additional label filter (repeatable)")
 	flag.StringVar(&cfg.bead, "bead", "", "target a specific bead ID (skips picker, sets max-iterations to 1)")
@@ -104,7 +102,6 @@ func run(cfg config) (ralph.StopReason, error) {
 
 	loopCfg := ralph.LoopConfig{
 		WorkDir:                 cfg.workdir,
-		Project:                 cfg.project,
 		Epic:                    cfg.epic,
 		Labels:                  cfg.labels,
 		TargetBead:              cfg.bead,

@@ -77,7 +77,6 @@ const DefaultWallClockTimeout = 2 * time.Hour
 // LoopConfig configures the ralph autonomous work loop.
 type LoopConfig struct {
 	WorkDir       string
-	Project       string
 	Epic          string
 	Labels        []string
 	TargetBead    string // if set, skip picker and work on this specific bead
@@ -261,7 +260,6 @@ func countRemainingBeads(cfg LoopConfig) int {
 	if cfg.PickNext == nil {
 		picker := &BeadPicker{
 			WorkDir: cfg.WorkDir,
-			Project: cfg.Project,
 			Epic:    cfg.Epic,
 			Labels:  cfg.Labels,
 		}
@@ -376,7 +374,6 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		} else {
 			picker := &BeadPicker{
 				WorkDir: cfg.WorkDir,
-				Project: cfg.Project,
 				Epic:    cfg.Epic,
 				Labels:  cfg.Labels,
 			}
@@ -780,7 +777,6 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 	if pickNext == nil {
 		picker := &BeadPicker{
 			WorkDir: cfg.WorkDir,
-			Project: cfg.Project,
 			Epic:    cfg.Epic,
 			Labels:  cfg.Labels,
 		}

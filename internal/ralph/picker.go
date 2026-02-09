@@ -41,7 +41,6 @@ type BeadScorer func(beads []beads.Bead)
 // BeadPicker is safe for concurrent use.
 type BeadPicker struct {
 	WorkDir string
-	Project string
 	Epic    string
 	Labels  []string
 
@@ -72,9 +71,6 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 	}
 
 	args := []string{"ready", "--json"}
-	if p.Project != "" {
-		args = append(args, "--label", fmt.Sprintf("project:%s", p.Project))
-	}
 	if p.Epic != "" {
 		args = append(args, "--parent", p.Epic)
 	}
@@ -121,9 +117,6 @@ func (p *BeadPicker) Count() (int, error) {
 	}
 
 	args := []string{"ready", "--json"}
-	if p.Project != "" {
-		args = append(args, "--label", fmt.Sprintf("project:%s", p.Project))
-	}
 	if p.Epic != "" {
 		args = append(args, "--parent", p.Epic)
 	}
