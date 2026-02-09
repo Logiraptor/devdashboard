@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 
 	"devdeploy/internal/project"
@@ -90,16 +91,12 @@ func (d detailItem) renderResourceTitle() string {
 
 // renderResourceTitleWithLoading renders the title for a resource item with loading indicators.
 func (d detailItem) renderResourceTitleWithLoading() string {
-	status := resourceStatus(*d.resource)
+	status := resourceStatusWithLoading(*d.resource, d.view)
 	
 	switch d.resource.Kind {
 	case project.ResourceRepo:
 		prefix := "◆ "
 		text := d.resource.RepoName + "/"
-		// Show loading indicator if PRs are being loaded
-		if d.view != nil && d.view.loadingPRs {
-			text += "  " + Styles.Status.Render("… loading PRs")
-		}
 		if status != "" {
 			text += "  " + Styles.Status.Render(status)
 		}
@@ -114,10 +111,6 @@ func (d detailItem) renderResourceTitleWithLoading() string {
 			state = "open"
 		}
 		text := fmt.Sprintf("#%d %s (%s)", d.resource.PR.Number, d.resource.PR.Title, state)
-		// Show loading indicator if beads are being loaded
-		if d.view != nil && d.view.loadingBeads && d.resource.WorktreePath != "" {
-			text += "  " + Styles.Status.Render("… loading beads")
-		}
 		if status != "" {
 			text += "  " + Styles.Status.Render(status)
 		}
@@ -167,6 +160,7 @@ type ProjectDetailView struct {
 	// Progressive loading state
 	loadingPRs   bool // true when PRs are being loaded (phase 2)
 	loadingBeads bool // true when beads are being loaded (phase 3)
+	spinner      spinner.Model // spinner for loading indicators
 }
 
 // Ensure ProjectDetailView implements View.
@@ -182,6 +176,10 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 	
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = Styles.Status
+	
 	return &ProjectDetailView{
 		ProjectName:  name,
 		Resources:    nil,
@@ -190,6 +188,7 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 		itemToIndex:  make(map[int]int),
 		loadingPRs:    false,
 		loadingBeads: false,
+		spinner:      s,
 	}
 }
 
@@ -206,6 +205,19 @@ func (p *ProjectDetailView) SetSize(width, height int) {
 
 // Init implements View.
 func (p *ProjectDetailView) Init() tea.Cmd {
+	// Start spinner if loading
+	if p.loadingPRs || p.loadingBeads {
+		return p.spinner.Tick
+	}
+	return nil
+}
+
+// spinnerTickCmd returns a spinner tick command if loading, otherwise nil.
+// This is used to start/continue the spinner when loading states change.
+func (p *ProjectDetailView) spinnerTickCmd() tea.Cmd {
+	if p.loadingPRs || p.loadingBeads {
+		return p.spinner.Tick
+	}
 	return nil
 }
 
@@ -252,6 +264,8 @@ func (p *ProjectDetailView) buildItems() {
 
 // Update implements View.
 func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
+	var cmds []tea.Cmd
+	
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		p.SetSize(msg.Width, msg.Height)
@@ -261,12 +275,21 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 		if msg.String() == "esc" {
 			return p, nil
 		}
+	case spinner.TickMsg:
+		// Continue spinner when loading
+		if p.loadingPRs || p.loadingBeads {
+			var cmd tea.Cmd
+			p.spinner, cmd = p.spinner.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		return p, tea.Batch(cmds...)
 	}
 	
 	// Pass all messages to list.Model - it handles j/k/g/G navigation and filtering natively
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
-	return p, cmd
+	cmds = append(cmds, cmd)
+	return p, tea.Batch(cmds...)
 }
 
 // viewHeight returns the number of content lines visible in the list.
@@ -371,7 +394,13 @@ func (p *ProjectDetailView) View() string {
 	
 	var b strings.Builder
 	b.WriteString("← " + Styles.Title.Render(p.ProjectName) + "\n\n")
-	b.WriteString(Styles.Section.Render("Resources") + "\n")
+	
+	// Show spinner next to Resources section when PRs are loading
+	resourcesHeader := Styles.Section.Render("Resources")
+	if p.loadingPRs {
+		resourcesHeader += " " + p.spinner.View()
+	}
+	b.WriteString(resourcesHeader + "\n")
 	
 	if len(p.Resources) == 0 {
 		b.WriteString("  " + Styles.Empty.Render("(no repos added)") + "\n")
@@ -383,6 +412,7 @@ func (p *ProjectDetailView) View() string {
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").
+// If the view is loading beads, shows "…" for bead counts.
 func resourceStatus(r project.Resource) string {
 	if len(r.Panes) == 0 {
 		if r.WorktreePath != "" {
@@ -414,4 +444,24 @@ func resourceStatus(r project.Resource) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// resourceStatusWithLoading returns a status string with loading indicators for beads.
+func resourceStatusWithLoading(r project.Resource, view *ProjectDetailView) string {
+	status := resourceStatus(r)
+	
+	// Show "…" for bead counts when beads are loading
+	if view != nil && view.loadingBeads && r.WorktreePath != "" {
+		beadCount := len(r.Beads)
+		if beadCount == 0 {
+			// Show loading indicator when beads haven't loaded yet
+			if status != "" {
+				status += "  …"
+			} else {
+				status = "…"
+			}
+		}
+	}
+	
+	return status
 }

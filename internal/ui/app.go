@@ -253,10 +253,14 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.loadingBeads = false
 			a.Detail.buildItems() // Rebuild list items
 			a.refreshDetailPanes()
-			// Trigger Phase 2: Load PRs asynchronously
+			// Trigger Phase 2: Load PRs asynchronously and start spinner
 			if a.ProjectManager != nil {
-				return a, loadProjectPRsCmd(a.ProjectManager, msg.ProjectName)
+				return a, tea.Batch(
+					a.Detail.spinnerTickCmd(),
+					loadProjectPRsCmd(a.ProjectManager, msg.ProjectName),
+				)
 			}
+			return a, a.Detail.spinnerTickCmd()
 		}
 		return a, nil
 	case ProjectPRsLoadedMsg:
@@ -299,8 +303,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.loadingBeads = true
 			a.Detail.buildItems() // Rebuild list items to show PRs
 			a.refreshDetailPanes()
-			// Trigger Phase 3: Load beads asynchronously
-			return a, loadResourceBeadsCmd(msg.ProjectName, resources)
+			// Trigger Phase 3: Load beads asynchronously and start spinner
+			return a, tea.Batch(
+				a.Detail.spinnerTickCmd(),
+				loadResourceBeadsCmd(msg.ProjectName, resources),
+			)
 		}
 		return a, nil
 	case ProjectDetailPRsLoadedMsg:
@@ -311,8 +318,11 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Detail.loadingBeads = true
 			a.Detail.buildItems() // Rebuild list items to show PRs
 			a.refreshDetailPanes()
-			// Trigger Phase 3: Load beads asynchronously
-			return a, loadResourceBeadsCmd(msg.ProjectName, msg.Resources)
+			// Trigger Phase 3: Load beads asynchronously and start spinner
+			return a, tea.Batch(
+				a.Detail.spinnerTickCmd(),
+				loadResourceBeadsCmd(msg.ProjectName, msg.Resources),
+			)
 		}
 		return a, nil
 	case ProjectDetailBeadsLoadedMsg:
@@ -826,11 +836,13 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 		v.SetSize(a.termWidth, a.termHeight)
 	}
 	// Phase 1: Load repos instantly (filesystem-only, no GitHub API calls)
+	var cmds []tea.Cmd
 	if a.ProjectManager != nil {
 		v.Resources = a.ProjectManager.ListProjectReposOnly(name)
 		v.loadingPRs = true // PRs will be loaded asynchronously
 		v.loadingBeads = false
 		v.buildItems() // Build list items immediately so repos are visible
+		cmds = append(cmds, v.spinnerTickCmd()) // Start spinner for PR loading
 	}
 	// Prune dead panes then populate pane info from session tracker
 	if a.Sessions != nil {
@@ -839,7 +851,11 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	}
 	// Return command to trigger async enrichment (PRs, then beads)
 	if a.ProjectManager != nil {
-		return v, loadProjectPRsCmd(a.ProjectManager, name)
+		cmds = append(cmds, loadProjectPRsCmd(a.ProjectManager, name))
+		return v, tea.Batch(cmds...)
+	}
+	if len(cmds) > 0 {
+		return v, tea.Batch(cmds...)
 	}
 	return v, nil
 }
