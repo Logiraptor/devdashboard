@@ -1,6 +1,7 @@
 # Binaries
 bin/
 /devdeploy
+/ralph
 *.exe
 *.exe~
 *.dll
