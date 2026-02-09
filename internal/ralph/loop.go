@@ -524,6 +524,12 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 		// Print structured per-iteration log line
 		fmt.Fprintf(out, "%s\n", formatIterationLog(iteration, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
+		// Print bead summary if formatter was used
+		if currentFormatter != nil && !cfg.Verbose {
+			if summary := currentFormatter.BeadSummary(); summary != "" {
+				fmt.Fprintf(out, "%s\n", summary)
+			}
+		}
 
 		// Update counters
 		summary.Iterations++
@@ -1063,6 +1069,12 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 		// Print structured per-iteration log line.
 		fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+		// Print bead summary if formatter was used
+		if currentFormatter != nil && !cfg.Verbose {
+			if summary := currentFormatter.BeadSummary(); summary != "" {
+				fmt.Fprintf(out, "%s\n", summary)
+			}
+		}
 
 		// Verbose mode: print agent stdout/stderr excerpts.
 		if cfg.Verbose {
@@ -1407,6 +1419,7 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 
 			// Print structured per-iteration log line
 			fmt.Fprintf(out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+			// Note: Bead summary not printed in concurrent mode (no formatter tracking per worker)
 
 			// Verbose mode output
 			if cfg.Verbose {

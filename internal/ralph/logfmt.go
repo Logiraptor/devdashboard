@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,19 @@ type LogFormatter struct {
 	// Activity stream
 	activities    []string // Recent activities
 	maxActivities int      // Max to display (default 4)
+	// Per-bead tracking
+	filesChanged map[string]*FileChange
+	testsPassed  int
+	testsFailed  int
+	failedTests  []string
+	lastError    string
+}
+
+// FileChange tracks changes to a file.
+type FileChange struct {
+	Path         string
+	LinesAdded   int
+	LinesRemoved int
 }
 
 // NewLogFormatter creates a new log formatter that writes formatted output to w.
@@ -47,6 +61,7 @@ func NewLogFormatter(w io.Writer, verbose bool) *LogFormatter {
 		verbose:       verbose,
 		maxActivities: 4,
 		activities:    make([]string, 0, 4),
+		filesChanged:  make(map[string]*FileChange),
 	}
 }
 
@@ -173,6 +188,15 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 		if path, ok := args["file_path"].(string); ok {
 			contents, _ := args["contents"].(string)
 			lines := strings.Count(contents, "\n") + 1
+			// Track file change
+			if f.beadID != "" {
+				change := f.filesChanged[path]
+				if change == nil {
+					change = &FileChange{Path: path}
+					f.filesChanged[path] = change
+				}
+				change.LinesAdded += lines
+			}
 			if f.beadID != "" {
 				f.addActivity(fmt.Sprintf("write %s (%d lines)", filepath.Base(path), lines))
 				return "" // Don't print inline, activity stream handles it
@@ -182,6 +206,26 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 	case "search_replace":
 		f.editsCount++
 		if path, ok := args["file_path"].(string); ok {
+			// Track file change
+			if f.beadID != "" {
+				change := f.filesChanged[path]
+				if change == nil {
+					change = &FileChange{Path: path}
+					f.filesChanged[path] = change
+				}
+				oldStr, _ := args["old_string"].(string)
+				newStr, _ := args["new_string"].(string)
+				oldLines := strings.Count(oldStr, "\n")
+				if oldStr != "" && !strings.HasSuffix(oldStr, "\n") {
+					oldLines++
+				}
+				newLines := strings.Count(newStr, "\n")
+				if newStr != "" && !strings.HasSuffix(newStr, "\n") {
+					newLines++
+				}
+				change.LinesRemoved += oldLines
+				change.LinesAdded += newLines
+			}
 			if f.beadID != "" {
 				f.addActivity(fmt.Sprintf("edit %s", filepath.Base(path)))
 				return "" // Don't print inline, activity stream handles it
@@ -290,6 +334,37 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 		f.editsCount++
 		if args, ok := edit["args"].(map[string]interface{}); ok {
 			if path, ok := args["path"].(string); ok {
+				// Track file change
+				if f.beadID != "" {
+					change := f.filesChanged[path]
+					if change == nil {
+						change = &FileChange{Path: path}
+						f.filesChanged[path] = change
+					}
+					// Try to estimate lines from streamContent if available
+					if content, ok := args["streamContent"].(string); ok && content != "" {
+						change.LinesAdded += strings.Count(content, "\n")
+						if !strings.HasSuffix(content, "\n") {
+							change.LinesAdded++
+						}
+					} else if oldStr, ok := args["old_string"].(string); ok {
+						// Fall back to old_string/new_string if available
+						newStr, _ := args["new_string"].(string)
+						oldLines := strings.Count(oldStr, "\n")
+						if oldStr != "" && !strings.HasSuffix(oldStr, "\n") {
+							oldLines++
+						}
+						newLines := strings.Count(newStr, "\n")
+						if newStr != "" && !strings.HasSuffix(newStr, "\n") {
+							newLines++
+						}
+						change.LinesRemoved += oldLines
+						change.LinesAdded += newLines
+					} else {
+						// No content info, just mark as edited (1 line estimate)
+						change.LinesAdded++
+					}
+				}
 				if f.beadID != "" {
 					// Add to activity stream when bead is set
 					f.addActivity(fmt.Sprintf("edit %s", filepath.Base(path)))
@@ -379,19 +454,28 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 // formatToolResult formats a tool_result event.
 // Shows errors and tracks shell command output.
 func (f *LogFormatter) formatToolResult(event map[string]interface{}) string {
+	content, _ := event["content"].(string)
+	isError, _ := event["is_error"].(bool)
+
 	// Track if shell command had output
 	if f.lastShellCmd != "" {
-		content, _ := event["content"].(string)
-		if content != "" && !event["is_error"].(bool) {
+		if content != "" && !isError {
 			f.shellHadOutput = true
+			// Parse test output from shell results
+			if f.beadID != "" {
+				f.parseTestOutput(content)
+			}
 		}
 	}
 
 	// Show errors - track in activity stream when bead is set
-	if isError, _ := event["is_error"].(bool); isError {
+	if isError {
 		f.errorsCount++
-		content, _ := event["content"].(string)
 		if content != "" {
+			// Store last error for summary
+			if f.beadID != "" {
+				f.lastError = content
+			}
 			if f.beadID != "" {
 				// Add to activity stream when bead is set
 				displayError := content
@@ -410,6 +494,27 @@ func (f *LogFormatter) formatToolResult(event map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+// parseTestOutput parses Go test output to extract test results.
+func (f *LogFormatter) parseTestOutput(output string) {
+	// Look for Go test output patterns
+	// "--- PASS: TestFoo (0.01s)"
+	// "--- FAIL: TestBar (0.02s)"
+	passRegex := regexp.MustCompile(`--- PASS:\s+(\w+)`)
+	failRegex := regexp.MustCompile(`--- FAIL:\s+(\w+)`)
+
+	for _, match := range passRegex.FindAllStringSubmatch(output, -1) {
+		if len(match) > 1 {
+			f.testsPassed++
+		}
+	}
+	for _, match := range failRegex.FindAllStringSubmatch(output, -1) {
+		if len(match) > 1 {
+			f.testsFailed++
+			f.failedTests = append(f.failedTests, match[1])
+		}
+	}
 }
 
 // formatEdit formats an edit event (different from tool_call edit).
@@ -453,6 +558,64 @@ func (f *LogFormatter) Summary() string {
 	return fmt.Sprintf("[ralph] Completed: %s", strings.Join(parts, ", "))
 }
 
+// BeadSummary returns a formatted summary of file changes and test results for the current bead.
+func (f *LogFormatter) BeadSummary() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var lines []string
+
+	// Files changed
+	if len(f.filesChanged) > 0 {
+		var fileParts []string
+		for _, fc := range f.filesChanged {
+			name := filepath.Base(fc.Path)
+			if fc.LinesAdded > 0 && fc.LinesRemoved > 0 {
+				fileParts = append(fileParts, fmt.Sprintf("%s (+%d, -%d)", name, fc.LinesAdded, fc.LinesRemoved))
+			} else if fc.LinesAdded > 0 {
+				fileParts = append(fileParts, fmt.Sprintf("%s (+%d)", name, fc.LinesAdded))
+			} else if fc.LinesRemoved > 0 {
+				fileParts = append(fileParts, fmt.Sprintf("%s (-%d)", name, fc.LinesRemoved))
+			} else {
+				fileParts = append(fileParts, name)
+			}
+		}
+		// Limit to 5 files
+		if len(fileParts) > 5 {
+			fileParts = append(fileParts[:4], fmt.Sprintf("... +%d more", len(fileParts)-4))
+		}
+		lines = append(lines, fmt.Sprintf("      Files: %s", strings.Join(fileParts, ", ")))
+	}
+
+	// Test results
+	if f.testsPassed > 0 || f.testsFailed > 0 {
+		if f.testsFailed > 0 {
+			failed := strings.Join(f.failedTests, ", ")
+			if len(failed) > 40 {
+				failed = failed[:37] + "..."
+			}
+			lines = append(lines, fmt.Sprintf("      Tests: %d failed (%s)", f.testsFailed, failed))
+		} else {
+			lines = append(lines, fmt.Sprintf("      Tests: %d passed", f.testsPassed))
+		}
+	}
+
+	// Last error
+	if f.lastError != "" {
+		err := f.lastError
+		// Extract first line or truncate
+		if idx := strings.Index(err, "\n"); idx > 0 {
+			err = err[:idx]
+		}
+		if len(err) > 60 {
+			err = err[:57] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("      Error: %s", err))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // SetCurrentBead sets the current bead being worked on for progress display.
 func (f *LogFormatter) SetCurrentBead(id, title string) {
 	f.mu.Lock()
@@ -463,6 +626,12 @@ func (f *LogFormatter) SetCurrentBead(id, title string) {
 	f.lastLine = "" // Reset last line to force update
 	f.lastNumLines = 0 // Reset line count
 	f.activities = f.activities[:0] // Clear activities for new bead
+	// Reset per-bead tracking
+	f.filesChanged = make(map[string]*FileChange)
+	f.testsPassed = 0
+	f.testsFailed = 0
+	f.failedTests = nil
+	f.lastError = ""
 }
 
 // renderProgressLine renders the progress line showing current bead and activity counts.
@@ -577,4 +746,9 @@ func (f *LogFormatter) Reset() {
 	f.lastLine = ""
 	f.lastNumLines = 0
 	f.activities = f.activities[:0]
+	f.filesChanged = make(map[string]*FileChange)
+	f.testsPassed = 0
+	f.testsFailed = 0
+	f.failedTests = nil
+	f.lastError = ""
 }
