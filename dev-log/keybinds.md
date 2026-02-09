@@ -41,6 +41,7 @@
 | `SPC p a` | Add repo to project | Project detail |
 | `SPC p r` | Remove repo from project | Project detail |
 | `SPC p x` | Remove selected resource (kill panes, remove worktree) | Project detail |
+| `SPC p l` | Switch project (opens project switcher modal) | Any |
 | `d` | Remove selected resource (shortcut for SPC p x) | Project detail |
 
 ## Search Mode (`/` in Project Detail)
@@ -79,6 +80,22 @@ Pressing `/` activates vim-style search mode for filtering and jumping to lines 
 | `SPC r` | Refresh beads for all resources | Project detail only |
 
 In project detail view, `SPC r` reloads beads for all resources without reloading repos or PRs. Useful when beads are updated externally (e.g., via CLI `bd close`).
+
+## SPC 1-9 — Focus Panes
+
+| Sequence | Action | Context |
+|----------|--------|---------|
+| `SPC 1` | Focus pane 1 | Project detail only |
+| `SPC 2` | Focus pane 2 | Project detail only |
+| `SPC 3` | Focus pane 3 | Project detail only |
+| `SPC 4` | Focus pane 4 | Project detail only |
+| `SPC 5` | Focus pane 5 | Project detail only |
+| `SPC 6` | Focus pane 6 | Project detail only |
+| `SPC 7` | Focus pane 7 | Project detail only |
+| `SPC 8` | Focus pane 8 | Project detail only |
+| `SPC 9` | Focus pane 9 | Project detail only |
+
+Focuses the corresponding tmux pane by index (1-9). Panes are ordered by creation time. If a pane index doesn't exist, shows an error status message indicating the available range.
 
 ## Help View
 
