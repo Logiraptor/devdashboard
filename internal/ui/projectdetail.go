@@ -393,7 +393,14 @@ func (p *ProjectDetailView) View() string {
 		p.list.SetWidth(80)
 	}
 	if p.list.Height() == 0 {
-		p.list.SetHeight(20)
+		// If termHeight is 0 (no scrolling), set height to show all items
+		// Otherwise, set a reasonable default for tests
+		if p.termHeight == 0 {
+			// Set height to a very large number to show all items without pagination
+			p.list.SetHeight(10000)
+		} else {
+			p.list.SetHeight(20)
+		}
 	}
 	
 	// Style filter input based on filter state to hide it when not actively filtering
