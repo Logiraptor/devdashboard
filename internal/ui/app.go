@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -48,6 +50,27 @@ type ProjectsLoadedMsg struct {
 // Updates the projects with PR counts and bead counts that require network/subprocess calls.
 type ProjectsEnrichedMsg struct {
 	Projects []ProjectSummary
+}
+
+// ProjectDetailResourcesLoadedMsg is sent when project detail repos are loaded (phase 1: instant data).
+// Contains repo resources only (filesystem-only, <10ms).
+type ProjectDetailResourcesLoadedMsg struct {
+	ProjectName string
+	Resources   []project.Resource // repos only, no PRs or beads yet
+}
+
+// ProjectDetailPRsLoadedMsg is sent when PRs are loaded for a project detail view (phase 2: async data).
+// Updates resources with PR information fetched in parallel across repos.
+type ProjectDetailPRsLoadedMsg struct {
+	ProjectName string
+	Resources   []project.Resource // repos + PRs, no beads yet
+}
+
+// ProjectDetailBeadsLoadedMsg is sent when beads are loaded for a project detail view (phase 3: async data).
+// Updates resources with bead information fetched in parallel across resources.
+type ProjectDetailBeadsLoadedMsg struct {
+	ProjectName string
+	Resources   []project.Resource // repos + PRs + beads (complete)
 }
 
 // CreateProjectMsg is sent when user creates a project (from modal).
@@ -208,6 +231,39 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.Dashboard.SetLoading(false)
 		}
 		return a, nil
+	case ProjectDetailResourcesLoadedMsg:
+		// Phase 1: Repos loaded instantly, update view and trigger PR loading
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			a.Detail.Resources = msg.Resources
+			a.Detail.loadingPRs = true
+			a.Detail.loadingBeads = false
+			a.refreshDetailPanes()
+			// Trigger Phase 2: Load PRs asynchronously
+			if a.ProjectManager != nil {
+				return a, loadProjectDetailPRsCmd(a.ProjectManager, msg.ProjectName, msg.Resources)
+			}
+		}
+		return a, nil
+	case ProjectDetailPRsLoadedMsg:
+		// Phase 2: PRs loaded, update view and trigger bead loading
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			a.Detail.Resources = msg.Resources
+			a.Detail.loadingPRs = false
+			a.Detail.loadingBeads = true
+			a.refreshDetailPanes()
+			// Trigger Phase 3: Load beads asynchronously
+			return a, loadProjectDetailBeadsCmd(msg.ProjectName, msg.Resources)
+		}
+		return a, nil
+	case ProjectDetailBeadsLoadedMsg:
+		// Phase 3: Beads loaded, update view (complete)
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			a.Detail.Resources = msg.Resources
+			a.Detail.loadingPRs = false
+			a.Detail.loadingBeads = false
+			a.refreshDetailPanes()
+		}
+		return a, nil
 	case CreateProjectMsg:
 		if a.ProjectManager != nil && msg.Name != "" {
 			if err := a.ProjectManager.CreateProject(msg.Name); err != nil {
@@ -256,7 +312,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.StatusIsError = false
 			}
 			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-				a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+				// Trigger progressive reload
+				return a, tea.Batch(
+					loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName),
+				)
 			}
 			a.Overlays.Pop()
 			return a, nil
@@ -272,7 +331,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.StatusIsError = false
 			}
 			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-				a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
+				// Trigger progressive reload
+				return a, tea.Batch(
+					loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName),
+				)
 			}
 			a.Overlays.Pop()
 			return a, nil
@@ -369,11 +431,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = false
 		}
 		a.Overlays.Pop()
-		// Refresh the resource list and pane info.
+		// Refresh the resource list and pane info via progressive reload.
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			a.Detail.Resources = a.ProjectManager.ListProjectResources(msg.ProjectName)
-			// List handles selection automatically, no need to clamp
-			a.refreshDetailPanes()
+			// Trigger progressive reload
+			return a, loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName)
 		}
 		return a, nil
 	case DismissModalMsg:
@@ -564,8 +625,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case SelectProjectMsg:
 		a.Mode = ModeProjectDetail
-		a.Detail = a.newProjectDetailView(msg.Name)
-		return a, a.Detail.Init()
+		detail, cmd := a.newProjectDetailView(msg.Name)
+		a.Detail = detail
+		return a, tea.Batch(a.Detail.Init(), cmd)
 	case tea.KeyMsg:
 		// When overlay is showing, it receives ALL keys first (no KeyHandler, no app nav).
 		// This lets modals capture SPC, Esc, Enter, j/k etc. for text input and list navigation.
@@ -672,22 +734,25 @@ func (a *appModelAdapter) setCurrentView(v View) {
 }
 
 // newProjectDetailView creates a detail view with resources from disk/gh.
-func (a *AppModel) newProjectDetailView(name string) *ProjectDetailView {
+// Returns the view and a command to start progressive loading.
+func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cmd) {
 	v := NewProjectDetailView(name)
 	if a.termWidth > 0 || a.termHeight > 0 {
 		v.SetSize(a.termWidth, a.termHeight)
 	}
-	if a.ProjectManager != nil {
-		v.Resources = a.ProjectManager.ListProjectResources(name)
-	}
-	// Populate beads from bd for each resource with a worktree.
-	a.populateResourceBeads(v)
+	// Phase 1: Load repos instantly (filesystem-only)
+	// Resources will be empty initially, populated via messages
+	v.Resources = nil
 	// Prune dead panes then populate pane info from session tracker
 	if a.Sessions != nil {
 		a.Sessions.Prune()
 		a.populateResourcePanes(v)
 	}
-	return v
+	// Return command to start progressive loading
+	if a.ProjectManager != nil {
+		return v, loadProjectDetailResourcesCmd(a.ProjectManager, name)
+	}
+	return v, nil
 }
 
 // populateResourceBeads queries bd for beads associated with each resource
@@ -871,6 +936,152 @@ func enrichesProjectsCmd(m *project.Manager, projectInfos []project.ProjectInfo)
 		wg.Wait()
 		
 		return ProjectsEnrichedMsg{Projects: projects}
+	}
+}
+
+// loadProjectDetailResourcesCmd returns a command that loads repos instantly (phase 1: instant data).
+// This is filesystem-only and returns immediately with repo resources only.
+func loadProjectDetailResourcesCmd(m *project.Manager, projectName string) tea.Cmd {
+	return func() tea.Msg {
+		if m == nil {
+			return ProjectDetailResourcesLoadedMsg{ProjectName: projectName, Resources: nil}
+		}
+		repos, _ := m.ListProjectRepos(projectName)
+		projDir := m.ProjectDir(projectName)
+		
+		// Phase 1: Instant data (filesystem-only, no network calls)
+		resources := make([]project.Resource, 0, len(repos))
+		for _, repoName := range repos {
+			worktreePath := filepath.Join(projDir, repoName)
+			resources = append(resources, project.Resource{
+				Kind:         project.ResourceRepo,
+				RepoName:     repoName,
+				WorktreePath: worktreePath,
+			})
+		}
+		return ProjectDetailResourcesLoadedMsg{ProjectName: projectName, Resources: resources}
+	}
+}
+
+// loadProjectDetailPRsCmd returns a command that loads PRs asynchronously (phase 2: async data).
+// PRs are fetched in parallel across repos for optimal performance.
+func loadProjectDetailPRsCmd(m *project.Manager, projectName string, repoResources []project.Resource) tea.Cmd {
+	return func() tea.Msg {
+		if m == nil {
+			return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: repoResources}
+		}
+		repos, _ := m.ListProjectRepos(projectName)
+		projDir := m.ProjectDir(projectName)
+		
+		// Fetch PRs concurrently across repos (open + merged).
+		type repoResult struct {
+			repoName string
+			prs      []project.PRInfo
+			err      error
+		}
+		resultChan := make(chan repoResult, len(repos))
+		var wg sync.WaitGroup
+		
+		for _, repoName := range repos {
+			wg.Add(1)
+			go func(name string) {
+				defer wg.Done()
+				worktreePath := filepath.Join(projDir, name)
+				var allPRs []project.PRInfo
+				open, _ := m.ListFilteredPRsInRepo(worktreePath, "open", 0)
+				allPRs = append(allPRs, open...)
+				merged, _ := m.ListFilteredPRsInRepo(worktreePath, "merged", 5) // mergedPRsLimit
+				allPRs = append(allPRs, merged...)
+				resultChan <- repoResult{repoName: name, prs: allPRs, err: nil}
+			}(repoName)
+		}
+		
+		// Close channel when all goroutines complete.
+		go func() {
+			wg.Wait()
+			close(resultChan)
+		}()
+		
+		// Collect results and build resource list.
+		repoPRs := make(map[string][]project.PRInfo)
+		for result := range resultChan {
+			if result.err != nil {
+				continue
+			}
+			repoPRs[result.repoName] = result.prs
+		}
+		
+		// Build resources: repos + PRs in repo order.
+		resources := make([]project.Resource, 0, len(repoResources))
+		for _, repoRes := range repoResources {
+			resources = append(resources, repoRes)
+			prs := repoPRs[repoRes.RepoName]
+			for i := range prs {
+				pr := &prs[i]
+				prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoRes.RepoName, pr.Number))
+				var wtPath string
+				if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+					wtPath = prWT
+				}
+				resources = append(resources, project.Resource{
+					Kind:         project.ResourcePR,
+					RepoName:     repoRes.RepoName,
+					PR:           pr,
+					WorktreePath: wtPath,
+				})
+			}
+		}
+		
+		return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: resources}
+	}
+}
+
+// loadProjectDetailBeadsCmd returns a command that loads beads asynchronously (phase 3: async data).
+// Beads are fetched in parallel across resources for optimal performance.
+func loadProjectDetailBeadsCmd(projectName string, resourcesWithPRs []project.Resource) tea.Cmd {
+	return func() tea.Msg {
+		resources := make([]project.Resource, len(resourcesWithPRs))
+		copy(resources, resourcesWithPRs)
+		
+		// Fetch beads concurrently across resources.
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		
+		for i := range resources {
+			r := &resources[i]
+			if r.WorktreePath == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(resIdx int) {
+				defer wg.Done()
+				var bdBeads []beads.Bead
+				switch resources[resIdx].Kind {
+				case project.ResourceRepo:
+					bdBeads = beads.ListForRepo(resources[resIdx].WorktreePath, projectName)
+				case project.ResourcePR:
+					if resources[resIdx].PR != nil {
+						bdBeads = beads.ListForPR(resources[resIdx].WorktreePath, projectName, resources[resIdx].PR.Number)
+					}
+				}
+				mu.Lock()
+				resources[resIdx].Beads = make([]project.BeadInfo, len(bdBeads))
+				for j, b := range bdBeads {
+					resources[resIdx].Beads[j] = project.BeadInfo{
+						ID:        b.ID,
+						Title:     b.Title,
+						Status:    b.Status,
+						IssueType: b.IssueType,
+						IsChild:   b.ParentID != "",
+					}
+				}
+				mu.Unlock()
+			}(i)
+		}
+		
+		wg.Wait()
+		
+		return ProjectDetailBeadsLoadedMsg{ProjectName: projectName, Resources: resources}
 	}
 }
 

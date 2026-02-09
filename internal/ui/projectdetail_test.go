@@ -24,59 +24,59 @@ func TestProjectDetailView_JKNavigation(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
 
-	if v.Selected != 0 {
-		t.Fatalf("expected initial Selected=0, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Fatalf("expected initial Selected=0, got %d", v.Selected())
 	}
 
 	// j moves down
 	v.Update(keyMsg("j"))
-	if v.Selected != 1 {
-		t.Errorf("after j: expected Selected=1, got %d", v.Selected)
+	if v.Selected() != 1 {
+		t.Errorf("after j: expected Selected=1, got %d", v.Selected())
 	}
 	v.Update(keyMsg("j"))
-	if v.Selected != 2 {
-		t.Errorf("after j j: expected Selected=2, got %d", v.Selected)
+	if v.Selected() != 2 {
+		t.Errorf("after j j: expected Selected=2, got %d", v.Selected())
 	}
 
 	// k moves up
 	v.Update(keyMsg("k"))
-	if v.Selected != 1 {
-		t.Errorf("after k: expected Selected=1, got %d", v.Selected)
+	if v.Selected() != 1 {
+		t.Errorf("after k: expected Selected=1, got %d", v.Selected())
 	}
 
 	// k at 0 stays at 0
 	v.Update(keyMsg("k"))
-	if v.Selected != 0 {
-		t.Fatalf("expected Selected=0 after second k, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Fatalf("expected Selected=0 after second k, got %d", v.Selected())
 	}
 	v.Update(keyMsg("k"))
-	if v.Selected != 0 {
-		t.Errorf("k at top: expected Selected=0, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Errorf("k at top: expected Selected=0, got %d", v.Selected())
 	}
 
 	// j at bottom stays at bottom
-	v.Selected = len(v.Resources) - 1
+	v.setSelected(len(v.Resources) - 1)
 	v.Update(keyMsg("j"))
-	if v.Selected != len(v.Resources)-1 {
-		t.Errorf("j at bottom: expected Selected=%d, got %d", len(v.Resources)-1, v.Selected)
+	if v.Selected() != len(v.Resources)-1 {
+		t.Errorf("j at bottom: expected Selected=%d, got %d", len(v.Resources)-1, v.Selected())
 	}
 }
 
 func TestProjectDetailView_GAndShiftG(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
-	v.Selected = 2
+	v.setSelected(2)
 
 	// G jumps to last
 	v.Update(keyMsg("G"))
-	if v.Selected != len(v.Resources)-1 {
-		t.Errorf("after G: expected Selected=%d, got %d", len(v.Resources)-1, v.Selected)
+	if v.Selected() != len(v.Resources)-1 {
+		t.Errorf("after G: expected Selected=%d, got %d", len(v.Resources)-1, v.Selected())
 	}
 
 	// g jumps to first
 	v.Update(keyMsg("g"))
-	if v.Selected != 0 {
-		t.Errorf("after g: expected Selected=0, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Errorf("after g: expected Selected=0, got %d", v.Selected())
 	}
 }
 
@@ -84,16 +84,16 @@ func TestProjectDetailView_NavigationWithEmptyResources(t *testing.T) {
 	v := NewProjectDetailView("empty-proj")
 	// No resources
 	v.Update(keyMsg("j"))
-	if v.Selected != 0 {
-		t.Errorf("j with no resources: expected Selected=0, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Errorf("j with no resources: expected Selected=0, got %d", v.Selected())
 	}
 	v.Update(keyMsg("k"))
-	if v.Selected != 0 {
-		t.Errorf("k with no resources: expected Selected=0, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Errorf("k with no resources: expected Selected=0, got %d", v.Selected())
 	}
 	v.Update(keyMsg("G"))
-	if v.Selected != 0 {
-		t.Errorf("G with no resources: expected Selected=0, got %d", v.Selected)
+	if v.Selected() != 0 {
+		t.Errorf("G with no resources: expected Selected=0, got %d", v.Selected())
 	}
 }
 
@@ -106,7 +106,7 @@ func TestProjectDetailView_SelectedResource(t *testing.T) {
 		t.Errorf("expected first resource (devdeploy repo), got %+v", r)
 	}
 
-	v.Selected = 1
+	v.setSelected(1)
 	r = v.SelectedResource()
 	if r == nil || r.Kind != project.ResourcePR || r.PR.Number != 42 {
 		t.Errorf("expected PR #42, got %+v", r)
@@ -122,7 +122,7 @@ func TestProjectDetailView_SelectedResource(t *testing.T) {
 func TestProjectDetailView_ViewSelectionCursor(t *testing.T) {
 	v := NewProjectDetailView("my-project")
 	v.Resources = testResources()
-	v.Selected = 0
+	v.setSelected(0)
 
 	output := v.View()
 	// Selected repo should have ▸ cursor
@@ -131,7 +131,7 @@ func TestProjectDetailView_ViewSelectionCursor(t *testing.T) {
 	}
 
 	// Move to PR
-	v.Selected = 1
+	v.setSelected(1)
 	output = v.View()
 	if !strings.Contains(output, "▸") {
 		t.Error("expected ▸ cursor on PR row")

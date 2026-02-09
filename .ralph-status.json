@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 3,
+  "iteration": 1,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-o10",
-    "title": "Remove project: label filtering from bd CLI"
+    "id": "devdeploy-nh2",
+    "title": "Project detail view progressive loading"
   },
-  "elapsed_ns": 188890638583,
+  "elapsed_ns": 109075875,
   "tallies": {
-    "completed": 2,
+    "completed": 0,
     "questions": 0,
     "failed": 0,
     "timed_out": 0,

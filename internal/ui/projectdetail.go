@@ -30,6 +30,7 @@ type detailItem struct {
 	beadIdx       int // -1 for resource items, >=0 for bead items
 	resource      *project.Resource
 	bead          *project.BeadInfo // nil for resource items
+	view          *ProjectDetailView // reference to view for loading state
 }
 
 func (d detailItem) FilterValue() string {
@@ -48,7 +49,7 @@ func (d detailItem) FilterValue() string {
 
 func (d detailItem) Title() string {
 	if d.itemType == itemTypeResource {
-		return d.renderResourceTitle()
+		return d.renderResourceTitleWithLoading()
 	}
 	return d.renderBeadTitle()
 }
@@ -79,6 +80,44 @@ func (d detailItem) renderResourceTitle() string {
 			state = "open"
 		}
 		text := fmt.Sprintf("#%d %s (%s)", d.resource.PR.Number, d.resource.PR.Title, state)
+		if status != "" {
+			text += "  " + Styles.Status.Render(status)
+		}
+		return prefix + Styles.Muted.Render(text)
+	}
+	return ""
+}
+
+// renderResourceTitleWithLoading renders the title for a resource item with loading indicators.
+func (d detailItem) renderResourceTitleWithLoading() string {
+	status := resourceStatus(*d.resource)
+	
+	switch d.resource.Kind {
+	case project.ResourceRepo:
+		prefix := "◆ "
+		text := d.resource.RepoName + "/"
+		// Show loading indicator if PRs are being loaded
+		if d.view != nil && d.view.loadingPRs {
+			text += "  " + Styles.Status.Render("… loading PRs")
+		}
+		if status != "" {
+			text += "  " + Styles.Status.Render(status)
+		}
+		return prefix + Styles.Normal.Render(text)
+	case project.ResourcePR:
+		if d.resource.PR == nil {
+			return ""
+		}
+		prefix := "◇ "
+		state := strings.ToLower(d.resource.PR.State)
+		if state == "" {
+			state = "open"
+		}
+		text := fmt.Sprintf("#%d %s (%s)", d.resource.PR.Number, d.resource.PR.Title, state)
+		// Show loading indicator if beads are being loaded
+		if d.view != nil && d.view.loadingBeads && d.resource.WorktreePath != "" {
+			text += "  " + Styles.Status.Render("… loading beads")
+		}
 		if status != "" {
 			text += "  " + Styles.Status.Render(status)
 		}
@@ -124,6 +163,10 @@ type ProjectDetailView struct {
 	
 	termWidth  int // terminal width from WindowSizeMsg; 0 = unknown (use defaults)
 	termHeight int // terminal height from WindowSizeMsg; 0 = unknown (no scroll)
+	
+	// Progressive loading state
+	loadingPRs   bool // true when PRs are being loaded (phase 2)
+	loadingBeads bool // true when beads are being loaded (phase 3)
 }
 
 // Ensure ProjectDetailView implements View.
@@ -140,11 +183,13 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	l.DisableQuitKeybindings()
 	
 	return &ProjectDetailView{
-		ProjectName: name,
-		Resources:   nil,
-		list:        l,
+		ProjectName:  name,
+		Resources:    nil,
+		list:         l,
 		items:        nil,
 		itemToIndex:  make(map[int]int),
+		loadingPRs:    false,
+		loadingBeads: false,
 	}
 }
 
@@ -178,6 +223,7 @@ func (p *ProjectDetailView) buildItems() {
 			beadIdx:     -1,
 			resource:    &p.Resources[i],
 			bead:        nil,
+			view:        p,
 		})
 		p.itemToIndex[resourceItemIdx] = i
 		
@@ -190,6 +236,7 @@ func (p *ProjectDetailView) buildItems() {
 				beadIdx:     bi,
 				resource:    &p.Resources[i],
 				bead:        &p.Resources[i].Beads[bi],
+				view:        p,
 			})
 			p.itemToIndex[beadItemIdx] = i
 		}
@@ -243,9 +290,7 @@ func (p *ProjectDetailView) Selected() int {
 // setSelected sets the selected item index (for testing).
 func (p *ProjectDetailView) setSelected(idx int) {
 	if idx >= 0 && idx < len(p.items) {
-		// The list doesn't have a direct SetIndex method, so we need to navigate
-		// For now, we'll just let the list handle selection naturally
-		// This is a limitation - tests will need to use navigation keys
+		p.list.Select(idx)
 	}
 }
 
@@ -284,13 +329,14 @@ func (p *ProjectDetailView) View() string {
 		p.list.SetHeight(20)
 	}
 	
-	// Rebuild items if Resources have changed
+	// Rebuild items if Resources have changed or loading state changed
 	expectedItems := 0
 	for _, r := range p.Resources {
 		expectedItems++ // resource item
 		expectedItems += len(r.Beads) // bead items
 	}
-	if len(p.items) != expectedItems {
+	// Always rebuild items to reflect loading state changes
+	if len(p.items) != expectedItems || p.loadingPRs || p.loadingBeads {
 		p.buildItems()
 	}
 	

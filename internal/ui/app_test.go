@@ -288,7 +288,7 @@ func TestOpenShellMsg_NoOverlay(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -325,7 +325,7 @@ func TestOpenShellMsg_PRNoWorktree(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"}},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -345,7 +345,7 @@ func TestOpenShellMsg_PRNoBranch(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test"}},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -365,7 +365,7 @@ func TestEnterInProjectDetail_TriggersOpenShell(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -390,7 +390,7 @@ func TestHidePaneMsg_NoPane(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -410,7 +410,7 @@ func TestShowPaneMsg_NoPane(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -433,7 +433,7 @@ func TestSelectedResourceLatestPaneID(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -458,7 +458,7 @@ func TestLaunchAgentMsg_NoOverlay(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -495,7 +495,7 @@ func TestLaunchAgentMsg_PRNoWorktree(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourcePR, RepoName: "myrepo", PR: &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat-branch"}},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -537,7 +537,7 @@ func TestLaunchAgentMsg_RegistersAsAgent(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: ta.Dir},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -642,7 +642,7 @@ func TestShowRemoveResourceMsg_ShowsConfirmModal(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -706,7 +706,7 @@ func TestRemoveResourceMsg_KillsPanesAndUnregisters(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -735,7 +735,7 @@ func TestRemoveResourceMsg_ClampsSelection(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -771,7 +771,7 @@ func TestRemoveResourceMsg_PR(t *testing.T) {
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 		prResource,
 	}
-	detail.Selected = 1
+	detail.setSelected(1)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -797,7 +797,7 @@ func TestRemoveResourceMsg_DismissesOverlay(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
 
@@ -824,7 +824,7 @@ func TestDKeyInProjectDetail_TriggersRemoveResource(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
 	adapter := ta.adapter()
@@ -1182,7 +1182,7 @@ func TestLaunchRalphMsg_NoOpenBeads(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo", Beads: nil},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -1202,7 +1202,7 @@ func TestLaunchRalphMsg_EmptyBeadsSlice(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo", Beads: []project.BeadInfo{}},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -1234,7 +1234,7 @@ func TestLaunchRalphMsg_WithBeads(t *testing.T) {
 			},
 		},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -1261,7 +1261,7 @@ func TestLaunchRalphMsg_PRNoWorktree(t *testing.T) {
 			Beads:    []project.BeadInfo{{ID: "b-1", Title: "Work", Status: "open"}},
 		},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
@@ -1282,7 +1282,7 @@ func TestLaunchRalphMsg_NoBeadsError(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: ta.Dir},
 	}
-	detail.Selected = 0
+	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail

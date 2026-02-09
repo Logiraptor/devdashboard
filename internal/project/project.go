@@ -321,6 +321,12 @@ func (m *Manager) projectDir(name string) string {
 	return filepath.Join(m.projectsBase, normalized)
 }
 
+// ProjectDir returns the project directory path for a given project name.
+// This is exported for use in async loading scenarios.
+func (m *Manager) ProjectDir(name string) string {
+	return m.projectDir(name)
+}
+
 // PRInfo holds minimal PR metadata from gh pr list.
 type PRInfo struct {
 	Number      int    `json:"number"`
@@ -379,6 +385,14 @@ func getRepoOwner(worktreePath string) string {
 		return ""
 	}
 	return strings.TrimSpace(out.String())
+}
+
+// ListFilteredPRsInRepo returns PRs authored by the current user OR
+// requesting review from the reviewTeam. It makes two gh pr list calls
+// and deduplicates the results by PR number.
+// This is exported for use in async loading scenarios.
+func (m *Manager) ListFilteredPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
+	return m.listFilteredPRsInRepo(worktreePath, state, limit)
 }
 
 // listFilteredPRsInRepo returns PRs authored by the current user OR
