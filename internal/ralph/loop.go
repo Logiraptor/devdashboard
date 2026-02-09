@@ -377,6 +377,10 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	lastFailedBeadID := ""
 	skippedBeads := make(map[string]bool)
 
+	// Set up status writer for devdeploy TUI polling.
+	statusWriter := NewStatusWriter(cfg.WorkDir)
+	defer statusWriter.Clear() // Clean up status file when done
+
 	for i := 0; i < cfg.MaxIterations; i++ {
 		// Guard: context cancellation / wall-clock timeout.
 		if ctx.Err() != nil {
@@ -385,6 +389,20 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			} else {
 				summary.StopReason = StopContextCancelled
 			}
+			// Write final status before breaking
+			status := Status{
+				State:         "completed",
+				Iteration:     summary.Iterations,
+				MaxIterations: cfg.MaxIterations,
+				Elapsed:       time.Since(loopStart).Nanoseconds(),
+				StopReason:    summary.StopReason.String(),
+			}
+			status.Tallies.Completed = summary.Succeeded
+			status.Tallies.Questions = summary.Questions
+			status.Tallies.Failed = summary.Failed
+			status.Tallies.TimedOut = summary.TimedOut
+			status.Tallies.Skipped = summary.Skipped
+			_ = statusWriter.Write(status)
 			break
 		}
 
@@ -396,8 +414,38 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		}
 		if bead == nil {
 			summary.StopReason = StopNormal
+			// Write final status before breaking
+			status := Status{
+				State:         "completed",
+				Iteration:     summary.Iterations,
+				MaxIterations: cfg.MaxIterations,
+				Elapsed:       time.Since(loopStart).Nanoseconds(),
+				StopReason:    summary.StopReason.String(),
+			}
+			status.Tallies.Completed = summary.Succeeded
+			status.Tallies.Questions = summary.Questions
+			status.Tallies.Failed = summary.Failed
+			status.Tallies.TimedOut = summary.TimedOut
+			status.Tallies.Skipped = summary.Skipped
+			_ = statusWriter.Write(status)
 			break
 		}
+
+		// Write status: starting iteration with current bead.
+		currentBead := &BeadInfo{ID: bead.ID, Title: bead.Title}
+		status := Status{
+			State:         "running",
+			Iteration:     i + 1,
+			MaxIterations: cfg.MaxIterations,
+			CurrentBead:   currentBead,
+			Elapsed:       time.Since(loopStart).Nanoseconds(),
+		}
+		status.Tallies.Completed = summary.Succeeded
+		status.Tallies.Questions = summary.Questions
+		status.Tallies.Failed = summary.Failed
+		status.Tallies.TimedOut = summary.TimedOut
+		status.Tallies.Skipped = summary.Skipped
+		_ = statusWriter.Write(status) // Best effort; don't fail loop on status write errors
 
 		// Guard: same-bead retry detection.
 		// If the same bead that just failed is picked again, skip it.
@@ -421,6 +469,20 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			if skippedBeads[retryBead.ID] {
 				summary.Skipped++
 				summary.StopReason = StopAllBeadsSkipped
+				// Write final status before breaking
+				status := Status{
+					State:         "completed",
+					Iteration:     summary.Iterations,
+					MaxIterations: cfg.MaxIterations,
+					Elapsed:       time.Since(loopStart).Nanoseconds(),
+					StopReason:    summary.StopReason.String(),
+				}
+				status.Tallies.Completed = summary.Succeeded
+				status.Tallies.Questions = summary.Questions
+				status.Tallies.Failed = summary.Failed
+				status.Tallies.TimedOut = summary.TimedOut
+				status.Tallies.Skipped = summary.Skipped
+				_ = statusWriter.Write(status)
 				break
 			}
 			bead = retryBead
@@ -430,6 +492,20 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		if cfg.DryRun {
 			fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 			summary.Iterations++
+			// Write final status for dry-run
+			status := Status{
+				State:         "completed",
+				Iteration:     summary.Iterations,
+				MaxIterations: cfg.MaxIterations,
+				Elapsed:       time.Since(loopStart).Nanoseconds(),
+				StopReason:    "dry-run",
+			}
+			status.Tallies.Completed = summary.Succeeded
+			status.Tallies.Questions = summary.Questions
+			status.Tallies.Failed = summary.Failed
+			status.Tallies.TimedOut = summary.TimedOut
+			status.Tallies.Skipped = summary.Skipped
+			_ = statusWriter.Write(status)
 			break
 		}
 
@@ -521,9 +597,27 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			lastFailedBeadID = bead.ID
 		}
 
+		// Write status update after iteration completes.
+		status = Status{
+			State:         "running",
+			Iteration:     i + 1,
+			MaxIterations: cfg.MaxIterations,
+			Elapsed:       time.Since(loopStart).Nanoseconds(),
+		}
+		status.Tallies.Completed = summary.Succeeded
+		status.Tallies.Questions = summary.Questions
+		status.Tallies.Failed = summary.Failed
+		status.Tallies.TimedOut = summary.TimedOut
+		status.Tallies.Skipped = summary.Skipped
+		_ = statusWriter.Write(status) // Best effort
+
 		// Guard: consecutive failure limit.
 		if consecutiveFailures >= consecutiveLimit {
 			summary.StopReason = StopConsecutiveFails
+			// Write final status before breaking
+			status.State = "completed"
+			status.StopReason = summary.StopReason.String()
+			_ = statusWriter.Write(status)
 			break
 		}
 
@@ -542,6 +636,21 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	// Calculate total duration.
 	summary.Duration = time.Since(loopStart)
+
+	// Write final status.
+	finalStatus := Status{
+		State:         "completed",
+		Iteration:     summary.Iterations,
+		MaxIterations: cfg.MaxIterations,
+		Elapsed:       summary.Duration.Nanoseconds(),
+		StopReason:    summary.StopReason.String(),
+	}
+	finalStatus.Tallies.Completed = summary.Succeeded
+	finalStatus.Tallies.Questions = summary.Questions
+	finalStatus.Tallies.Failed = summary.Failed
+	finalStatus.Tallies.TimedOut = summary.TimedOut
+	finalStatus.Tallies.Skipped = summary.Skipped
+	_ = statusWriter.Write(finalStatus)
 
 	// Count remaining beads.
 	remainingBeads := countRemainingBeads(cfg)

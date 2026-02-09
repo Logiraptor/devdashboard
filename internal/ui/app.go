@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -111,8 +112,10 @@ type AppModel struct {
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
 	agentCancelFunc func() // cancels in-flight agent run; nil when none
-	termWidth       int    // terminal width from last WindowSizeMsg
-	termHeight      int    // terminal height from last WindowSizeMsg
+	RalphStatus     *RalphStatusView // ralph status display
+	ralphWorkdir    string            // workdir for current ralph run (for polling)
+	termWidth       int               // terminal width from last WindowSizeMsg
+	termHeight      int               // terminal height from last WindowSizeMsg
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -140,9 +143,45 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Detail != nil {
 			a.Detail.SetSize(wsm.Width, wsm.Height)
 		}
+		if a.RalphStatus != nil {
+			updated, _ := a.RalphStatus.Update(wsm)
+			a.RalphStatus = updated.(*RalphStatusView)
+		}
 	}
 
 	switch msg := msg.(type) {
+	case RalphStatusMsg:
+		if a.RalphStatus != nil {
+			// Clear status view if status is nil (ralph finished and we're clearing)
+			if msg.Status == nil {
+				a.RalphStatus = nil
+				a.ralphWorkdir = ""
+				return a, nil
+			}
+			updated, cmd := a.RalphStatus.Update(msg)
+			a.RalphStatus = updated.(*RalphStatusView)
+			var cmds []tea.Cmd
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Stop polling if ralph completed
+			if msg.Status.State == "completed" {
+				a.ralphWorkdir = "" // Stop polling
+				// Clear status after a delay
+				cmds = append(cmds, tea.Tick(5*time.Second, func(time.Time) tea.Msg {
+					return RalphStatusMsg{Status: nil} // Clear status after delay
+				}))
+			} else if a.ralphWorkdir != "" && msg.Status.State == "running" {
+				// Continue polling if still running
+				cmds = append(cmds, tea.Tick(1*time.Second, func(time.Time) tea.Msg {
+					return pollRalphStatusCmd(a.ralphWorkdir)()
+				}))
+			}
+			if len(cmds) > 0 {
+				return a, tea.Batch(cmds...)
+			}
+			return a, nil
+		}
 	case progress.Event:
 		// Run finished (done or aborted); clear cancel so Esc just dismisses
 		if msg.Status == progress.StatusDone || msg.Status == progress.StatusAborted {
@@ -527,9 +566,12 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Sessions.Register(rk, paneID, session.PaneAgent)
 			a.refreshDetailPanes()
 		}
+		// Start ralph status polling
+		a.RalphStatus = NewRalphStatusView()
+		a.ralphWorkdir = workDir
 		a.Status = "Ralph loop launched"
 		a.StatusIsError = false
-		return a, nil
+		return a, startRalphStatusPolling(workDir)
 	case HidePaneMsg:
 		paneID := a.selectedResourceLatestPaneID()
 		if paneID == "" {
@@ -620,6 +662,13 @@ func (a *appModelAdapter) View() string {
 	if a.Overlays.Len() > 0 {
 		if top, ok := a.Overlays.Peek(); ok {
 			base += "\n" + top.View.View()
+		}
+	}
+	// Show ralph status if available
+	if a.RalphStatus != nil {
+		ralphView := a.RalphStatus.View()
+		if ralphView != "" {
+			base += "\n" + ralphView
 		}
 	}
 	if a.Status != "" {
