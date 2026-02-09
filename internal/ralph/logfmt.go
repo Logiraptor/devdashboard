@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 )
 
 // LogFormatter wraps an io.Writer and formats agent stream-json output
@@ -13,6 +14,18 @@ import (
 type LogFormatter struct {
 	w       io.Writer
 	verbose bool
+	mu      sync.Mutex
+	// Counters for summary
+	readsCount    int
+	writesCount   int
+	editsCount    int
+	shellsCount   int
+	searchesCount int
+	thinksCount   int
+	errorsCount   int
+	// Track last shell command to detect if it had output
+	lastShellCmd  string
+	shellHadOutput bool
 }
 
 // NewLogFormatter creates a new log formatter that writes formatted output to w.
@@ -48,7 +61,7 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 			continue
 		}
 
-		// Format the event
+		// Format the event (this also updates counters)
 		formattedLine := f.formatEvent(event)
 		if formattedLine != "" {
 			fmt.Fprintf(&formatted, "%s\n", formattedLine)
@@ -68,7 +81,11 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 
 // formatEvent formats a single JSON event into a human-readable line.
 // Returns empty string if the event should be skipped.
+// Updates internal counters for summary generation.
 func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	// Extract event type
 	eventType, _ := event["type"].(string)
 	if eventType == "" {
@@ -81,8 +98,11 @@ func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
 	case "tool_result":
 		return f.formatToolResult(event)
 	case "think":
-		return f.formatThink(event)
+		f.thinksCount++
+		// Skip think events - they're too noisy
+		return ""
 	case "edit":
+		f.editsCount++
 		return f.formatEdit(event)
 	default:
 		// Skip unknown event types
@@ -91,6 +111,8 @@ func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
 }
 
 // formatToolCall formats a tool_call event.
+// Only shows significant events (writes, shell commands).
+// Counts all events for summary.
 func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 	name, _ := event["name"].(string)
 	if name == "" {
@@ -100,82 +122,78 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 	// Extract arguments if available
 	args, _ := event["arguments"].(map[string]interface{})
 	if args == nil {
-		return fmt.Sprintf("[tool] %s", name)
+		return ""
 	}
 
-	// Format based on tool name
+	// Format based on tool name and update counters
 	switch name {
 	case "read_file":
-		if target, ok := args["target_file"].(string); ok {
-			return fmt.Sprintf("[tool] Read: %s", target)
-		}
+		f.readsCount++
+		// Skip reads - too noisy, will show in summary
+		return ""
 	case "write":
+		f.writesCount++
 		if path, ok := args["file_path"].(string); ok {
 			contents, _ := args["contents"].(string)
 			lines := strings.Count(contents, "\n") + 1
-			return fmt.Sprintf("[tool] Write: %s (%d lines)", path, lines)
+			return fmt.Sprintf("[write] %s (%d lines)", path, lines)
 		}
 	case "search_replace":
+		f.editsCount++
 		if path, ok := args["file_path"].(string); ok {
-			return fmt.Sprintf("[tool] Edit: %s", path)
+			return fmt.Sprintf("[edit] %s", path)
 		}
 	case "run_terminal_cmd":
+		f.shellsCount++
 		if cmd, ok := args["command"].(string); ok {
+			// Store command to check if it has output later
+			f.lastShellCmd = cmd
+			f.shellHadOutput = false
+			// Show shell commands - they're significant
 			// Truncate long commands
-			if len(cmd) > 60 {
-				cmd = cmd[:57] + "..."
+			displayCmd := cmd
+			if len(displayCmd) > 60 {
+				displayCmd = displayCmd[:57] + "..."
 			}
-			return fmt.Sprintf("[tool] Shell: %s", cmd)
+			return fmt.Sprintf("[shell] %s", displayCmd)
 		}
 	case "grep":
-		if pattern, ok := args["pattern"].(string); ok {
-			// Truncate long patterns
-			if len(pattern) > 40 {
-				pattern = pattern[:37] + "..."
-			}
-			return fmt.Sprintf("[tool] Search: %s", pattern)
-		}
+		f.searchesCount++
+		// Skip searches - too noisy, will show in summary
+		return ""
 	case "codebase_search":
-		if query, ok := args["query"].(string); ok {
-			// Truncate long queries
-			if len(query) > 50 {
-				query = query[:47] + "..."
-			}
-			return fmt.Sprintf("[tool] Search: %s", query)
+		f.searchesCount++
+		// Skip searches - too noisy, will show in summary
+		return ""
+	}
+
+	return ""
+}
+
+// formatToolResult formats a tool_result event.
+// Shows errors and tracks shell command output.
+func (f *LogFormatter) formatToolResult(event map[string]interface{}) string {
+	// Track if shell command had output
+	if f.lastShellCmd != "" {
+		content, _ := event["content"].(string)
+		if content != "" && !event["is_error"].(bool) {
+			f.shellHadOutput = true
 		}
 	}
 
-	return fmt.Sprintf("[tool] %s", name)
-}
-
-// formatToolResult formats a tool_result event (usually skipped, but could show errors).
-func (f *LogFormatter) formatToolResult(event map[string]interface{}) string {
-	// Usually skip successful tool results - the tool_call already showed what happened
-	// Only show if there's an error
+	// Show errors
 	if isError, _ := event["is_error"].(bool); isError {
+		f.errorsCount++
 		content, _ := event["content"].(string)
 		if content != "" {
 			// Truncate error messages
-			if len(content) > 60 {
-				content = content[:57] + "..."
+			if len(content) > 100 {
+				content = content[:97] + "..."
 			}
 			return fmt.Sprintf("[error] %s", content)
 		}
 	}
 	return ""
-}
-
-// formatThink formats a think event.
-func (f *LogFormatter) formatThink(event map[string]interface{}) string {
-	content, _ := event["content"].(string)
-	if content == "" {
-		return ""
-	}
-	// Truncate think content
-	if len(content) > 50 {
-		content = content[:47] + "..."
-	}
-	return fmt.Sprintf("[think] %s", content)
 }
 
 // formatEdit formats an edit event (different from tool_call edit).
@@ -185,4 +203,51 @@ func (f *LogFormatter) formatEdit(event map[string]interface{}) string {
 		return fmt.Sprintf("[edit] %s", path)
 	}
 	return "[edit]"
+}
+
+// Summary returns a formatted summary of all events processed.
+func (f *LogFormatter) Summary() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	parts := []string{}
+	if f.readsCount > 0 {
+		parts = append(parts, fmt.Sprintf("read %d", f.readsCount))
+	}
+	if f.writesCount > 0 {
+		parts = append(parts, fmt.Sprintf("wrote %d", f.writesCount))
+	}
+	if f.editsCount > 0 {
+		parts = append(parts, fmt.Sprintf("edited %d", f.editsCount))
+	}
+	if f.searchesCount > 0 {
+		parts = append(parts, fmt.Sprintf("searched %d", f.searchesCount))
+	}
+	if f.shellsCount > 0 {
+		parts = append(parts, fmt.Sprintf("commands %d", f.shellsCount))
+	}
+	if f.errorsCount > 0 {
+		parts = append(parts, fmt.Sprintf("errors %d", f.errorsCount))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("[ralph] Completed: %s", strings.Join(parts, ", "))
+}
+
+// Reset clears all counters (useful for testing or reuse).
+func (f *LogFormatter) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.readsCount = 0
+	f.writesCount = 0
+	f.editsCount = 0
+	f.shellsCount = 0
+	f.searchesCount = 0
+	f.thinksCount = 0
+	f.errorsCount = 0
+	f.lastShellCmd = ""
+	f.shellHadOutput = false
 }

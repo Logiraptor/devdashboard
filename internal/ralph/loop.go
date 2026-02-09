@@ -347,6 +347,9 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		render = RenderPrompt
 	}
 
+	// Track formatter for summary output
+	var currentFormatter *LogFormatter
+
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
@@ -355,8 +358,8 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 				opts = append(opts, WithTimeout(cfg.AgentTimeout))
 			}
 			if !cfg.Verbose {
-				formatter := NewLogFormatter(out, false)
-				opts = append(opts, WithStdoutWriter(formatter))
+				currentFormatter = NewLogFormatter(out, false)
+				opts = append(opts, WithStdoutWriter(currentFormatter))
 			} else if out != os.Stdout {
 				opts = append(opts, WithStdoutWriter(out))
 			}
@@ -482,6 +485,14 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		if err != nil {
 			summary.Duration = time.Since(loopStart)
 			return summary, fmt.Errorf("iteration %d: running agent for %s: %w", iteration, child.ID, err)
+		}
+
+		// Print summary if formatter was used
+		if currentFormatter != nil && !cfg.Verbose {
+			if summaryStr := currentFormatter.Summary(); summaryStr != "" {
+				fmt.Fprintf(out, "%s\n", summaryStr)
+			}
+			currentFormatter = nil // Reset for next iteration
 		}
 
 		// Assess outcome
@@ -647,12 +658,13 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 		// Run opus verification
 		var opts []Option
+		var verificationFormatter *LogFormatter
 		if cfg.AgentTimeout > 0 {
 			opts = append(opts, WithTimeout(cfg.AgentTimeout))
 		}
 		if !cfg.Verbose {
-			formatter := NewLogFormatter(out, false)
-			opts = append(opts, WithStdoutWriter(formatter))
+			verificationFormatter = NewLogFormatter(out, false)
+			opts = append(opts, WithStdoutWriter(verificationFormatter))
 		} else if out != os.Stdout {
 			opts = append(opts, WithStdoutWriter(out))
 		}
@@ -661,6 +673,12 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		if err != nil {
 			fmt.Fprintf(out, "Opus verification failed to run: %v\n", err)
 		} else {
+			// Print summary if formatter was used
+			if verificationFormatter != nil && !cfg.Verbose {
+				if summaryStr := verificationFormatter.Summary(); summaryStr != "" {
+					fmt.Fprintf(out, "%s\n", summaryStr)
+				}
+			}
 			fmt.Fprintf(out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
 		}
 	}
@@ -794,6 +812,9 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		render = RenderPrompt
 	}
 
+	// Track formatter for summary output
+	var currentFormatter *LogFormatter
+
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
@@ -803,8 +824,8 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			}
 			// Wrap stdout with log formatter if not verbose
 			if !cfg.Verbose {
-				formatter := NewLogFormatter(out, false)
-				opts = append(opts, WithStdoutWriter(formatter))
+				currentFormatter = NewLogFormatter(out, false)
+				opts = append(opts, WithStdoutWriter(currentFormatter))
 			} else if out != os.Stdout {
 				opts = append(opts, WithStdoutWriter(out))
 			}
@@ -994,6 +1015,14 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			summary.Duration = time.Since(loopStart)
 			return summary, fmt.Errorf("iteration %d: running agent for %s: %w",
 				i+1, bead.ID, err)
+		}
+
+		// Print summary if formatter was used
+		if currentFormatter != nil && !cfg.Verbose {
+			if summaryStr := currentFormatter.Summary(); summaryStr != "" {
+				fmt.Fprintf(out, "%s\n", summaryStr)
+			}
+			currentFormatter = nil // Reset for next iteration
 		}
 
 		// 5. Assess outcome.
