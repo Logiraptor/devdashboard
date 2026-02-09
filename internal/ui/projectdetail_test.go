@@ -863,3 +863,91 @@ func TestProjectDetailView_WindowSizeMsgUpdatesViewport(t *testing.T) {
 		t.Errorf("expected repo-19 visible after WindowSizeMsg + G, got:\n%s", output)
 	}
 }
+
+func TestProjectDetailView_WiderTerminalShowsMoreContent(t *testing.T) {
+	longTitle := "This is a very long PR title that would be truncated on a narrow terminal but should be fully visible on a wide one"
+	longBeadTitle := "This is a very long bead title that should expand on wider terminals instead of being cut short"
+
+	makePRView := func(width int) *ProjectDetailView {
+		v := NewProjectDetailView("proj")
+		v.Resources = []project.Resource{
+			{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy",
+				Beads: []project.BeadInfo{
+					{ID: "devdeploy-xyz", Title: longBeadTitle, Status: "open"},
+				},
+			},
+			{Kind: project.ResourcePR, RepoName: "devdeploy",
+				PR: &project.PRInfo{Number: 99, Title: longTitle, State: "OPEN"}},
+		}
+		if width > 0 {
+			v.SetSize(width, 30)
+		}
+		return v
+	}
+
+	// Default (no width set) — uses hard-coded fallbacks.
+	defaultView := makePRView(0)
+	defaultOutput := defaultView.View()
+
+	// Narrow terminal (80 cols).
+	narrowView := makePRView(80)
+	narrowOutput := narrowView.View()
+
+	// Wide terminal (200 cols).
+	wideView := makePRView(200)
+	wideOutput := wideView.View()
+
+	// The wide terminal should show more of the long PR title than narrow.
+	// Both should truncate, but wide should have more visible characters.
+	narrowPRTruncated := !strings.Contains(narrowOutput, longTitle)
+	widePRTruncated := !strings.Contains(wideOutput, longTitle)
+
+	if !narrowPRTruncated {
+		t.Error("expected PR title to be truncated on narrow terminal")
+	}
+	if widePRTruncated {
+		t.Errorf("expected full PR title visible on wide terminal (200 cols), got:\n%s", wideOutput)
+	}
+
+	// The wide terminal should show more of the bead title.
+	narrowBeadTruncated := !strings.Contains(narrowOutput, longBeadTitle)
+	wideBeadTruncated := !strings.Contains(wideOutput, longBeadTitle)
+
+	if !narrowBeadTruncated {
+		t.Error("expected bead title to be truncated on narrow terminal")
+	}
+	if wideBeadTruncated {
+		t.Errorf("expected full bead title visible on wide terminal (200 cols), got:\n%s", wideOutput)
+	}
+
+	// Default (no width) should still truncate like before.
+	if strings.Contains(defaultOutput, longTitle) {
+		t.Error("expected PR title truncated with default (no width)")
+	}
+	if strings.Contains(defaultOutput, longBeadTitle) {
+		t.Error("expected bead title truncated with default (no width)")
+	}
+}
+
+func TestProjectDetailView_MaxContentLen(t *testing.T) {
+	v := NewProjectDetailView("proj")
+
+	// Without terminal width, returns fallback.
+	if got := v.maxContentLen(4, 24, 56); got != 56 {
+		t.Errorf("no width: expected fallback 56, got %d", got)
+	}
+
+	// With terminal width 120.
+	v.SetSize(120, 30)
+	got := v.maxContentLen(4, 24, 56) // 120 - 4 - 24 = 92
+	if got != 92 {
+		t.Errorf("width 120: expected 92, got %d", got)
+	}
+
+	// With very narrow terminal, floor at 20.
+	v.SetSize(30, 30)
+	got = v.maxContentLen(4, 24, 56) // 30 - 4 - 24 = 2, clamped to 20
+	if got != 20 {
+		t.Errorf("width 30: expected 20 (floor), got %d", got)
+	}
+}

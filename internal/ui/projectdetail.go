@@ -20,6 +20,7 @@ type ProjectDetailView struct {
 	Resources       []project.Resource // unified resource list (repos + PRs)
 	Selected        int                // index into Resources for cursor highlight
 	SelectedBeadIdx int                // -1 = resource header, >=0 = bead index within Selected resource
+	termWidth       int                // terminal width from WindowSizeMsg; 0 = unknown (use defaults)
 	termHeight      int                // terminal height from WindowSizeMsg; 0 = unknown (no scroll)
 	scrollOffset    int                // first visible content line (0-based)
 }
@@ -36,8 +37,9 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	}
 }
 
-// SetSize updates the terminal dimensions for scroll calculations.
+// SetSize updates the terminal dimensions for scroll and truncation calculations.
 func (p *ProjectDetailView) SetSize(width, height int) {
+	p.termWidth = width
 	p.termHeight = height
 	p.ensureVisible()
 }
@@ -84,6 +86,21 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 		}
 	}
 	return p, nil
+}
+
+// maxContentLen returns the maximum number of characters for content text
+// at the given visual indent width. When the terminal width is known,
+// it subtracts the indent and a suffix margin (for status indicators).
+// When the terminal width is unknown (0), fallback is returned.
+func (p *ProjectDetailView) maxContentLen(indent, suffixMargin, fallback int) int {
+	if p.termWidth <= 0 {
+		return fallback
+	}
+	w := p.termWidth - indent - suffixMargin
+	if w < 20 {
+		w = 20
+	}
+	return w
 }
 
 // viewHeight returns the number of content lines visible in the viewport.
@@ -263,8 +280,9 @@ func (p *ProjectDetailView) View() string {
 					state = "open"
 				}
 				line := fmt.Sprintf("#%d %s (%s)", r.PR.Number, r.PR.Title, state)
-				if len(line) > 56 {
-					line = line[:53] + "..."
+				prMaxLen := p.maxContentLen(4, 24, 56) // bullet(4) + content + status(~24)
+				if len(line) > prMaxLen {
+					line = line[:prMaxLen-3] + "..."
 				}
 				if onHeader {
 					b.WriteString(bullet + selectedPRStyle.Render(line))
@@ -291,10 +309,11 @@ func (p *ProjectDetailView) View() string {
 			}
 
 			beadLine := bd.ID + "  " + bd.Title
-			maxLen := 60
+			fallback := 60
 			if bd.IsChild {
-				maxLen = 56 // shorter to compensate for extra indent
+				fallback = 56 // shorter to compensate for extra indent
 			}
+			maxLen := p.maxContentLen(len(indent), 18, fallback) // indent + content + status_tag(~18)
 			if len(beadLine) > maxLen {
 				beadLine = beadLine[:maxLen-3] + "..."
 			}
