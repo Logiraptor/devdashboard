@@ -114,6 +114,12 @@ func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
 // Only shows significant events (writes, shell commands).
 // Counts all events for summary.
 func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
+	// Check for new schema: {"type":"tool_call","tool_call":{"semSearchToolCall":{...}}}
+	if toolCall, ok := event["tool_call"].(map[string]interface{}); ok {
+		return f.formatNestedToolCall(toolCall)
+	}
+
+	// Fall back to old schema for backwards compatibility
 	name, _ := event["name"].(string)
 	if name == "" {
 		return ""
@@ -167,6 +173,75 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 		return ""
 	}
 
+	return ""
+}
+
+// formatNestedToolCall formats a tool_call event with the new nested schema.
+// The tool_call object contains keys like "semSearchToolCall", "editToolCall", etc.
+// Each tool type has an "args" object with metadata and a "result" object (which we ignore).
+func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) string {
+	// Check for semantic search tool call
+	if sem, ok := toolCall["semSearchToolCall"].(map[string]interface{}); ok {
+		f.searchesCount++
+		if args, ok := sem["args"].(map[string]interface{}); ok {
+			if query, ok := args["query"].(string); ok {
+				// Truncate query for display
+				displayQuery := query
+				if len(displayQuery) > 50 {
+					displayQuery = displayQuery[:47] + "..."
+				}
+				return fmt.Sprintf("[search] %s", displayQuery)
+			}
+		}
+		return "" // Skip if can't extract query
+	}
+
+	// Check for edit tool call
+	if edit, ok := toolCall["editToolCall"].(map[string]interface{}); ok {
+		f.editsCount++
+		if args, ok := edit["args"].(map[string]interface{}); ok {
+			if path, ok := args["path"].(string); ok {
+				return fmt.Sprintf("[edit] %s", path)
+			}
+		}
+		return ""
+	}
+
+	// Check for read tool call
+	if _, ok := toolCall["readToolCall"].(map[string]interface{}); ok {
+		f.readsCount++
+		// Skip reads - too noisy, will show in summary
+		return ""
+	}
+
+	// Check for grep tool call
+	if _, ok := toolCall["grepToolCall"].(map[string]interface{}); ok {
+		f.searchesCount++
+		// Skip searches - too noisy, will show in summary
+		return ""
+	}
+
+	// Check for shell tool call
+	if shell, ok := toolCall["shellToolCall"].(map[string]interface{}); ok {
+		f.shellsCount++
+		if args, ok := shell["args"].(map[string]interface{}); ok {
+			if cmd, ok := args["command"].(string); ok {
+				// Store command to check if it has output later
+				f.lastShellCmd = cmd
+				f.shellHadOutput = false
+				// Show shell commands - they're significant
+				// Truncate long commands
+				displayCmd := cmd
+				if len(displayCmd) > 60 {
+					displayCmd = displayCmd[:57] + "..."
+				}
+				return fmt.Sprintf("[shell] %s", displayCmd)
+			}
+		}
+		return ""
+	}
+
+	// Unknown tool type - skip it
 	return ""
 }
 
