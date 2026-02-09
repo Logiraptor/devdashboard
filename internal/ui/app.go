@@ -40,6 +40,11 @@ type HidePaneMsg struct{}
 // ShowPaneMsg shows the selected resource's most recent pane (join-pane back into current window).
 type ShowPaneMsg struct{}
 
+// FocusPaneMsg focuses a pane by index (1-9) from the list of active panes.
+type FocusPaneMsg struct {
+	Index int // 1-based index into active panes list
+}
+
 // ProjectsLoadedMsg is sent when projects are loaded from disk (phase 1: instant data).
 // Contains project names and repo counts only (filesystem-only, <10ms).
 type ProjectsLoadedMsg struct {
@@ -750,6 +755,31 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = true
 		}
 		return a, nil
+	case FocusPaneMsg:
+		if a.Sessions == nil {
+			a.Status = "No session tracker"
+			a.StatusIsError = true
+			return a, nil
+		}
+		// Get ordered list of active panes
+		panes := a.getOrderedActivePanes()
+		if msg.Index < 1 || msg.Index > len(panes) {
+			a.Status = fmt.Sprintf("Pane %d not available (1-%d)", msg.Index, len(panes))
+			a.StatusIsError = true
+			return a, nil
+		}
+		// Index is 1-based, convert to 0-based
+		pane := panes[msg.Index-1]
+		if err := tmux.FocusPaneAsSidebar(pane.PaneID); err != nil {
+			a.Status = fmt.Sprintf("Focus pane: %v", err)
+			a.StatusIsError = true
+		} else {
+			// Generate pane name for status
+			paneName := a.getPaneDisplayName(pane)
+			a.Status = fmt.Sprintf("Focused pane %d: %s", msg.Index, paneName)
+			a.StatusIsError = false
+		}
+		return a, nil
 	case SelectProjectMsg:
 		a.Mode = ModeProjectDetail
 		detail, cmd := a.newProjectDetailView(msg.Name)
@@ -982,6 +1012,81 @@ func (a *AppModel) selectedResourceLatestPaneID() string {
 		return ""
 	}
 	return panes[len(panes)-1].PaneID
+}
+
+// getOrderedActivePanes returns all active panes ordered for indexing (1-9).
+// Panes are ordered by resource (repo first, then PRs), then by pane order within each resource.
+// Uses the same order as displayed in the UI (from Resources.Panes).
+func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
+	if a.Sessions == nil || a.Detail == nil {
+		return nil
+	}
+	
+	// Prune dead panes first and refresh pane info
+	a.refreshDetailPanes()
+	
+	// Collect panes from Resources in the same order as displayed in UI
+	// Convert project.PaneInfo to session.TrackedPane by looking up in Sessions
+	var allPanes []session.TrackedPane
+	for _, r := range a.Detail.Resources {
+		rk := resourceKeyFromResource(r)
+		// Get tracked panes for this resource
+		trackedPanes := a.Sessions.PanesForResource(rk)
+		// Create a map of pane ID to TrackedPane for quick lookup
+		paneMap := make(map[string]session.TrackedPane)
+		for _, tp := range trackedPanes {
+			paneMap[tp.PaneID] = tp
+		}
+		// Add panes in the order they appear in r.Panes
+		for _, pi := range r.Panes {
+			if tp, ok := paneMap[pi.ID]; ok {
+				allPanes = append(allPanes, tp)
+				if len(allPanes) >= 9 {
+					break // Limit to 9 panes
+				}
+			}
+		}
+		if len(allPanes) >= 9 {
+			break
+		}
+	}
+	
+	return allPanes
+}
+
+// getPaneDisplayName returns a human-readable name for a pane.
+func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
+	if a.Detail == nil {
+		return pane.PaneID
+	}
+	
+	// Parse resource key to get repo/PR info
+	// Format: "repo:name" or "pr:name:#number"
+	parts := strings.Split(pane.ResourceKey, ":")
+	if len(parts) < 2 {
+		return pane.PaneID
+	}
+	
+	kind := parts[0]
+	repoName := parts[1]
+	
+	var name string
+	if kind == "pr" && len(parts) >= 3 {
+		// PR resource: "pr:name:#number"
+		prNum := strings.TrimPrefix(parts[2], "#")
+		name = fmt.Sprintf("%s-pr-%s", repoName, prNum)
+	} else {
+		// Repo resource
+		name = repoName
+	}
+	
+	// Add pane type
+	paneType := "shell"
+	if pane.Type == session.PaneAgent {
+		paneType = "agent"
+	}
+	
+	return fmt.Sprintf("%s (%s)", name, paneType)
 }
 
 // ensureResourceWorktree returns the worktree path for a resource, creating
@@ -1327,6 +1432,16 @@ func NewAppModel() *AppModel {
 	reg.BindWithDescForMode("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource", []AppMode{ModeProjectDetail})
 	// SPC r: refresh beads for all resources in project detail view
 	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
+	// SPC 1-9: focus pane by index
+	for i := 1; i <= 9; i++ {
+		num := i
+		reg.BindWithDescForMode(
+			fmt.Sprintf("SPC %d", i),
+			func() tea.Msg { return FocusPaneMsg{Index: num} },
+			fmt.Sprintf("Focus pane %d", i),
+			[]AppMode{ModeProjectDetail},
+		)
+	}
 	return &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),

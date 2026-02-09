@@ -125,3 +125,67 @@ func ListPaneIDs() (map[string]bool, error) {
 	}
 	return result, nil
 }
+
+// FocusPaneAsSidebar brings paneID to the right of the current pane
+// and adjusts layout to 50/50 horizontal split.
+// If the pane is in a different window, it joins it to the current window.
+// The current pane (devdeploy) stays on the left, target pane on the right.
+func FocusPaneAsSidebar(paneID string) error {
+	t, err := client()
+	if err != nil {
+		return err
+	}
+	
+	// Get current pane ID (where devdeploy is running)
+	currentPaneID, err := t.Command("display-message", "-p", "#{pane_id}")
+	if err != nil {
+		return fmt.Errorf("get current pane: %w", err)
+	}
+	currentPaneID = strings.TrimSpace(currentPaneID)
+	
+	// If the target pane is the current pane, nothing to do
+	if paneID == currentPaneID {
+		return nil
+	}
+	
+	// Get current window ID
+	currentWindowID, err := t.Command("display-message", "-p", "#{window_id}")
+	if err != nil {
+		return fmt.Errorf("get current window: %w", err)
+	}
+	currentWindowID = strings.TrimSpace(currentWindowID)
+	
+	// Check if pane is already in current window by listing panes
+	paneList, err := t.Command("list-panes", "-t", currentWindowID, "-F", "#{pane_id}")
+	if err != nil {
+		return fmt.Errorf("list panes: %w", err)
+	}
+	paneIDs := strings.Split(strings.TrimSpace(paneList), "\n")
+	paneInWindow := false
+	for _, pid := range paneIDs {
+		if strings.TrimSpace(pid) == paneID {
+			paneInWindow = true
+			break
+		}
+	}
+	
+	// If pane is not in current window, join it
+	if !paneInWindow {
+		// Join the pane horizontally to the right of current pane
+		// -h = horizontal split, -s = source pane, -t = target pane
+		if _, err := t.Command("join-pane", "-h", "-s", paneID, "-t", currentPaneID); err != nil {
+			return fmt.Errorf("join pane: %w", err)
+		}
+	}
+	
+	// Set layout to main-vertical (50/50 horizontal split)
+	// This ensures devdeploy on left, selected pane on right
+	if _, err := t.Command("select-layout", "-t", currentWindowID, "main-vertical"); err != nil {
+		// Fallback to even-vertical if main-vertical fails
+		if _, err2 := t.Command("select-layout", "-t", currentWindowID, "even-vertical"); err2 != nil {
+			return fmt.Errorf("set layout: %w (tried main-vertical and even-vertical)", err)
+		}
+	}
+	
+	return nil
+}

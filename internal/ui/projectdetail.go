@@ -447,6 +447,20 @@ func (p *ProjectDetailView) View() string {
 	}
 	
 	b.WriteString(p.list.View())
+	
+	// Add Active Panes section
+	activePanes := p.getOrderedActivePanes()
+	if len(activePanes) > 0 {
+		b.WriteString("\n" + Styles.Section.Render("Active Panes") + "\n")
+		for i, pane := range activePanes {
+			if i >= 9 {
+				break // Limit to 9 panes
+			}
+			paneName := p.getPaneDisplayName(pane, i+1)
+			b.WriteString("  " + paneName + "\n")
+		}
+	}
+	
 	return b.String()
 }
 
@@ -503,4 +517,51 @@ func resourceStatusWithLoading(r project.Resource, view *ProjectDetailView) stri
 	}
 	
 	return status
+}
+
+// getOrderedActivePanes returns all active panes from Resources, ordered for indexing (1-9).
+// Panes are ordered by resource order, then by pane order within each resource.
+func (p *ProjectDetailView) getOrderedActivePanes() []project.PaneInfo {
+	var allPanes []project.PaneInfo
+	for _, r := range p.Resources {
+		allPanes = append(allPanes, r.Panes...)
+		if len(allPanes) >= 9 {
+			// Limit to 9 panes for SPC 1-9
+			allPanes = allPanes[:9]
+			break
+		}
+	}
+	return allPanes
+}
+
+// getPaneDisplayName returns a formatted display name for a pane with its index.
+func (p *ProjectDetailView) getPaneDisplayName(pane project.PaneInfo, index int) string {
+	// Find which resource this pane belongs to
+	var resourceName string
+	for _, r := range p.Resources {
+		for _, rp := range r.Panes {
+			if rp.ID == pane.ID {
+				if r.Kind == project.ResourcePR && r.PR != nil {
+					resourceName = fmt.Sprintf("%s-pr-%d", r.RepoName, r.PR.Number)
+				} else {
+					resourceName = r.RepoName
+				}
+				break
+			}
+		}
+		if resourceName != "" {
+			break
+		}
+	}
+	
+	if resourceName == "" {
+		resourceName = pane.ID
+	}
+	
+	paneType := "shell"
+	if pane.IsAgent {
+		paneType = "agent"
+	}
+	
+	return fmt.Sprintf("%d. %s (%s)", index, resourceName, paneType)
 }
