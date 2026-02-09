@@ -275,6 +275,10 @@ func TestSPCKeybindCommandsExecute(t *testing.T) {
 // TestOpenShellMsg_NoOverlay validates that OpenShellMsg opens a tmux pane
 // without pushing an overlay, and uses the selected resource's worktree path.
 func TestOpenShellMsg_NoOverlay(t *testing.T) {
+	// Skip if running inside tmux unless explicitly enabled to prevent polluting the session
+	if os.Getenv("TMUX") != "" && os.Getenv("DEVDEPLOY_TMUX_TESTS") != "1" {
+		t.Skip("Skipping test that calls tmux.SplitPane: set DEVDEPLOY_TMUX_TESTS=1 to enable")
+	}
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
@@ -441,6 +445,10 @@ func TestSelectedResourceLatestPaneID(t *testing.T) {
 // TestLaunchAgentMsg_NoOverlay validates that LaunchAgentMsg opens a tmux pane
 // with agent command, without pushing an overlay.
 func TestLaunchAgentMsg_NoOverlay(t *testing.T) {
+	// Skip if running inside tmux unless explicitly enabled to prevent polluting the session
+	if os.Getenv("TMUX") != "" && os.Getenv("DEVDEPLOY_TMUX_TESTS") != "1" {
+		t.Skip("Skipping test that calls tmux.SplitPane: set DEVDEPLOY_TMUX_TESTS=1 to enable")
+	}
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
@@ -513,6 +521,10 @@ func TestLaunchAgentMsg_NotInProjectDetail(t *testing.T) {
 
 // TestLaunchAgentMsg_RegistersAsAgent validates that a successful launch registers as PaneAgent.
 func TestLaunchAgentMsg_RegistersAsAgent(t *testing.T) {
+	// Skip if running inside tmux unless explicitly enabled to prevent polluting the session
+	if os.Getenv("TMUX") != "" && os.Getenv("DEVDEPLOY_TMUX_TESTS") != "1" {
+		t.Skip("Skipping test that calls tmux.SplitPane: set DEVDEPLOY_TMUX_TESTS=1 to enable")
+	}
 	// This test verifies the registration logic by directly calling the handler
 	// with a resource that has a valid worktree path (a real temp directory).
 	// tmux.SplitPane will fail (no tmux), so we just verify the error message
@@ -1202,6 +1214,10 @@ func TestLaunchRalphMsg_EmptyBeadsSlice(t *testing.T) {
 // TestLaunchRalphMsg_WithBeads validates that ralph proceeds when beads exist.
 // tmux.SplitPane will fail (no tmux), but we verify the error is from tmux, not beads.
 func TestLaunchRalphMsg_WithBeads(t *testing.T) {
+	// Skip if running inside tmux unless explicitly enabled to prevent polluting the session
+	if os.Getenv("TMUX") != "" && os.Getenv("DEVDEPLOY_TMUX_TESTS") != "1" {
+		t.Skip("Skipping test that calls tmux.SplitPane: set DEVDEPLOY_TMUX_TESTS=1 to enable")
+	}
 	ta := newTestApp(t)
 
 	detail := NewProjectDetailView("test-proj")

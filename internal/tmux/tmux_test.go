@@ -6,10 +6,20 @@ import (
 	"testing"
 )
 
-func TestSplitPane_KillPane(t *testing.T) {
+// skipIfTmuxTestsDisabled skips the test unless DEVDEPLOY_TMUX_TESTS=1 is set.
+// This prevents tests from polluting the user's live tmux session when running
+// tests inside tmux. Tests should only run when explicitly enabled.
+func skipIfTmuxTestsDisabled(t *testing.T) {
+	if os.Getenv("DEVDEPLOY_TMUX_TESTS") != "1" {
+		t.Skip("Skipping tmux test: set DEVDEPLOY_TMUX_TESTS=1 to enable")
+	}
 	if os.Getenv("TMUX") == "" {
 		t.Skip("Skipping tmux test: not running inside tmux")
 	}
+}
+
+func TestSplitPane_KillPane(t *testing.T) {
+	skipIfTmuxTestsDisabled(t)
 	workDir := t.TempDir()
 	paneID, err := SplitPane(workDir)
 	if err != nil {
@@ -24,9 +34,7 @@ func TestSplitPane_KillPane(t *testing.T) {
 }
 
 func TestSendKeys(t *testing.T) {
-	if os.Getenv("TMUX") == "" {
-		t.Skip("Skipping tmux test: not running inside tmux")
-	}
+	skipIfTmuxTestsDisabled(t)
 	workDir := t.TempDir()
 	paneID, err := SplitPane(workDir)
 	if err != nil {
@@ -39,9 +47,7 @@ func TestSendKeys(t *testing.T) {
 }
 
 func TestSplitPane_InvalidDir(t *testing.T) {
-	if os.Getenv("TMUX") == "" {
-		t.Skip("Skipping tmux test: not running inside tmux")
-	}
+	skipIfTmuxTestsDisabled(t)
 	_, err := SplitPane(filepath.Join(t.TempDir(), "nonexistent"))
 	if err == nil {
 		t.Error("expected error for nonexistent dir")
@@ -49,9 +55,7 @@ func TestSplitPane_InvalidDir(t *testing.T) {
 }
 
 func TestBreakPane_JoinPane(t *testing.T) {
-	if os.Getenv("TMUX") == "" {
-		t.Skip("Skipping tmux test: not running inside tmux")
-	}
+	skipIfTmuxTestsDisabled(t)
 	workDir := t.TempDir()
 	paneID, err := SplitPane(workDir)
 	if err != nil {
@@ -67,9 +71,7 @@ func TestBreakPane_JoinPane(t *testing.T) {
 }
 
 func TestListPaneIDs(t *testing.T) {
-	if os.Getenv("TMUX") == "" {
-		t.Skip("Skipping tmux test: not running inside tmux")
-	}
+	skipIfTmuxTestsDisabled(t)
 	// Create a pane to ensure we have at least one pane
 	workDir := t.TempDir()
 	paneID, err := SplitPane(workDir)
