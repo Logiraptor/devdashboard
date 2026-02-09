@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -32,12 +31,10 @@ func TestEmitAfter_RespectsContextCancellation(t *testing.T) {
 
 func TestStubRunner_RunReturnsCmd(t *testing.T) {
 	ctx := context.Background()
-	projectDir := filepath.Join(t.TempDir(), "testproj")
-	planPath := filepath.Join(projectDir, "plan.md")
-	designPath := filepath.Join(projectDir, "design.md")
+	projectDir := t.TempDir()
 
 	runner := &StubRunner{}
-	cmd := runner.Run(ctx, projectDir, planPath, designPath)
+	cmd := runner.Run(ctx, projectDir)
 	if cmd == nil {
 		t.Fatal("Run should return non-nil Cmd")
 	}

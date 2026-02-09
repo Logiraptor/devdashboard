@@ -13,7 +13,7 @@ import (
 // Runner is the integration point for triggering agent runs.
 // Implementations can be Cursor, Claude Code, or a stub.
 type Runner interface {
-	Run(ctx context.Context, projectDir, planPath, designPath string) tea.Cmd
+	Run(ctx context.Context, projectDir string) tea.Cmd
 }
 
 // StubRunner emits fake progress events for Phase 6 integration testing.
@@ -23,7 +23,7 @@ type StubRunner struct{}
 // Run implements Runner. Emits fake progress events as tea.Msg.
 // Phase 6 will consume these for live display.
 // Respects ctx cancellation: when ctx is done, emits StatusAborted and stops.
-func (s *StubRunner) Run(ctx context.Context, projectDir, planPath, designPath string) tea.Cmd {
+func (s *StubRunner) Run(ctx context.Context, projectDir string) tea.Cmd {
 	base := filepath.Base(projectDir)
 	return tea.Sequence(
 		emitAfter(ctx, 0, progress.Event{
@@ -32,12 +32,7 @@ func (s *StubRunner) Run(ctx context.Context, projectDir, planPath, designPath s
 			Timestamp: time.Now(),
 		}),
 		emitAfter(ctx, 400*time.Millisecond, progress.Event{
-			Message:   "Loading plan from " + planPath,
-			Status:    progress.StatusRunning,
-			Timestamp: time.Now(),
-		}),
-		emitAfter(ctx, 400*time.Millisecond, progress.Event{
-			Message:   "Analyzing design context",
+			Message:   "Analyzing project context",
 			Status:    progress.StatusRunning,
 			Timestamp: time.Now(),
 		}),
@@ -45,7 +40,12 @@ func (s *StubRunner) Run(ctx context.Context, projectDir, planPath, designPath s
 			Message:   "Executing tasks...",
 			Status:    progress.StatusRunning,
 			Timestamp: time.Now(),
-			Metadata:  map[string]string{"step": "3", "total": "5"},
+			Metadata:  map[string]string{"step": "2", "total": "4"},
+		}),
+		emitAfter(ctx, 400*time.Millisecond, progress.Event{
+			Message:   "Wrapping up...",
+			Status:    progress.StatusRunning,
+			Timestamp: time.Now(),
 		}),
 		emitAfter(ctx, 400*time.Millisecond, progress.Event{
 			Message:   "Agent run completed (stub)",
