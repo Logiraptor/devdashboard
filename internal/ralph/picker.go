@@ -35,6 +35,7 @@ func runBDReal(dir string, args ...string) ([]byte, error) {
 type BeadPicker struct {
 	WorkDir string
 	Project string
+	Epic    string
 	Labels  []string
 
 	// RunBD is the function used to execute bd commands.
@@ -54,6 +55,9 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 	args := []string{"ready", "--json"}
 	if p.Project != "" {
 		args = append(args, "--label", fmt.Sprintf("project:%s", p.Project))
+	}
+	if p.Epic != "" {
+		args = append(args, "--parent", p.Epic)
 	}
 	for _, l := range p.Labels {
 		args = append(args, "--label", l)
@@ -83,6 +87,37 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 
 	top := parsed[0]
 	return &top, nil
+}
+
+// Count returns the total number of ready beads available.
+func (p *BeadPicker) Count() (int, error) {
+	runner := p.RunBD
+	if runner == nil {
+		runner = runBDReal
+	}
+
+	args := []string{"ready", "--json"}
+	if p.Project != "" {
+		args = append(args, "--label", fmt.Sprintf("project:%s", p.Project))
+	}
+	if p.Epic != "" {
+		args = append(args, "--parent", p.Epic)
+	}
+	for _, l := range p.Labels {
+		args = append(args, "--label", l)
+	}
+
+	out, err := runner(p.WorkDir, args...)
+	if err != nil {
+		return 0, fmt.Errorf("bd ready: %w", err)
+	}
+
+	parsed, err := parseReadyBeads(out)
+	if err != nil {
+		return 0, fmt.Errorf("parsing bd ready output: %w", err)
+	}
+
+	return len(parsed), nil
 }
 
 // parseReadyBeads decodes JSON output from `bd ready --json` into Bead slices.

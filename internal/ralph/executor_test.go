@@ -93,8 +93,8 @@ func TestRunAgent_CapturesStdout(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Errorf("expected exit 0, got %d", result.ExitCode)
 	}
-	// The echo helper prints the args (--print --force --output-format stream-json hello world).
-	want := "--print --force --output-format stream-json hello world"
+	// The echo helper prints the args (--model composer-1 --print --force --output-format stream-json hello world).
+	want := "--model composer-1 --print --force --output-format stream-json hello world"
 	if result.Stdout != want {
 		t.Errorf("stdout = %q, want %q", result.Stdout, want)
 	}

@@ -25,6 +25,7 @@ func (s *stringSlice) Set(v string) error {
 type config struct {
 	workdir                 string
 	project                 string
+	epic                    string
 	labels                  stringSlice
 	maxIterations           int
 	agentTimeout            time.Duration
@@ -39,6 +40,7 @@ func parseFlags() config {
 
 	flag.StringVar(&cfg.workdir, "workdir", "", "path to the worktree to operate in (required)")
 	flag.StringVar(&cfg.project, "project", "", "project label filter for bd queries")
+	flag.StringVar(&cfg.epic, "epic", "", "epic filter for bd queries (filters to children of the epic)")
 	flag.Var(&cfg.labels, "label", "additional label filter (repeatable)")
 	flag.IntVar(&cfg.maxIterations, "max-iterations", 20, "safety cap on loop iterations")
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
@@ -91,6 +93,7 @@ func run(cfg config) (ralph.StopReason, error) {
 	loopCfg := ralph.LoopConfig{
 		WorkDir:                 cfg.workdir,
 		Project:                 cfg.project,
+		Epic:                    cfg.epic,
 		Labels:                  cfg.labels,
 		MaxIterations:           cfg.maxIterations,
 		AgentTimeout:            cfg.agentTimeout,

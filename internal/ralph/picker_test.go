@@ -177,6 +177,85 @@ func TestBeadPicker_Next_NoProjectLabel(t *testing.T) {
 	}
 }
 
+func TestBeadPicker_Next_PassesEpicToCommand(t *testing.T) {
+	var capturedArgs []string
+	picker := &BeadPicker{
+		WorkDir: "/fake/dir",
+		Project: "testproj",
+		Epic:    "devdeploy-bkp",
+		Labels:  []string{"team:backend"},
+		RunBD: func(dir string, args ...string) ([]byte, error) {
+			capturedArgs = args
+			return []byte("[]"), nil
+		},
+	}
+
+	_, _ = picker.Next()
+
+	// Verify the expected arguments were passed, including --parent epic.
+	expected := []string{"ready", "--json", "--label", "project:testproj", "--parent", "devdeploy-bkp", "--label", "team:backend"}
+	if len(capturedArgs) != len(expected) {
+		t.Fatalf("expected args %v, got %v", expected, capturedArgs)
+	}
+	for i, want := range expected {
+		if capturedArgs[i] != want {
+			t.Errorf("arg[%d]: expected %q, got %q", i, want, capturedArgs[i])
+		}
+	}
+}
+
+func TestBeadPicker_Next_NoEpicWhenEmpty(t *testing.T) {
+	var capturedArgs []string
+	picker := &BeadPicker{
+		WorkDir: "/fake/dir",
+		Project: "testproj",
+		Epic:    "", // no epic filter
+		RunBD: func(dir string, args ...string) ([]byte, error) {
+			capturedArgs = args
+			return []byte("[]"), nil
+		},
+	}
+
+	_, _ = picker.Next()
+
+	// Should not include --parent when epic is empty.
+	expected := []string{"ready", "--json", "--label", "project:testproj"}
+	if len(capturedArgs) != len(expected) {
+		t.Fatalf("expected args %v, got %v", expected, capturedArgs)
+	}
+	for i, want := range expected {
+		if capturedArgs[i] != want {
+			t.Errorf("arg[%d]: expected %q, got %q", i, want, capturedArgs[i])
+		}
+	}
+}
+
+func TestBeadPicker_Count_PassesEpicToCommand(t *testing.T) {
+	var capturedArgs []string
+	picker := &BeadPicker{
+		WorkDir: "/fake/dir",
+		Project: "testproj",
+		Epic:    "devdeploy-bkp",
+		RunBD: func(dir string, args ...string) ([]byte, error) {
+			capturedArgs = args
+			return []byte("[]"), nil
+		},
+	}
+
+	_, _ = picker.Count()
+
+	// Verify the expected arguments were passed, including --parent epic.
+	expected := []string{"ready", "--json", "--label", "project:testproj", "--parent", "devdeploy-bkp"}
+	if len(capturedArgs) != len(expected) {
+		t.Fatalf("expected args %v, got %v", expected, capturedArgs)
+	}
+	for i, want := range expected {
+		if capturedArgs[i] != want {
+			t.Errorf("arg[%d]: expected %q, got %q", i, want, capturedArgs[i])
+		}
+	}
+}
+
 func TestBeadPicker_Next_SingleBead(t *testing.T) {
 	now := time.Now()
 	entries := []bdReadyEntry{

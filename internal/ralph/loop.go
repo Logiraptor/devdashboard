@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"devdeploy/internal/beads"
@@ -75,6 +75,7 @@ const DefaultWallClockTimeout = 2 * time.Hour
 type LoopConfig struct {
 	WorkDir       string
 	Project       string
+	Epic          string
 	Labels        []string
 	MaxIterations int
 	DryRun        bool
@@ -111,6 +112,160 @@ type RunSummary struct {
 	TimedOut   int
 	Skipped    int
 	StopReason StopReason
+	Duration   time.Duration
+}
+
+// formatDuration formats a duration in a human-readable way (e.g., "2m34s", "1h12m").
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
+// formatIterationLog formats a per-iteration log line.
+func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome, duration time.Duration, outcomeSummary string) string {
+	var status string
+	switch outcome {
+	case OutcomeSuccess:
+		status = "success"
+	case OutcomeQuestion:
+		// Extract question bead IDs from outcomeSummary: "bead X has N question(s) needing human input: id1, id2"
+		status = "question"
+		if strings.Contains(outcomeSummary, ": ") {
+			parts := strings.Split(outcomeSummary, ": ")
+			if len(parts) > 1 {
+				questionIDs := strings.TrimSpace(parts[1])
+				status = fmt.Sprintf("question: %s", questionIDs)
+			}
+		}
+	case OutcomeFailure:
+		status = "failed"
+		// Extract exit code from: "bead X still open after agent run (exit code N, duration ...)"
+		// or: "failed to query bead X: ... (agent exit code N)"
+		if strings.Contains(outcomeSummary, "exit code") {
+			// Find "exit code" and extract the number after it
+			idx := strings.Index(outcomeSummary, "exit code")
+			if idx >= 0 {
+				afterCode := outcomeSummary[idx+len("exit code"):]
+				afterCode = strings.TrimSpace(afterCode)
+				// Extract first number
+				var exitCode string
+				for _, r := range afterCode {
+					if r >= '0' && r <= '9' {
+						exitCode += string(r)
+					} else if exitCode != "" {
+						break
+					}
+				}
+				if exitCode != "" {
+					status = fmt.Sprintf("failed: exit code %s", exitCode)
+				}
+			}
+		}
+	case OutcomeTimeout:
+		status = "timeout"
+		// Extract exit code from: "agent timed out after ... (exit code N)"
+		if strings.Contains(outcomeSummary, "exit code") {
+			idx := strings.Index(outcomeSummary, "exit code")
+			if idx >= 0 {
+				afterCode := outcomeSummary[idx+len("exit code"):]
+				afterCode = strings.TrimSpace(afterCode)
+				// Extract first number
+				var exitCode string
+				for _, r := range afterCode {
+					if r >= '0' && r <= '9' {
+						exitCode += string(r)
+					} else if exitCode != "" {
+						break
+					}
+				}
+				if exitCode != "" {
+					status = fmt.Sprintf("timeout: exit code %s", exitCode)
+				}
+			}
+		}
+		// For timeout, also show the timeout duration if available
+		if strings.Contains(outcomeSummary, "timed out after") {
+			idx := strings.Index(outcomeSummary, "timed out after")
+			if idx >= 0 {
+				afterAfter := outcomeSummary[idx+len("timed out after"):]
+				afterAfter = strings.TrimSpace(afterAfter)
+				// Extract duration (everything up to " (")
+				if parenIdx := strings.Index(afterAfter, " ("); parenIdx >= 0 {
+					timeoutDur := strings.TrimSpace(afterAfter[:parenIdx])
+					status = fmt.Sprintf("timeout (%s)", timeoutDur)
+				}
+			}
+		}
+	}
+
+	return fmt.Sprintf("[%d/%d] %s \"%s\" → %s (%s)",
+		iter, maxIter, beadID, title, status, formatDuration(duration))
+}
+
+// formatSummary formats the end-of-loop summary.
+func formatSummary(summary *RunSummary, remainingBeads int) string {
+	var lines []string
+	lines = append(lines, "Ralph loop complete:")
+
+	if summary.Succeeded > 0 {
+		lines = append(lines, fmt.Sprintf("  ✓ %d beads completed", summary.Succeeded))
+	}
+	if summary.Questions > 0 {
+		lines = append(lines, fmt.Sprintf("  ? %d questions created (needs human)", summary.Questions))
+	}
+	if summary.Failed > 0 {
+		lines = append(lines, fmt.Sprintf("  ✗ %d failure(s)", summary.Failed))
+	}
+	if summary.TimedOut > 0 {
+		lines = append(lines, fmt.Sprintf("  ⏱ %d timeout(s)", summary.TimedOut))
+	}
+	if summary.Skipped > 0 {
+		lines = append(lines, fmt.Sprintf("  ⊘ %d skipped", summary.Skipped))
+	}
+	if remainingBeads > 0 {
+		lines = append(lines, fmt.Sprintf("  ○ %d beads remaining (blocked)", remainingBeads))
+	}
+
+	lines = append(lines, fmt.Sprintf("  Duration: %s", formatDuration(summary.Duration)))
+
+	return strings.Join(lines, "\n")
+}
+
+// countRemainingBeads counts the number of ready beads remaining.
+func countRemainingBeads(cfg LoopConfig) int {
+	if cfg.PickNext == nil {
+		picker := &BeadPicker{
+			WorkDir: cfg.WorkDir,
+			Project: cfg.Project,
+			Epic:    cfg.Epic,
+			Labels:  cfg.Labels,
+		}
+		count, err := picker.Count()
+		if err != nil {
+			return 0
+		}
+		return count
+	}
+
+	// With a custom picker, we can't easily count
+	// Try to pick one to see if any remain
+	bead, err := cfg.PickNext()
+	if err != nil || bead == nil {
+		return 0
+	}
+	return 1 // At least one remains
 }
 
 // Run executes the ralph autonomous work loop. It picks beads, dispatches
@@ -126,7 +281,7 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	if out == nil {
 		out = os.Stdout
 	}
-	logger := log.New(out, "ralph: ", 0)
+	loopStart := time.Now()
 
 	// Resolve defaults.
 	consecutiveLimit := cfg.ConsecutiveFailureLimit
@@ -148,6 +303,7 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		picker := &BeadPicker{
 			WorkDir: cfg.WorkDir,
 			Project: cfg.Project,
+			Epic:    cfg.Epic,
 			Labels:  cfg.Labels,
 		}
 		pickNext = picker.Next
@@ -202,10 +358,8 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		if ctx.Err() != nil {
 			if ctx.Err() == context.DeadlineExceeded {
 				summary.StopReason = StopWallClock
-				logger.Printf("wall-clock timeout (%s) exceeded, stopping", wallTimeout)
 			} else {
 				summary.StopReason = StopContextCancelled
-				logger.Printf("context cancelled, stopping")
 			}
 			break
 		}
@@ -213,10 +367,10 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		// 1. Pick next bead.
 		bead, err := pickNext()
 		if err != nil {
+			summary.Duration = time.Since(loopStart)
 			return summary, fmt.Errorf("iteration %d: picking bead: %w", i+1, err)
 		}
 		if bead == nil {
-			logger.Printf("no ready beads, done")
 			summary.StopReason = StopNormal
 			break
 		}
@@ -226,7 +380,6 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		if lastFailedBeadID != "" && bead.ID == lastFailedBeadID {
 			skippedBeads[bead.ID] = true
 			summary.Skipped++
-			logger.Printf("skipping %s (same bead failed last iteration)", bead.ID)
 			lastFailedBeadID = "" // reset so we don't skip indefinitely
 
 			// Check if we should stop: if we've skipped beads and the picker
@@ -234,31 +387,24 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 			// Try one more pick; if that's also skipped, stop.
 			retryBead, retryErr := pickNext()
 			if retryErr != nil {
+				summary.Duration = time.Since(loopStart)
 				return summary, fmt.Errorf("iteration %d: picking bead (retry): %w", i+1, retryErr)
 			}
 			if retryBead == nil {
-				logger.Printf("no ready beads after skip, done")
 				summary.StopReason = StopNormal
 				break
 			}
 			if skippedBeads[retryBead.ID] {
 				summary.Skipped++
 				summary.StopReason = StopAllBeadsSkipped
-				logger.Printf("all available beads have been skipped, stopping")
 				break
 			}
 			bead = retryBead
 		}
 
-		if cfg.Verbose {
-			logger.Printf("iteration %d/%d: picked %s — %s (P%d)",
-				i+1, cfg.MaxIterations, bead.ID, bead.Title, bead.Priority)
-		}
-
 		// Dry-run: print what would be done without executing.
 		if cfg.DryRun {
-			logger.Printf("[dry-run] would work on %s — %s (P%d)",
-				bead.ID, bead.Title, bead.Priority)
+			fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 			summary.Iterations++
 			break
 		}
@@ -266,12 +412,14 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		// 2. Fetch full bead data and render prompt.
 		promptData, err := fetchPrompt(bead.ID)
 		if err != nil {
+			summary.Duration = time.Since(loopStart)
 			return summary, fmt.Errorf("iteration %d: fetching prompt data for %s: %w",
 				i+1, bead.ID, err)
 		}
 
 		prompt, err := render(promptData)
 		if err != nil {
+			summary.Duration = time.Since(loopStart)
 			return summary, fmt.Errorf("iteration %d: rendering prompt for %s: %w",
 				i+1, bead.ID, err)
 		}
@@ -279,6 +427,7 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		// 3. Execute agent.
 		result, err := execute(ctx, prompt)
 		if err != nil {
+			summary.Duration = time.Since(loopStart)
 			return summary, fmt.Errorf("iteration %d: running agent for %s: %w",
 				i+1, bead.ID, err)
 		}
@@ -286,8 +435,46 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		// 4. Assess outcome.
 		outcome, outcomeSummary := assessFn(bead.ID, result)
 
-		logger.Printf("iteration %d/%d: %s — %s [%s] %s",
-			i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, outcomeSummary)
+		// Print structured per-iteration log line.
+		fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+
+		// Verbose mode: print agent stdout/stderr excerpts.
+		if cfg.Verbose {
+			if result.Stdout != "" {
+				lines := strings.Split(result.Stdout, "\n")
+				maxLines := 10
+				if len(lines) > maxLines {
+					fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
+					for _, line := range lines[len(lines)-maxLines:] {
+						fmt.Fprintf(out, "    %s\n", line)
+					}
+				} else {
+					fmt.Fprintf(out, "  stdout:\n")
+					for _, line := range lines {
+						if line != "" {
+							fmt.Fprintf(out, "    %s\n", line)
+						}
+					}
+				}
+			}
+			if result.Stderr != "" {
+				lines := strings.Split(result.Stderr, "\n")
+				maxLines := 10
+				if len(lines) > maxLines {
+					fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
+					for _, line := range lines[len(lines)-maxLines:] {
+						fmt.Fprintf(out, "    %s\n", line)
+					}
+				} else {
+					fmt.Fprintf(out, "  stderr:\n")
+					for _, line := range lines {
+						if line != "" {
+							fmt.Fprintf(out, "    %s\n", line)
+						}
+					}
+				}
+			}
+		}
 
 		// 5. Update counters.
 		summary.Iterations++
@@ -313,14 +500,13 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		// Guard: consecutive failure limit.
 		if consecutiveFailures >= consecutiveLimit {
 			summary.StopReason = StopConsecutiveFails
-			logger.Printf("too many consecutive failures (%d), stopping", consecutiveFailures)
 			break
 		}
 
 		// 6. Sync beads state.
 		if err := syncFn(); err != nil {
 			if cfg.Verbose {
-				logger.Printf("bd sync warning: %v", err)
+				fmt.Fprintf(out, "  bd sync warning: %v\n", err)
 			}
 		}
 	}
@@ -328,12 +514,16 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	// If we exhausted all iterations without an earlier stop reason, set it.
 	if summary.StopReason == StopNormal && summary.Iterations >= cfg.MaxIterations {
 		summary.StopReason = StopMaxIterations
-		logger.Printf("reached max iterations (%d), stopping", cfg.MaxIterations)
 	}
 
-	// Final summary.
-	logger.Printf("done: %d iterations, %d succeeded, %d questions, %d failed, %d timed out, %d skipped [stop: %s]",
-		summary.Iterations, summary.Succeeded, summary.Questions, summary.Failed, summary.TimedOut, summary.Skipped, summary.StopReason)
+	// Calculate total duration.
+	summary.Duration = time.Since(loopStart)
+
+	// Count remaining beads.
+	remainingBeads := countRemainingBeads(cfg)
+
+	// Print final summary (always printed, even on early termination).
+	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
 
 	return summary, nil
 }

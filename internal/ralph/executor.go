@@ -36,7 +36,7 @@ func defaultCommandFactory(ctx context.Context, workDir string, args ...string) 
 }
 
 // RunAgent spawns an agent process with the given prompt and captures its
-// output. It uses "agent --print --force --output-format stream-json" as the
+// output. It uses "agent --model composer-1 --print --force --output-format stream-json" as the
 // command line. The process is killed if ctx expires or the timeout elapses.
 //
 // stdout is tee'd to os.Stdout in real time for observability while also being
@@ -55,7 +55,7 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 	ctx, cancel := context.WithTimeout(ctx, cfg.timeout)
 	defer cancel()
 
-	args := []string{"--print", "--force", "--output-format", "stream-json", prompt}
+	args := []string{"--model", "composer-1", "--print", "--force", "--output-format", "stream-json", prompt}
 	cmd := cfg.commandFactory(ctx, workDir, args...)
 
 	// Capture stdout: tee to live writer + buffer.
