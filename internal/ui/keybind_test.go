@@ -202,6 +202,114 @@ func TestKeyHandler_UnboundFallsThrough(t *testing.T) {
 	}
 }
 
+func TestKeyMap_ShortHelp(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
+	reg.BindWithDesc("SPC f", tea.Quit, "Find")
+	reg.Bind("SPC x", tea.Quit) // no desc
+	h := NewKeyHandler(reg)
+
+	keyMap := NewKeyMap(reg, h, ModeDashboard)
+	bindings := keyMap.ShortHelp()
+
+	if len(bindings) != 4 { // 3 bindings + esc
+		t.Errorf("expected 4 bindings (3 + esc), got %d", len(bindings))
+	}
+
+	// Check that esc is included
+	hasEsc := false
+	for _, b := range bindings {
+		if len(b.Keys()) > 0 && b.Keys()[0] == "esc" {
+			hasEsc = true
+			if b.Help().Key != "esc" || b.Help().Desc != "cancel" {
+				t.Errorf("esc binding: expected key='esc' desc='cancel', got key=%q desc=%q", b.Help().Key, b.Help().Desc)
+			}
+		}
+	}
+	if !hasEsc {
+		t.Error("expected esc binding to be included")
+	}
+}
+
+func TestKeyMap_ShortHelp_FilteredByMode(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p d", tea.Quit, "Delete project", []AppMode{ModeDashboard})
+	reg.BindWithDescForMode("SPC p a", tea.Quit, "Add repo", []AppMode{ModeProjectDetail})
+	h := NewKeyHandler(reg)
+
+	// Dashboard mode: first-level hints show "p" (Project) since it has sub-bindings
+	dashboardKeyMap := NewKeyMap(reg, h, ModeDashboard)
+	dashboardBindings := dashboardKeyMap.ShortHelp()
+	// Should have 2: p (Project), esc
+	if len(dashboardBindings) != 2 {
+		t.Errorf("Dashboard: expected 2 bindings (p, esc), got %d", len(dashboardBindings))
+	}
+
+	// Project detail mode: first-level hints show "p" (Project) since it has sub-bindings
+	detailKeyMap := NewKeyMap(reg, h, ModeProjectDetail)
+	detailBindings := detailKeyMap.ShortHelp()
+	// Should have 2: p (Project), esc
+	if len(detailBindings) != 2 {
+		t.Errorf("Project detail: expected 2 bindings (p, esc), got %d", len(detailBindings))
+	}
+
+	// Test second-level hints: set buffer to "SPC p"
+	h.Buffer = []string{"SPC", "p"}
+	h.LeaderWaiting = true
+
+	// Dashboard mode: second-level hints show c, d
+	dashboardKeyMap2 := NewKeyMap(reg, h, ModeDashboard)
+	dashboardBindings2 := dashboardKeyMap2.ShortHelp()
+	// Should have 3: c, d, esc
+	if len(dashboardBindings2) != 3 {
+		t.Errorf("Dashboard (SPC p): expected 3 bindings (c, d, esc), got %d", len(dashboardBindings2))
+	}
+
+	// Project detail mode: second-level hints show a
+	detailKeyMap2 := NewKeyMap(reg, h, ModeProjectDetail)
+	detailBindings2 := detailKeyMap2.ShortHelp()
+	// Should have 2: a, esc
+	if len(detailBindings2) != 2 {
+		t.Errorf("Project detail (SPC p): expected 2 bindings (a, esc), got %d", len(detailBindings2))
+	}
+}
+
+func TestKeyMap_ShortHelp_WithBuffer(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDesc("SPC p c", tea.Quit, "Create project")
+	reg.BindWithDesc("SPC p d", tea.Quit, "Delete project")
+	h := NewKeyHandler(reg)
+
+	// Set buffer to "SPC p" to show second-level hints
+	h.Buffer = []string{"SPC", "p"}
+	h.LeaderWaiting = true
+
+	keyMap := NewKeyMap(reg, h, ModeDashboard)
+	bindings := keyMap.ShortHelp()
+
+	// Should show c, d, esc (not p)
+	if len(bindings) != 3 {
+		t.Errorf("expected 3 bindings (c, d, esc), got %d", len(bindings))
+	}
+}
+
+func TestKeyMap_FullHelp(t *testing.T) {
+	reg := NewKeybindRegistry()
+	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
+	h := NewKeyHandler(reg)
+
+	keyMap := NewKeyMap(reg, h, ModeDashboard)
+	groups := keyMap.FullHelp()
+
+	if len(groups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(groups))
+	}
+	if len(groups[0]) != 2 { // q + esc
+		t.Errorf("expected 2 bindings in group, got %d", len(groups[0]))
+	}
+}
+
 // keyMsg creates a tea.KeyMsg for testing. Bubble Tea uses KeyType and Runes.
 // KeySpace.String() returns " ", KeyEsc returns "esc", etc.
 func keyMsg(s string) tea.KeyMsg {

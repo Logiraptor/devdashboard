@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -235,4 +238,71 @@ func keyToSeqPart(s string) string {
 		return "SPC"
 	}
 	return s
+}
+
+// KeyMap implements help.KeyMap for rendering keybind help with bubbles/help.Model.
+// It wraps KeybindRegistry and KeyHandler to generate key.Binding instances
+// from leader hints filtered by the current mode and sequence context.
+type KeyMap struct {
+	registry   *KeybindRegistry
+	keyHandler *KeyHandler
+	mode       AppMode
+}
+
+// NewKeyMap creates a KeyMap for the given registry, handler, and mode.
+func NewKeyMap(registry *KeybindRegistry, keyHandler *KeyHandler, mode AppMode) help.KeyMap {
+	return &KeyMap{
+		registry:   registry,
+		keyHandler: keyHandler,
+		mode:       mode,
+	}
+}
+
+// ShortHelp returns bindings for the short help view.
+// Generates key.Binding instances from LeaderHints filtered by current mode and sequence.
+func (km *KeyMap) ShortHelp() []key.Binding {
+	if km.registry == nil {
+		return nil
+	}
+	currentSeq := ""
+	if km.keyHandler != nil && len(km.keyHandler.Buffer) > 0 {
+		currentSeq = strings.Join(km.keyHandler.Buffer, " ")
+	}
+	hints := km.registry.LeaderHints(currentSeq, km.mode)
+	if len(hints) == 0 {
+		return nil
+	}
+
+	// Sort keys for stable display
+	keys := make([]string, 0, len(hints))
+	for k := range hints {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Convert hints to key.Binding slice
+	bindings := make([]key.Binding, 0, len(keys))
+	for _, k := range keys {
+		desc := hints[k]
+		bindings = append(bindings, key.NewBinding(
+			key.WithKeys(k),
+			key.WithHelp(k, desc),
+		))
+	}
+	// Add esc cancel binding
+	bindings = append(bindings, key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "cancel"),
+	))
+	return bindings
+}
+
+// FullHelp returns bindings grouped by columns for the full help view.
+// For now, returns a single column with the same bindings as ShortHelp.
+func (km *KeyMap) FullHelp() [][]key.Binding {
+	short := km.ShortHelp()
+	if len(short) == 0 {
+		return nil
+	}
+	return [][]key.Binding{short}
 }
