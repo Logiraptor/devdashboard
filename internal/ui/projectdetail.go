@@ -56,7 +56,7 @@ func (p *ProjectDetailView) SetSize(width, height int) {
 
 // Init implements View.
 func (p *ProjectDetailView) Init() tea.Cmd {
-	return nil
+	return p.viewport.Init()
 }
 
 // Update implements View.
@@ -161,23 +161,19 @@ func (p *ProjectDetailView) ensureVisible() {
 	vh := p.viewport.Height
 	scrollY := p.viewport.YOffset
 	
-	if row < scrollY {
-		// Cursor is above viewport, scroll up
-		linesToScroll := scrollY - row
-		for i := 0; i < linesToScroll; i++ {
-			p.viewport.LineUp(1)
-		}
-	} else if row >= scrollY+vh {
-		// Cursor is below viewport, scroll down
-		linesToScroll := row - (scrollY + vh) + 1
-		for i := 0; i < linesToScroll; i++ {
-			p.viewport.LineDown(1)
-		}
-	}
 	// When near the top, snap to 0 to keep the header (title + "Resources") visible.
 	// The header occupies the first 3 lines (rows 0-2).
-	if p.viewport.YOffset > 0 && p.viewport.YOffset <= 3 {
-		p.viewport.GotoTop()
+	if row <= 2 {
+		p.viewport.SetYOffset(0)
+		return
+	}
+	
+	if row < scrollY {
+		// Cursor is above viewport, scroll to show cursor at top
+		p.viewport.SetYOffset(row)
+	} else if row >= scrollY+vh {
+		// Cursor is below viewport, scroll to show cursor at bottom
+		p.viewport.SetYOffset(row - vh + 1)
 	}
 }
 
@@ -386,37 +382,7 @@ func (p *ProjectDetailView) View() string {
 	// (viewport handles caching internally for performance)
 	p.updateViewportContent()
 	
-	viewportContent := p.viewport.View()
-	
-	// Add custom scroll indicators if content doesn't fit
-	if len(p.contentLines) > vh {
-		scrollHintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		var out strings.Builder
-		scrollY := p.viewport.YOffset
-		if scrollY > 0 {
-			out.WriteString(scrollHintStyle.Render(fmt.Sprintf("  ↑ %d more", scrollY)) + "\n")
-		}
-		out.WriteString(viewportContent)
-		remaining := len(p.contentLines) - (scrollY + vh)
-		if remaining > 0 {
-			// Remove trailing newline from viewport content and add indicator
-			lines := strings.Split(viewportContent, "\n")
-			if len(lines) > 0 && lines[len(lines)-1] == "" {
-				lines = lines[:len(lines)-1]
-			}
-			out.Reset()
-			if scrollY > 0 {
-				out.WriteString(scrollHintStyle.Render(fmt.Sprintf("  ↑ %d more", scrollY)) + "\n")
-			}
-			out.WriteString(strings.Join(lines, "\n"))
-			out.WriteString("\n" + scrollHintStyle.Render(fmt.Sprintf("  ↓ %d more", remaining)))
-			out.WriteString("\n")
-			return out.String()
-		}
-		return out.String()
-	}
-	
-	return viewportContent
+	return p.viewport.View()
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").

@@ -703,9 +703,9 @@ func TestProjectDetailView_ScrollsDownWhenCursorMovesBelow(t *testing.T) {
 	if !strings.Contains(output, "repo-19") {
 		t.Errorf("expected repo-19 visible after scrolling down, got:\n%s", output)
 	}
-	// Should have "↑ N more" indicator.
-	if !strings.Contains(output, "↑") {
-		t.Errorf("expected ↑ scroll indicator, got:\n%s", output)
+	// Verify scrolling occurred - earlier repos should not be visible
+	if strings.Contains(output, "repo-00") {
+		t.Errorf("expected repo-00 not visible after scrolling down (viewport should have scrolled), got:\n%s", output)
 	}
 }
 
@@ -737,13 +737,9 @@ func TestProjectDetailView_ScrollsUpWhenCursorMovesAbove(t *testing.T) {
 	if !strings.Contains(output, "repo-00") {
 		t.Errorf("expected repo-00 visible after scrolling back up, got:\n%s", output)
 	}
-	// Title should be visible (no ↑ indicator).
-	if strings.Contains(output, "↑") {
-		t.Errorf("expected no ↑ indicator at top, got:\n%s", output)
-	}
-	// Should have ↓ indicator since there's more below.
-	if !strings.Contains(output, "↓") {
-		t.Errorf("expected ↓ scroll indicator, got:\n%s", output)
+	// Verify scrolling occurred - later repos should not be visible
+	if strings.Contains(output, "repo-19") {
+		t.Errorf("expected repo-19 not visible after scrolling back up (viewport should have scrolled), got:\n%s", output)
 	}
 }
 
