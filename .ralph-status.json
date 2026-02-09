@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 8,
+  "iteration": 9,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-fyt.2",
-    "title": "Remove/style the blue square filter input area"
+    "id": "devdeploy-fyt.3",
+    "title": "Add tests for filter mode interaction"
   },
-  "elapsed_ns": 458631607208,
+  "elapsed_ns": 483262891333,
   "tallies": {
-    "completed": 6,
+    "completed": 7,
     "questions": 0,
     "failed": 1,
     "timed_out": 0,

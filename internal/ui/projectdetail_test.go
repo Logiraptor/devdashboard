@@ -900,6 +900,237 @@ func TestProjectDetailView_WiderTerminalShowsMoreContent(t *testing.T) {
 	}
 }
 
+// --- Filter mode tests (devdeploy-fyt.3) ---
+
+func TestProjectDetailView_FilterFlow(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy"},
+		{Kind: project.ResourceRepo, RepoName: "grafana", WorktreePath: "/tmp/grafana"},
+		{Kind: project.ResourcePR, RepoName: "devdeploy",
+			PR: &project.PRInfo{Number: 42, Title: "Add dark mode", State: "OPEN"}},
+	}
+	v.buildItems()
+
+	// Initially not filtering
+	if v.IsFiltering() {
+		t.Fatal("expected not filtering initially")
+	}
+
+	// Press / to start filtering
+	v.Update(keyMsg("/"))
+	if !v.IsFiltering() {
+		t.Fatal("expected filtering after pressing /")
+	}
+
+	// Type "dev" to filter
+	v.Update(keyMsg("d"))
+	v.Update(keyMsg("e"))
+	v.Update(keyMsg("v"))
+
+	// Still filtering (user is typing)
+	if !v.IsFiltering() {
+		t.Fatal("expected still filtering while typing")
+	}
+
+	// Press enter to apply filter
+	v.Update(keyMsg("enter"))
+
+	// After enter, filter should be applied (not actively filtering, but filter is active)
+	// The list should be in FilterApplied state, not Filtering state
+	if v.IsFiltering() {
+		t.Error("expected not actively filtering after enter (filter applied)")
+	}
+
+	// Verify filter is applied - only items matching "dev" should be visible
+	// Check that SelectedResource returns a filtered item
+	selected := v.SelectedResource()
+	if selected == nil {
+		t.Fatal("expected a selected resource after filtering")
+	}
+	// Selected resource should match filter (devdeploy repo or PR)
+	if selected.RepoName != "devdeploy" {
+		t.Errorf("expected selected resource to match filter 'dev', got %q", selected.RepoName)
+	}
+}
+
+func TestProjectDetailView_CancelFilter(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy"},
+		{Kind: project.ResourceRepo, RepoName: "grafana", WorktreePath: "/tmp/grafana"},
+	}
+	v.buildItems()
+
+	initialSelected := v.Selected()
+
+	// Press / to start filtering
+	v.Update(keyMsg("/"))
+	if !v.IsFiltering() {
+		t.Fatal("expected filtering after pressing /")
+	}
+
+	// Type "dev" to filter
+	v.Update(keyMsg("d"))
+	v.Update(keyMsg("e"))
+	v.Update(keyMsg("v"))
+
+	// Press esc to cancel filter
+	v.Update(keyMsg("esc"))
+
+	// Filter should be cleared, not actively filtering
+	if v.IsFiltering() {
+		t.Error("expected not filtering after esc")
+	}
+
+	// Should still be in detail view (not navigated away)
+	// Verify by checking that we can still navigate
+	v.Update(keyMsg("j"))
+	if v.Selected() == initialSelected {
+		t.Error("expected navigation to work after canceling filter")
+	}
+}
+
+func TestProjectDetailView_NavigationAfterFilter(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy"},
+		{Kind: project.ResourceRepo, RepoName: "grafana", WorktreePath: "/tmp/grafana"},
+		{Kind: project.ResourcePR, RepoName: "devdeploy",
+			PR: &project.PRInfo{Number: 42, Title: "Add dark mode", State: "OPEN"}},
+	}
+	v.buildItems()
+
+	// Apply filter: / -> type "dev" -> enter
+	v.Update(keyMsg("/"))
+	v.Update(keyMsg("d"))
+	v.Update(keyMsg("e"))
+	v.Update(keyMsg("v"))
+	v.Update(keyMsg("enter"))
+
+	// Verify filter is applied (not actively filtering)
+	if v.IsFiltering() {
+		t.Error("expected not actively filtering after applying filter")
+	}
+
+	// Get initial selection after filter
+	initialIdx := v.Selected()
+	initialResource := v.SelectedResource()
+
+	// j navigation should work (doesn't error, moves selection)
+	v.Update(keyMsg("j"))
+	if v.Selected() == initialIdx {
+		t.Error("expected j navigation to work after filter")
+	}
+	newResource := v.SelectedResource()
+	if newResource == nil {
+		t.Fatal("expected a selected resource after j navigation")
+	}
+
+	// k navigation should work (returns to previous position)
+	v.Update(keyMsg("k"))
+	if v.Selected() != initialIdx {
+		t.Errorf("expected k navigation to return to initial position, got %d (was %d)", v.Selected(), initialIdx)
+	}
+	if v.SelectedResource() != initialResource {
+		t.Error("expected k navigation to return to initial resource")
+	}
+}
+
+func TestProjectDetailView_SPCCommandsAfterFilter(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("test-proj")
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+		{Kind: project.ResourceRepo, RepoName: "otherrepo", WorktreePath: "/tmp/otherrepo"},
+	}
+	detail.buildItems()
+	detail.setSelected(0)
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	// Apply filter: / -> type "my" -> enter
+	_, _ = adapter.Update(keyMsg("/"))
+	_, _ = adapter.Update(keyMsg("m"))
+	_, _ = adapter.Update(keyMsg("y"))
+	_, _ = adapter.Update(keyMsg("enter"))
+
+	// Verify filter is applied (not actively filtering)
+	if ta.Detail.IsFiltering() {
+		t.Error("expected not actively filtering after applying filter")
+	}
+
+	// SPC commands should work normally
+	// Test SPC p (should show project hints)
+	_, cmd := adapter.Update(keyMsg(" "))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+	if !ta.KeyHandler.LeaderWaiting {
+		t.Error("expected leader waiting after SPC")
+	}
+
+	// Complete SPC p a (add repo) - should work even with filter applied
+	_, cmd = adapter.Update(keyMsg("p"))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+	_, cmd = adapter.Update(keyMsg("a"))
+	if cmd != nil {
+		adapter.Update(cmd())
+	}
+	// Should show add repo modal or status (depending on workspace repos)
+	// The key is that it doesn't error due to filter state
+}
+
+func TestProjectDetailView_EnterAfterFilter(t *testing.T) {
+	ta := newTestApp(t)
+	_ = ta.ProjectManager.CreateProject("test-proj")
+
+	detail := NewProjectDetailView("test-proj")
+	detail.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo"},
+		{Kind: project.ResourceRepo, RepoName: "otherrepo", WorktreePath: "/tmp/otherrepo"},
+	}
+	detail.buildItems()
+	detail.setSelected(0)
+
+	ta.Mode = ModeProjectDetail
+	ta.Detail = detail
+	adapter := ta.adapter()
+
+	// Apply filter: / -> type "my" -> enter
+	_, _ = adapter.Update(keyMsg("/"))
+	_, _ = adapter.Update(keyMsg("m"))
+	_, _ = adapter.Update(keyMsg("y"))
+	_, _ = adapter.Update(keyMsg("enter"))
+
+	// Verify filter is applied
+	if ta.Detail.IsFiltering() {
+		t.Error("expected not actively filtering after applying filter")
+	}
+
+	// Verify selected resource matches filter
+	selected := ta.Detail.SelectedResource()
+	if selected == nil || selected.RepoName != "myrepo" {
+		t.Fatalf("expected selected resource to be 'myrepo' after filter, got %+v", selected)
+	}
+
+	// Press enter on selected item - should trigger OpenShellMsg
+	_, cmd := adapter.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from Enter after filter")
+	}
+	msg := cmd()
+	if _, ok := msg.(OpenShellMsg); !ok {
+		t.Errorf("expected OpenShellMsg from Enter after filter, got %T", msg)
+	}
+}
+
 // TestProjectDetailView_MaxContentLen is skipped - maxContentLen() method doesn't exist in current implementation
 // func TestProjectDetailView_MaxContentLen(t *testing.T) {
 // 	// This test was for a maxContentLen() method that no longer exists
