@@ -65,7 +65,8 @@ func TestProjectKeybinds_ShowDeleteProjectMsg(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 	ta.Dashboard.Projects = []ProjectSummary{{Name: "test-proj", Selected: false}}
-	ta.Dashboard.Selected = 0
+	ta.Dashboard.updateProjects()
+	ta.Dashboard.list.Select(0)
 	adapter := ta.adapter()
 
 	// SPC p d in Dashboard with project: should show confirmation modal
@@ -74,8 +75,8 @@ func TestProjectKeybinds_ShowDeleteProjectMsg(t *testing.T) {
 		t.Errorf("expected 1 overlay (confirmation modal) after ShowDeleteProjectMsg, got %d", ta.Overlays.Len())
 	}
 	top, _ := ta.Overlays.Peek()
-	if _, ok := top.View.(*DeleteProjectConfirmModal); !ok {
-		t.Errorf("expected DeleteProjectConfirmModal on overlay, got %T", top.View)
+	if _, ok := top.View.(*ConfirmModal); !ok {
+		t.Errorf("expected ConfirmModal on overlay, got %T", top.View)
 	}
 	// Simulate user pressing Enter to confirm
 	_, cmd = adapter.Update(keyMsg("enter"))
@@ -97,7 +98,8 @@ func TestProjectKeybinds_ShowDeleteProjectMsg_CancelWithEsc(t *testing.T) {
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 	ta.Dashboard.Projects = []ProjectSummary{{Name: "test-proj", Selected: false}}
-	ta.Dashboard.Selected = 0
+	ta.Dashboard.updateProjects()
+	ta.Dashboard.list.Select(0)
 	adapter := ta.adapter()
 
 	// SPC p d -> confirmation modal
@@ -651,9 +653,9 @@ func TestShowRemoveResourceMsg_ShowsConfirmModal(t *testing.T) {
 		t.Fatalf("expected 1 overlay after ShowRemoveResourceMsg, got %d", ta.Overlays.Len())
 	}
 	top, _ := ta.Overlays.Peek()
-	modal, ok := top.View.(*RemoveResourceConfirmModal)
+	modal, ok := top.View.(*ConfirmModal)
 	if !ok {
-		t.Fatalf("expected RemoveResourceConfirmModal, got %T", top.View)
+		t.Fatalf("expected ConfirmModal, got %T", top.View)
 	}
 	if modal.Resource.RepoName != "myrepo" {
 		t.Errorf("expected modal resource 'myrepo', got %q", modal.Resource.RepoName)
@@ -1019,7 +1021,8 @@ func TestDeleteProjectMsg_KillsPanesForAllResources(t *testing.T) {
 	ta.Sessions.Register(rk, "%21", session.PaneAgent)
 
 	ta.Dashboard.Projects = []ProjectSummary{{Name: "doomed-proj"}}
-	ta.Dashboard.Selected = 0
+	ta.Dashboard.updateProjects()
+	ta.Dashboard.list.Select(0)
 	adapter := ta.adapter()
 
 	// Push delete confirmation modal and confirm.

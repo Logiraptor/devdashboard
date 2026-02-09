@@ -102,11 +102,6 @@ func (m *RepoPickerModal) Update(msg tea.Msg) (View, tea.Cmd) {
 
 // View implements View.
 func (m *RepoPickerModal) View() string {
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
-		Padding(0, 1).
-		Margin(1)
 	help := "Enter: select  Esc: cancel"
-	return boxStyle.Render(m.list.View() + "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(help))
+	return ModalStyles.BoxCompact.Render(m.list.View() + "\n" + ModalStyles.Help.Render(help))
 }

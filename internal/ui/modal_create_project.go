@@ -5,7 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // CreateProjectModal is a modal for entering a new project name.
@@ -52,14 +51,8 @@ func (m *CreateProjectModal) Update(msg tea.Msg) (View, tea.Cmd) {
 
 // View implements View.
 func (m *CreateProjectModal) View() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
-		Padding(1, 2).
-		Margin(1)
-	content := titleStyle.Render("Create project") + "\n\n"
+	content := ModalStyles.Title.Render("Create project") + "\n\n"
 	content += m.input.View() + "\n\n"
-	content += lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Enter: create  Esc: cancel")
-	return boxStyle.Render(content)
+	content += ModalStyles.Help.Render("Enter: create  Esc: cancel")
+	return ModalStyles.BoxDefault.Render(content)
 }

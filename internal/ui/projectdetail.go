@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
 	"devdeploy/internal/project"
@@ -22,7 +23,8 @@ type ProjectDetailView struct {
 	SelectedBeadIdx int                // -1 = resource header, >=0 = bead index within Selected resource
 	termWidth       int                // terminal width from WindowSizeMsg; 0 = unknown (use defaults)
 	termHeight      int                // terminal height from WindowSizeMsg; 0 = unknown (no scroll)
-	scrollOffset    int                // first visible content line (0-based)
+	viewport        viewport.Model
+	contentLines    []string           // cached rendered lines for cursor tracking
 }
 
 // Ensure ProjectDetailView implements View.
@@ -30,10 +32,12 @@ var _ View = (*ProjectDetailView)(nil)
 
 // NewProjectDetailView creates a detail view for a project.
 func NewProjectDetailView(name string) *ProjectDetailView {
+	vp := viewport.New(0, 0)
 	return &ProjectDetailView{
 		ProjectName:     name,
 		Resources:       nil,
 		SelectedBeadIdx: -1,
+		viewport:        vp,
 	}
 }
 
@@ -41,7 +45,13 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 func (p *ProjectDetailView) SetSize(width, height int) {
 	p.termWidth = width
 	p.termHeight = height
-	p.ensureVisible()
+	vh := p.viewHeight()
+	if vh > 0 {
+		p.viewport.Width = width
+		p.viewport.Height = vh
+		p.updateViewportContent()
+		p.ensureVisible()
+	}
 }
 
 // Init implements View.
@@ -59,15 +69,18 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 		switch msg.String() {
 		case "j", "down":
 			p.moveDown()
+			p.updateViewportContent()
 			p.ensureVisible()
 			return p, nil
 		case "k", "up":
 			p.moveUp()
+			p.updateViewportContent()
 			p.ensureVisible()
 			return p, nil
 		case "g":
 			p.Selected = 0
 			p.SelectedBeadIdx = -1
+			p.updateViewportContent()
 			p.ensureVisible()
 			return p, nil
 		case "G":
@@ -79,13 +92,18 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 					p.SelectedBeadIdx = -1
 				}
 			}
+			p.updateViewportContent()
 			p.ensureVisible()
 			return p, nil
 		case "esc":
 			return p, nil // Caller handles back navigation
 		}
 	}
-	return p, nil
+	
+	// Pass other messages to viewport (mouse wheel, etc.)
+	var cmd tea.Cmd
+	p.viewport, cmd = p.viewport.Update(msg)
+	return p, cmd
 }
 
 // maxContentLen returns the maximum number of characters for content text
@@ -134,23 +152,32 @@ func (p *ProjectDetailView) cursorRow() int {
 	return row
 }
 
-// ensureVisible adjusts scrollOffset so the cursor row is within the viewport.
+// ensureVisible adjusts viewport scroll so the cursor row is within the viewport.
 func (p *ProjectDetailView) ensureVisible() {
-	vh := p.viewHeight()
-	if vh <= 0 {
+	if p.viewport.Height <= 0 || len(p.contentLines) == 0 {
 		return
 	}
 	row := p.cursorRow()
-	if row < p.scrollOffset {
-		p.scrollOffset = row
+	vh := p.viewport.Height
+	scrollY := p.viewport.YOffset
+	
+	if row < scrollY {
+		// Cursor is above viewport, scroll up
+		linesToScroll := scrollY - row
+		for i := 0; i < linesToScroll; i++ {
+			p.viewport.LineUp(1)
+		}
+	} else if row >= scrollY+vh {
+		// Cursor is below viewport, scroll down
+		linesToScroll := row - (scrollY + vh) + 1
+		for i := 0; i < linesToScroll; i++ {
+			p.viewport.LineDown(1)
+		}
 	}
-	if row >= p.scrollOffset+vh {
-		p.scrollOffset = row - vh + 1
-	}
-	// When near the top, snap to 0 to keep the header (title + "Resources")
-	// visible. The header occupies the first 3 lines (rows 0-2).
-	if p.scrollOffset > 0 && p.scrollOffset <= 3 {
-		p.scrollOffset = 0
+	// When near the top, snap to 0 to keep the header (title + "Resources") visible.
+	// The header occupies the first 3 lines (rows 0-2).
+	if p.viewport.YOffset > 0 && p.viewport.YOffset <= 3 {
+		p.viewport.GotoTop()
 	}
 }
 
@@ -219,8 +246,20 @@ func (p *ProjectDetailView) SelectedBead() *project.BeadInfo {
 	return &r.Beads[p.SelectedBeadIdx]
 }
 
-// View implements View.
-func (p *ProjectDetailView) View() string {
+// updateViewportContent renders the full content and updates the viewport.
+func (p *ProjectDetailView) updateViewportContent() {
+	content := p.renderContent()
+	p.contentLines = strings.Split(content, "\n")
+	// Remove trailing empty line from final "\n"
+	if len(p.contentLines) > 0 && p.contentLines[len(p.contentLines)-1] == "" {
+		p.contentLines = p.contentLines[:len(p.contentLines)-1]
+	}
+	fullContent := strings.Join(p.contentLines, "\n")
+	p.viewport.SetContent(fullContent)
+}
+
+// renderContent renders the full project detail content without scrolling.
+func (p *ProjectDetailView) renderContent() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	repoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -332,48 +371,52 @@ func (p *ProjectDetailView) View() string {
 		}
 	}
 
-	content := b.String()
+	return b.String()
+}
 
-	// Apply viewport scrolling when terminal height is known.
+// View implements View.
+func (p *ProjectDetailView) View() string {
 	vh := p.viewHeight()
 	if vh <= 0 {
-		return content
+		// Terminal size unknown, render without scrolling
+		return p.renderContent()
 	}
-
-	lines := strings.Split(content, "\n")
-	// strings.Split produces a trailing empty element from the final "\n".
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	if len(lines) <= vh {
-		return content // everything fits, no clipping needed
-	}
-
-	start := p.scrollOffset
-	if start < 0 {
-		start = 0
-	}
-	end := start + vh
-	if end > len(lines) {
-		end = len(lines)
-		start = end - vh
-		if start < 0 {
-			start = 0
+	
+	// Always update viewport content to reflect current selection and resources
+	// (viewport handles caching internally for performance)
+	p.updateViewportContent()
+	
+	viewportContent := p.viewport.View()
+	
+	// Add custom scroll indicators if content doesn't fit
+	if len(p.contentLines) > vh {
+		scrollHintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		var out strings.Builder
+		scrollY := p.viewport.YOffset
+		if scrollY > 0 {
+			out.WriteString(scrollHintStyle.Render(fmt.Sprintf("  ↑ %d more", scrollY)) + "\n")
 		}
+		out.WriteString(viewportContent)
+		remaining := len(p.contentLines) - (scrollY + vh)
+		if remaining > 0 {
+			// Remove trailing newline from viewport content and add indicator
+			lines := strings.Split(viewportContent, "\n")
+			if len(lines) > 0 && lines[len(lines)-1] == "" {
+				lines = lines[:len(lines)-1]
+			}
+			out.Reset()
+			if scrollY > 0 {
+				out.WriteString(scrollHintStyle.Render(fmt.Sprintf("  ↑ %d more", scrollY)) + "\n")
+			}
+			out.WriteString(strings.Join(lines, "\n"))
+			out.WriteString("\n" + scrollHintStyle.Render(fmt.Sprintf("  ↓ %d more", remaining)))
+			out.WriteString("\n")
+			return out.String()
+		}
+		return out.String()
 	}
-
-	scrollHintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	var out strings.Builder
-	if start > 0 {
-		out.WriteString(scrollHintStyle.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
-	}
-	out.WriteString(strings.Join(lines[start:end], "\n"))
-	if end < len(lines) {
-		out.WriteString("\n" + scrollHintStyle.Render(fmt.Sprintf("  ↓ %d more", len(lines)-end)))
-	}
-	out.WriteString("\n")
-
-	return out.String()
+	
+	return viewportContent
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").

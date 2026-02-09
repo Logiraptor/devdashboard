@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -30,6 +32,35 @@ func RenderKeybindHelp(keyHandler *KeyHandler, mode AppMode) string {
 	}
 	sort.Strings(keys)
 
+	// Convert hints to key.Binding slice for bubbles/help
+	bindings := make([]key.Binding, 0, len(keys))
+	for _, k := range keys {
+		desc := hints[k]
+		bindings = append(bindings, key.NewBinding(
+			key.WithKeys(k),
+			key.WithHelp(k, desc),
+		))
+	}
+	// Add esc cancel binding
+	bindings = append(bindings, key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "cancel"),
+	))
+
+	// Create help model with custom styling
+	helpModel := help.New()
+	helpModel.Styles.ShortKey = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Bold(true)
+	helpModel.Styles.ShortDesc = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241"))
+	helpModel.Styles.ShortSeparator = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241"))
+
+	// Render help view
+	helpContent := helpModel.ShortHelpView(bindings)
+
+	// Wrap in box with prefix label
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("86")).
@@ -40,24 +71,10 @@ func RenderKeybindHelp(keyHandler *KeyHandler, mode AppMode) string {
 		Foreground(lipgloss.Color("241")).
 		Bold(false)
 
-	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
-		Bold(true)
-
-	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241"))
-
-	var parts []string
-	for _, k := range keys {
-		desc := hints[k]
-		parts = append(parts, keyStyle.Render(k)+": "+descStyle.Render(desc))
-	}
-
 	prefix := "SPC"
 	if currentSeq != "" {
 		prefix = currentSeq
 	}
-	content := labelStyle.Render(prefix) + " " + strings.Join(parts, "  ")
-	content += "  " + descStyle.Render("[esc] cancel")
+	content := labelStyle.Render(prefix) + " " + helpContent
 	return boxStyle.Render(content)
 }

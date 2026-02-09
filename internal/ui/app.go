@@ -162,7 +162,8 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProjectsLoadedMsg:
 		if a.Dashboard != nil {
 			a.Dashboard.Projects = msg.Projects
-			a.Dashboard.Selected = 0
+			a.Dashboard.updateProjects()
+			a.Dashboard.list.Select(0)
 		}
 		// Trigger async enrichment for PR and bead counts.
 		if a.ProjectManager != nil && len(msg.Projects) > 0 {
@@ -177,6 +178,13 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			// Start spinner for async loading
+			if a.Dashboard != nil {
+				return a, tea.Batch(
+					a.Dashboard.SetLoading(true),
+					enrichesProjectsCmd(a.ProjectManager, projectInfos),
+				)
+			}
 			return a, enrichesProjectsCmd(a.ProjectManager, projectInfos)
 		}
 		return a, nil
@@ -184,11 +192,14 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Dashboard != nil {
 			// Update projects with enriched data (PR and bead counts).
 			// Preserve selection state.
-			selectedIdx := a.Dashboard.Selected
+			selectedIdx := a.Dashboard.Selected()
 			a.Dashboard.Projects = msg.Projects
+			a.Dashboard.updateProjects()
 			if selectedIdx < len(msg.Projects) {
-				a.Dashboard.Selected = selectedIdx
+				a.Dashboard.list.Select(selectedIdx)
 			}
+			// Stop spinner
+			return a, a.Dashboard.SetLoading(false)
 		}
 		return a, nil
 	case CreateProjectMsg:
@@ -267,7 +278,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, modal.Init()
 	case ShowDeleteProjectMsg:
 		if a.Mode == ModeDashboard && a.Dashboard != nil && len(a.Dashboard.Projects) > 0 {
-			idx := a.Dashboard.Selected
+			idx := a.Dashboard.Selected()
 			if idx >= 0 && idx < len(a.Dashboard.Projects) {
 				name := a.Dashboard.Projects[idx].Name
 				modal := NewDeleteProjectConfirmModal(name)
@@ -578,9 +589,12 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if a.Mode == ModeDashboard && msg.String() == "enter" {
 			d := a.Dashboard
-			if d != nil && d.Selected < len(d.Projects) {
-				return a, func() tea.Msg {
-					return SelectProjectMsg{Name: d.Projects[d.Selected].Name}
+			if d != nil {
+				idx := d.Selected()
+				if idx >= 0 && idx < len(d.Projects) {
+					return a, func() tea.Msg {
+						return SelectProjectMsg{Name: d.Projects[idx].Name}
+					}
 				}
 			}
 		}
