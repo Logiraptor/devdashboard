@@ -197,6 +197,27 @@ func TestDashboardView_ViewShowsSPCHint(t *testing.T) {
 	}
 }
 
+func TestDashboardView_BeadCountShown(t *testing.T) {
+	d := NewDashboardView()
+	d.Projects = []ProjectSummary{
+		{Name: "alpha", RepoCount: 2, PRCount: 3, BeadCount: 5},
+		{Name: "beta", RepoCount: 1, PRCount: 0, BeadCount: 0},
+	}
+
+	output := d.View()
+
+	// alpha has 5 beads — should show in the line
+	if !strings.Contains(output, "5 beads") {
+		t.Errorf("expected '5 beads' for alpha, got:\n%s", output)
+	}
+	// beta has 0 beads — should NOT show bead count
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "beta") && strings.Contains(line, "beads") {
+			t.Errorf("expected no bead count for beta (0 beads), got: %s", line)
+		}
+	}
+}
+
 func TestDashboardView_SingleProject(t *testing.T) {
 	d := NewDashboardView()
 	d.Projects = []ProjectSummary{

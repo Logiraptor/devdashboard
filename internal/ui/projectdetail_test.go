@@ -247,3 +247,101 @@ func TestProjectDetailView_NoReposMessage(t *testing.T) {
 		t.Errorf("expected '(no repos added)' for empty resources, got:\n%s", output)
 	}
 }
+
+func TestProjectDetailView_BeadsRenderedUnderRepo(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{
+			Kind:         project.ResourceRepo,
+			RepoName:     "devdeploy",
+			WorktreePath: "/tmp/devdeploy",
+			Beads: []project.BeadInfo{
+				{ID: "devdeploy-abc", Title: "Fix the thing", Status: "open"},
+				{ID: "devdeploy-def", Title: "Add feature X", Status: "in_progress"},
+			},
+		},
+	}
+
+	output := v.View()
+
+	if !strings.Contains(output, "devdeploy-abc") {
+		t.Errorf("expected bead ID 'devdeploy-abc' in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Fix the thing") {
+		t.Errorf("expected bead title 'Fix the thing' in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "devdeploy-def") {
+		t.Errorf("expected bead ID 'devdeploy-def' in output, got:\n%s", output)
+	}
+	// in_progress status should show as a tag
+	if !strings.Contains(output, "[in_progress]") {
+		t.Errorf("expected '[in_progress]' status tag in output, got:\n%s", output)
+	}
+	// open status should NOT show as a tag (it's the default)
+	if strings.Contains(output, "[open]") {
+		t.Errorf("expected no '[open]' tag (default status), got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_BeadsRenderedUnderPR(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy"},
+		{
+			Kind:     project.ResourcePR,
+			RepoName: "devdeploy",
+			PR:       &project.PRInfo{Number: 42, Title: "Add dark mode", State: "OPEN"},
+			Beads: []project.BeadInfo{
+				{ID: "devdeploy-ghi", Title: "Review feedback", Status: "open"},
+			},
+		},
+	}
+
+	output := v.View()
+
+	if !strings.Contains(output, "devdeploy-ghi") {
+		t.Errorf("expected bead 'devdeploy-ghi' under PR, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Review feedback") {
+		t.Errorf("expected bead title 'Review feedback' under PR, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_NoBeadsNoPlaceholder(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	v.Resources = []project.Resource{
+		{Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy"},
+	}
+
+	output := v.View()
+
+	// Should not contain any bead-related placeholder
+	if strings.Contains(output, "no beads") {
+		t.Errorf("expected no 'no beads' placeholder, got:\n%s", output)
+	}
+}
+
+func TestProjectDetailView_BeadTitleTruncation(t *testing.T) {
+	v := NewProjectDetailView("my-project")
+	longTitle := "This is a very long bead title that should be truncated because it exceeds the maximum display width"
+	v.Resources = []project.Resource{
+		{
+			Kind:         project.ResourceRepo,
+			RepoName:     "devdeploy",
+			WorktreePath: "/tmp/devdeploy",
+			Beads: []project.BeadInfo{
+				{ID: "devdeploy-xyz", Title: longTitle, Status: "open"},
+			},
+		},
+	}
+
+	output := v.View()
+
+	// The full long title should not appear — it should be truncated
+	if strings.Contains(output, longTitle) {
+		t.Errorf("expected long bead title to be truncated, got:\n%s", output)
+	}
+	if !strings.Contains(output, "...") {
+		t.Errorf("expected '...' truncation marker, got:\n%s", output)
+	}
+}

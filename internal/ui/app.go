@@ -660,11 +660,32 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 				Name:      info.Name,
 				RepoCount: info.RepoCount,
 				PRCount:   m.CountPRs(info.Name),
+				BeadCount: countProjectBeads(m, info.Name),
 				Selected:  false, // Dashboard uses Selected index
 			}
 		}
 		return ProjectsLoadedMsg{Projects: projects}
 	}
+}
+
+// countProjectBeads counts open beads across all resources in a project.
+func countProjectBeads(m *project.Manager, projectName string) int {
+	resources := m.ListProjectResources(projectName)
+	count := 0
+	for _, r := range resources {
+		if r.WorktreePath == "" {
+			continue
+		}
+		switch r.Kind {
+		case project.ResourceRepo:
+			count += len(beads.ListForRepo(r.WorktreePath, projectName))
+		case project.ResourcePR:
+			if r.PR != nil {
+				count += len(beads.ListForPR(r.WorktreePath, projectName, r.PR.Number))
+			}
+		}
+	}
+	return count
 }
 
 // NewAppModel creates the root application model.

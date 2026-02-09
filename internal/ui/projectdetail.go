@@ -81,6 +81,8 @@ func (p *ProjectDetailView) View() string {
 	selectedPRStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
 	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	beadStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	beadStatusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
 	var b strings.Builder
 	b.WriteString("← " + titleStyle.Render(p.ProjectName) + "\n\n")
@@ -92,6 +94,9 @@ func (p *ProjectDetailView) View() string {
 	for i, r := range p.Resources {
 		selected := i == p.Selected
 		status := resourceStatus(r)
+
+		// Determine bead indent based on resource kind.
+		beadIndent := "    "
 
 		switch r.Kind {
 		case project.ResourceRepo:
@@ -109,6 +114,7 @@ func (p *ProjectDetailView) View() string {
 			}
 			b.WriteString("\n")
 		case project.ResourcePR:
+			beadIndent = "      "
 			if r.PR != nil {
 				bullet := "    "
 				if selected {
@@ -132,6 +138,19 @@ func (p *ProjectDetailView) View() string {
 				}
 				b.WriteString("\n")
 			}
+		}
+
+		// Render beads under the resource.
+		for _, bd := range r.Beads {
+			beadLine := bd.ID + "  " + bd.Title
+			if len(beadLine) > 60 {
+				beadLine = beadLine[:57] + "..."
+			}
+			rendered := beadIndent + beadStyle.Render(beadLine)
+			if bd.Status != "" && bd.Status != "open" {
+				rendered += "  " + beadStatusStyle.Render("["+bd.Status+"]")
+			}
+			b.WriteString(rendered + "\n")
 		}
 	}
 
