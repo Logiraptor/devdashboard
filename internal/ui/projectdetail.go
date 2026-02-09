@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
@@ -25,6 +26,12 @@ type ProjectDetailView struct {
 	termHeight      int                // terminal height from WindowSizeMsg; 0 = unknown (no scroll)
 	viewport        viewport.Model
 	contentLines    []string           // cached rendered lines for cursor tracking
+	
+	// Search state
+	searchActive      bool
+	searchInput       textinput.Model
+	searchMatches     []int // line indices that match the search query
+	currentMatchIndex int   // index into searchMatches (-1 = no match selected)
 }
 
 // Ensure ProjectDetailView implements View.
@@ -33,11 +40,17 @@ var _ View = (*ProjectDetailView)(nil)
 // NewProjectDetailView creates a detail view for a project.
 func NewProjectDetailView(name string) *ProjectDetailView {
 	vp := viewport.New(0, 0)
+	ti := textinput.New()
+	ti.Placeholder = "search..."
+	ti.CharLimit = 100
+	ti.Width = 40
 	return &ProjectDetailView{
 		ProjectName:     name,
 		Resources:       nil,
 		SelectedBeadIdx: -1,
 		viewport:        vp,
+		searchInput:     ti,
+		currentMatchIndex: -1,
 	}
 }
 
@@ -52,11 +65,18 @@ func (p *ProjectDetailView) SetSize(width, height int) {
 		p.updateViewportContent()
 		p.ensureVisible()
 	}
+	// Update search input width
+	if p.searchActive && width > 0 {
+		p.searchInput.Width = width - 20
+		if p.searchInput.Width < 20 {
+			p.searchInput.Width = 20
+		}
+	}
 }
 
 // Init implements View.
 func (p *ProjectDetailView) Init() tea.Cmd {
-	return p.viewport.Init()
+	return tea.Batch(p.viewport.Init(), textinput.Blink)
 }
 
 // Update implements View.
@@ -66,7 +86,71 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 		p.SetSize(msg.Width, msg.Height)
 		return p, nil
 	case tea.KeyMsg:
+		// Handle search mode
+		if p.searchActive {
+			// If input is focused, handle search input
+			if p.searchInput.Focused() {
+				switch msg.String() {
+				case "esc":
+					p.cancelSearch()
+					p.updateViewportContent()
+					return p, nil
+				case "enter":
+					// Accept search and jump to first match, exit input mode
+					p.acceptSearch()
+					p.searchInput.Blur()
+					p.updateViewportContent()
+					if len(p.searchMatches) > 0 {
+						p.jumpToMatch(0)
+					}
+					return p, nil
+				}
+				// Update search input
+				var cmd tea.Cmd
+				p.searchInput, cmd = p.searchInput.Update(msg)
+				query := strings.ToLower(p.searchInput.Value())
+				p.updateSearchMatches(query)
+				p.updateViewportContent()
+				return p, cmd
+			} else {
+				// Input not focused - search is active but we're navigating matches
+				switch msg.String() {
+				case "esc":
+					p.cancelSearch()
+					p.updateViewportContent()
+					return p, nil
+				case "n":
+					// Next match
+					if len(p.searchMatches) > 0 {
+						p.currentMatchIndex = (p.currentMatchIndex + 1) % len(p.searchMatches)
+						p.jumpToMatch(p.currentMatchIndex)
+						p.updateViewportContent()
+					}
+					return p, nil
+				case "N":
+					// Previous match
+					if len(p.searchMatches) > 0 {
+						p.currentMatchIndex--
+						if p.currentMatchIndex < 0 {
+							p.currentMatchIndex = len(p.searchMatches) - 1
+						}
+						p.jumpToMatch(p.currentMatchIndex)
+						p.updateViewportContent()
+					}
+					return p, nil
+				case "/":
+					// Start new search
+					p.startSearch()
+					return p, textinput.Blink
+				}
+			}
+		}
+		
+		// Normal navigation mode
 		switch msg.String() {
+		case "/":
+			p.startSearch()
+			return p, textinput.Blink
 		case "j", "down":
 			p.moveDown()
 			p.updateViewportContent()
@@ -371,14 +455,160 @@ func (p *ProjectDetailView) View() string {
 	vh := p.viewHeight()
 	if vh <= 0 {
 		// Terminal size unknown, render without scrolling
-		return p.renderContent()
+		content := p.renderContent()
+		if p.searchActive {
+			content += "\n" + p.renderSearchPrompt()
+		}
+		return content
 	}
 	
 	// Always update viewport content to reflect current selection and resources
 	// (viewport handles caching internally for performance)
 	p.updateViewportContent()
 	
-	return p.viewport.View()
+	view := p.viewport.View()
+	if p.searchActive {
+		view += "\n" + p.renderSearchPrompt()
+	}
+	return view
+}
+
+// startSearch activates search mode.
+func (p *ProjectDetailView) startSearch() {
+	p.searchActive = true
+	p.searchInput.Focus()
+	p.searchInput.SetValue("")
+	if p.termWidth > 0 {
+		p.searchInput.Width = p.termWidth - 20 // Leave room for prompt text
+		if p.searchInput.Width < 20 {
+			p.searchInput.Width = 20
+		}
+	}
+	p.searchMatches = nil
+	p.currentMatchIndex = -1
+}
+
+// cancelSearch deactivates search mode.
+func (p *ProjectDetailView) cancelSearch() {
+	p.searchActive = false
+	p.searchInput.Blur()
+	p.searchInput.SetValue("")
+	p.searchMatches = nil
+	p.currentMatchIndex = -1
+}
+
+// acceptSearch accepts the current search query and stays in search mode.
+func (p *ProjectDetailView) acceptSearch() {
+	// Search stays active, just ensure matches are updated
+	query := strings.ToLower(p.searchInput.Value())
+	p.updateSearchMatches(query)
+	if len(p.searchMatches) > 0 {
+		p.currentMatchIndex = 0
+	} else {
+		p.currentMatchIndex = -1
+	}
+}
+
+// updateSearchMatches finds all lines matching the query.
+func (p *ProjectDetailView) updateSearchMatches(query string) {
+	p.searchMatches = nil
+	p.currentMatchIndex = -1
+	
+	if query == "" {
+		return
+	}
+	
+	queryLower := strings.ToLower(query)
+	for i, line := range p.contentLines {
+		if strings.Contains(strings.ToLower(line), queryLower) {
+			p.searchMatches = append(p.searchMatches, i)
+		}
+	}
+	
+	// If we have matches and no current selection, select first match
+	if len(p.searchMatches) > 0 && p.currentMatchIndex < 0 {
+		p.currentMatchIndex = 0
+	}
+}
+
+// jumpToMatch navigates to the match at the given index in searchMatches.
+func (p *ProjectDetailView) jumpToMatch(matchIdx int) {
+	if matchIdx < 0 || matchIdx >= len(p.searchMatches) {
+		return
+	}
+	
+	lineIdx := p.searchMatches[matchIdx]
+	
+	// Convert line index to Selected/SelectedBeadIdx
+	// Header: "← title\n\n" (2 lines) + "Resources\n" (1 line) = 3 lines.
+	if lineIdx < 3 {
+		// In header area, don't move cursor
+		return
+	}
+	
+	// Find which resource/bead corresponds to this line
+	lineNum := lineIdx - 3 // Skip header lines
+	resourceIdx := 0
+	beadIdx := -1
+	
+	for i, r := range p.Resources {
+		if lineNum == 0 {
+			// This is the resource header
+			resourceIdx = i
+			beadIdx = -1
+			break
+		}
+		lineNum--
+		
+		// Check beads
+		if lineNum < len(r.Beads) {
+			resourceIdx = i
+			beadIdx = lineNum
+			break
+		}
+		lineNum -= len(r.Beads)
+	}
+	
+	p.Selected = resourceIdx
+	p.SelectedBeadIdx = beadIdx
+	p.ensureVisible()
+}
+
+// renderSearchPrompt renders the search prompt at the bottom.
+func (p *ProjectDetailView) renderSearchPrompt() string {
+	matchInfo := ""
+	if len(p.searchMatches) > 0 {
+		current := p.currentMatchIndex + 1
+		if current < 1 {
+			current = 1
+		}
+		matchInfo = fmt.Sprintf(" [%d/%d]", current, len(p.searchMatches))
+	} else if p.searchInput.Value() != "" {
+		matchInfo = " [no matches]"
+	}
+	
+	var prompt string
+	if p.searchInput.Focused() {
+		// Input mode - show input with cursor
+		inputView := p.searchInput.View()
+		prompt = "/" + inputView + matchInfo
+		if p.termWidth > 60 {
+			prompt += "  Enter: accept  Esc: cancel"
+		}
+	} else {
+		// Navigation mode - show query and navigation hints
+		query := p.searchInput.Value()
+		if query != "" {
+			prompt = "/" + query + matchInfo
+		} else {
+			prompt = "/" + matchInfo
+		}
+		if p.termWidth > 60 {
+			prompt += "  n: next  N: prev  /: search  Esc: cancel"
+		}
+	}
+	
+	return Styles.Hint.Render(prompt)
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").

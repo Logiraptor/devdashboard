@@ -1,7 +1,7 @@
 # Keybind System
 
 **Status**: accepted  
-**Last updated**: 2026-02-07
+**Last updated**: 2026-02-09
 
 ## KeybindRegistry
 
@@ -22,14 +22,15 @@
 
 ## Default Bindings
 
-| Sequence | Action |
-|----------|--------|
-| `q`, `ctrl+c` | Quit |
-| `SPC q` | Quit (spacemacs-style) |
-| `j`, `down` | Next item (navigates through beads within a resource before advancing) |
-| `k`, `up` | Previous item (navigates through beads within a resource before retreating) |
-| `g` | First item (resource header) |
-| `G` | Last item (last bead of last resource, or last resource header) |
+| Sequence | Action | Context |
+|----------|--------|---------|
+| `q`, `ctrl+c` | Quit | Any |
+| `SPC q` | Quit (spacemacs-style) | Any |
+| `j`, `down` | Next item (navigates through beads within a resource before advancing) | Project detail |
+| `k`, `up` | Previous item (navigates through beads within a resource before retreating) | Project detail |
+| `g` | First item (resource header) | Project detail |
+| `G` | Last item (last bead of last resource, or last resource header) | Project detail |
+| `/` | Search/filter lines in resource view (vim-style) | Project detail |
 
 ## SPC p — Project Management
 
@@ -41,6 +42,25 @@
 | `SPC p r` | Remove repo from project | Project detail |
 | `SPC p x` | Remove selected resource (kill panes, remove worktree) | Project detail |
 | `d` | Remove selected resource (shortcut for SPC p x) | Project detail |
+
+## Search Mode (`/` in Project Detail)
+
+Pressing `/` activates vim-style search mode for filtering and jumping to lines in the resource view.
+
+| Key | Action |
+|-----|--------|
+| `/` | Activate search mode (shows search prompt) |
+| `Enter` | Accept search and jump to first match (exits input mode, stays in search for n/N) |
+| `n` | Next match (when search is active, input not focused) |
+| `N` | Previous match (when search is active, input not focused) |
+| `Esc` | Cancel search (exits search mode entirely) |
+
+**Search behavior:**
+- Search is case-insensitive and matches any text in resource names, bead IDs, and bead titles
+- While typing the search query, matches update in real-time
+- After pressing Enter, use `n`/`N` to navigate between matches
+- Press `/` again while in search navigation mode to start a new search
+- Search prompt shows match count: `[current/total]` or `[no matches]`
 
 ## SPC s — Shell / Agent
 

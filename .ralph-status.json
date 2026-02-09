@@ -1,0 +1,17 @@
+{
+  "state": "running",
+  "iteration": 1,
+  "max_iterations": 20,
+  "current_bead": {
+    "id": "devdeploy-rfx",
+    "title": "Add / keybind to search/filter lines in resource view"
+  },
+  "elapsed_ns": 109608208,
+  "tallies": {
+    "completed": 0,
+    "questions": 0,
+    "failed": 0,
+    "timed_out": 0,
+    "skipped": 0
+  }
+}
