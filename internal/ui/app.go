@@ -675,7 +675,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.StatusIsError = false
 			return a, nil
 		}
-		// Launch ralph binary with --project and --workdir flags.
+		// Launch ralph binary with --workdir flag.
 		// If a specific bead is selected, add --bead flag (or --epic if it's an epic).
 		paneID, err := tmux.SplitPane(workDir)
 		if err != nil {
@@ -685,9 +685,8 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Escape the workdir path for shell safety (handle spaces, special chars).
 		escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
-		escapedProject := strings.ReplaceAll(a.Detail.ProjectName, "'", `'\''`)
 		selectedBead := a.Detail.SelectedBead()
-		cmd := fmt.Sprintf("%s --project '%s' --workdir '%s'", ralphPath, escapedProject, escapedWorkdir)
+		cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
 		if selectedBead != nil {
 			escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
 			// If selected bead is an epic, use --epic flag for sequential leaf processing
