@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 const (
@@ -452,13 +453,13 @@ type DashboardSummary struct {
 // Unlike ListProjectResources (which also fetches merged PRs for the
 // detail view), this method only fetches open PRs — sufficient for
 // the dashboard where merged PRs are not displayed.
+// PR fetching is parallelized across repos for better performance.
 func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
 	repos, _ := m.ListProjectRepos(projectName)
 	projDir := m.projectDir(projectName)
 
-	var resources []Resource
-	prCount := 0
-
+	// Pre-allocate repo resources (filesystem-only, no network calls).
+	resources := make([]Resource, 0, len(repos))
 	for _, repoName := range repos {
 		worktreePath := filepath.Join(projDir, repoName)
 		resources = append(resources, Resource{
@@ -466,14 +467,47 @@ func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
 			RepoName:     repoName,
 			WorktreePath: worktreePath,
 		})
+	}
 
-		// Fetch open PRs once per repo (filtered to mine + team review requests).
-		prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-		if err != nil {
+	// Fetch PRs concurrently across repos.
+	type repoResult struct {
+		repoName string
+		prs      []PRInfo
+		err      error
+	}
+	resultChan := make(chan repoResult, len(repos))
+	var wg sync.WaitGroup
+
+	for _, repoName := range repos {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			worktreePath := filepath.Join(projDir, name)
+			prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
+			resultChan <- repoResult{repoName: name, prs: prs, err: err}
+		}(repoName)
+	}
+
+	// Close channel when all goroutines complete.
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results and build resource list.
+	prCount := 0
+	repoPRs := make(map[string][]PRInfo)
+	for result := range resultChan {
+		if result.err != nil {
 			continue
 		}
-		prCount += len(prs)
+		repoPRs[result.repoName] = result.prs
+		prCount += len(result.prs)
+	}
 
+	// Append PR resources in repo order (matching the repo resource order).
+	for _, repoName := range repos {
+		prs := repoPRs[repoName]
 		for i := range prs {
 			pr := &prs[i]
 			// Check if a PR worktree already exists on disk.

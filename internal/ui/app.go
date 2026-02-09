@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -38,8 +39,15 @@ type HidePaneMsg struct{}
 // ShowPaneMsg shows the selected resource's most recent pane (join-pane back into current window).
 type ShowPaneMsg struct{}
 
-// ProjectsLoadedMsg is sent when projects are loaded from disk.
+// ProjectsLoadedMsg is sent when projects are loaded from disk (phase 1: instant data).
+// Contains project names and repo counts only (filesystem-only, <10ms).
 type ProjectsLoadedMsg struct {
+	Projects []ProjectSummary
+}
+
+// ProjectsEnrichedMsg is sent when PR and bead counts are loaded (phase 2: async data).
+// Updates the projects with PR counts and bead counts that require network/subprocess calls.
+type ProjectsEnrichedMsg struct {
 	Projects []ProjectSummary
 }
 
@@ -155,6 +163,32 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Dashboard != nil {
 			a.Dashboard.Projects = msg.Projects
 			a.Dashboard.Selected = 0
+		}
+		// Trigger async enrichment for PR and bead counts.
+		if a.ProjectManager != nil && len(msg.Projects) > 0 {
+			infos, _ := a.ProjectManager.ListProjects()
+			// Match project infos to loaded projects to preserve repo counts.
+			projectInfos := make([]project.ProjectInfo, 0, len(msg.Projects))
+			for _, p := range msg.Projects {
+				for _, info := range infos {
+					if info.Name == p.Name {
+						projectInfos = append(projectInfos, info)
+						break
+					}
+				}
+			}
+			return a, enrichesProjectsCmd(a.ProjectManager, projectInfos)
+		}
+		return a, nil
+	case ProjectsEnrichedMsg:
+		if a.Dashboard != nil {
+			// Update projects with enriched data (PR and bead counts).
+			// Preserve selection state.
+			selectedIdx := a.Dashboard.Selected
+			a.Dashboard.Projects = msg.Projects
+			if selectedIdx < len(msg.Projects) {
+				a.Dashboard.Selected = selectedIdx
+			}
 		}
 		return a, nil
 	case CreateProjectMsg:
@@ -749,10 +783,10 @@ func resourceKeyFromResource(r project.Resource) string {
 	return session.ResourceKey("repo", r.RepoName, 0)
 }
 
-// loadProjectsCmd returns a command that loads projects from disk and sends ProjectsLoadedMsg.
-// It uses LoadProjectSummary to fetch open PRs once per repo (instead of
-// separate CountPRs + ListProjectResources calls which would invoke
-// gh pr list up to 3N times per N repos).
+// loadProjectsCmd returns a command that loads projects from disk (phase 1: instant data).
+// It loads project names and repo counts from filesystem only (<10ms), then triggers
+// async enrichment for PR and bead counts. Returns both ProjectsLoadedMsg (instant)
+// and enrichesProjectsCmd (async) for progressive loading.
 func loadProjectsCmd(m *project.Manager) tea.Cmd {
 	return func() tea.Msg {
 		if m == nil {
@@ -762,40 +796,97 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 		if err != nil {
 			return ProjectsLoadedMsg{Projects: nil}
 		}
+		// Phase 1: Instant data (filesystem-only)
 		projects := make([]ProjectSummary, len(infos))
 		for i, info := range infos {
-			summary := m.LoadProjectSummary(info.Name)
 			projects[i] = ProjectSummary{
 				Name:      info.Name,
 				RepoCount: info.RepoCount,
-				PRCount:   summary.PRCount,
-				BeadCount: countBeadsFromResources(summary.Resources, info.Name),
-				Selected:  false, // Dashboard uses Selected index
+				PRCount:   -1, // -1 indicates loading/unknown
+				BeadCount: -1, // -1 indicates loading/unknown
+				Selected:  false,
 			}
 		}
 		return ProjectsLoadedMsg{Projects: projects}
 	}
 }
 
+// enrichesProjectsCmd returns a command that enriches projects with PR and bead counts (phase 2: async data).
+// This runs after the dashboard has rendered with instant data, fetching PRs and beads
+// in parallel across repos and resources for optimal performance.
+func enrichesProjectsCmd(m *project.Manager, projectInfos []project.ProjectInfo) tea.Cmd {
+	return func() tea.Msg {
+		if m == nil {
+			return ProjectsEnrichedMsg{Projects: nil}
+		}
+		projects := make([]ProjectSummary, len(projectInfos))
+		
+		// Parallelize across projects (each project's data is independent).
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		
+		for i, info := range projectInfos {
+			wg.Add(1)
+			go func(idx int, projectName string, repoCount int) {
+				defer wg.Done()
+				summary := m.LoadProjectSummary(projectName)
+				beadCount := countBeadsFromResources(summary.Resources, projectName)
+				
+				mu.Lock()
+				projects[idx] = ProjectSummary{
+					Name:      projectName,
+					RepoCount: repoCount,
+					PRCount:   summary.PRCount,
+					BeadCount: beadCount,
+					Selected:  false,
+				}
+				mu.Unlock()
+			}(i, info.Name, info.RepoCount)
+		}
+		
+		wg.Wait()
+		
+		return ProjectsEnrichedMsg{Projects: projects}
+	}
+}
+
 // countBeadsFromResources counts open beads across the given resources.
 // Used by loadProjectsCmd with resources from LoadProjectSummary to avoid
 // a separate ListProjectResources call (which would redundantly fetch PRs).
+// Bead counting is parallelized across resources for better performance.
 func countBeadsFromResources(resources []project.Resource, projectName string) int {
-	count := 0
+	if len(resources) == 0 {
+		return 0
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	totalCount := 0
+
 	for _, r := range resources {
 		if r.WorktreePath == "" {
 			continue
 		}
-		switch r.Kind {
-		case project.ResourceRepo:
-			count += len(beads.ListForRepo(r.WorktreePath, projectName))
-		case project.ResourcePR:
-			if r.PR != nil {
-				count += len(beads.ListForPR(r.WorktreePath, projectName, r.PR.Number))
+		wg.Add(1)
+		go func(resource project.Resource) {
+			defer wg.Done()
+			var count int
+			switch resource.Kind {
+			case project.ResourceRepo:
+				count = len(beads.ListForRepo(resource.WorktreePath, projectName))
+			case project.ResourcePR:
+				if resource.PR != nil {
+					count = len(beads.ListForPR(resource.WorktreePath, projectName, resource.PR.Number))
+				}
 			}
-		}
+			mu.Lock()
+			totalCount += count
+			mu.Unlock()
+		}(r)
 	}
-	return count
+
+	wg.Wait()
+	return totalCount
 }
 
 // NewAppModel creates the root application model.

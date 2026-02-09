@@ -89,11 +89,24 @@ func (d *DashboardView) View() string {
 		if i == d.Selected {
 			bullet = "● "
 		}
-		line := fmt.Sprintf("%s%s  %d repos, %d PRs",
-			bullet, p.Name, p.RepoCount, p.PRCount)
+		
+		// Format PR count (show "…" if loading, i.e., -1)
+		prCountStr := "…"
+		if p.PRCount >= 0 {
+			prCountStr = fmt.Sprintf("%d", p.PRCount)
+		}
+		
+		line := fmt.Sprintf("%s%s  %d repos, %s PRs",
+			bullet, p.Name, p.RepoCount, prCountStr)
+		
+		// Format bead count (show only if loaded and > 0)
 		if p.BeadCount > 0 {
 			line += fmt.Sprintf(", %d beads", p.BeadCount)
+		} else if p.BeadCount == -1 {
+			// Show loading indicator for beads too
+			line += ", … beads"
 		}
+		
 		if i == d.Selected {
 			b.WriteString(selectedStyle.Render(line) + "\n")
 		} else {
