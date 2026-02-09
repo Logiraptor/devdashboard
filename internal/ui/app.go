@@ -633,7 +633,12 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prompt := "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
 			selectedBead := a.Detail.SelectedBead()
 			if selectedBead != nil {
-				prompt = fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
+				// Branch to epic-aware flow if the selected bead is an epic
+				if selectedBead.IssueType == "epic" {
+					prompt = fmt.Sprintf("You are working on epic %s. Run `bd show %s` to understand the epic. Then use `bd ready --parent %s` to find its children. Process them sequentially: for each child, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/ and AGENTS.md.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
+				} else {
+					prompt = fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
+				}
 			}
 			// Pass the prompt as a single-quoted positional argument to agent.
 			// Single quotes prevent the shell from interpreting backticks and $.
