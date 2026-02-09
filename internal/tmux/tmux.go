@@ -1,29 +1,44 @@
-// Package tmux provides functions to orchestrate tmux panes via exec.
+// Package tmux provides functions to orchestrate tmux panes via gotmux.
 // The app expects to run inside tmux (TMUX env set). Commands target the
 // current session automatically.
 package tmux
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
-	_ "github.com/GianlucaP106/gotmux/gotmux" // pinned for upcoming migration (devdeploy-w6o)
+	"github.com/GianlucaP106/gotmux/gotmux"
 )
+
+// tmuxClient is the package-level gotmux client, initialised lazily.
+var tmuxClient *gotmux.Tmux
+
+// client returns the shared gotmux.Tmux instance, creating it on first call.
+func client() (*gotmux.Tmux, error) {
+	if tmuxClient != nil {
+		return tmuxClient, nil
+	}
+	t, err := gotmux.DefaultTmux()
+	if err != nil {
+		return nil, fmt.Errorf("init gotmux: %w", err)
+	}
+	tmuxClient = t
+	return tmuxClient, nil
+}
 
 // WindowPaneCount returns the number of panes in the current window.
 func WindowPaneCount() (int, error) {
-	cmd := exec.Command("tmux", "display-message", "-p", "#{window_panes}")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return 0, fmt.Errorf("tmux display-message: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return 0, err
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(out.String()))
+	out, err := t.Command("display-message", "-p", "#{window_panes}")
+	if err != nil {
+		return 0, fmt.Errorf("tmux display-message: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil {
 		return 0, fmt.Errorf("parse pane count: %w", err)
 	}
@@ -41,17 +56,16 @@ func EnsureLayout() error {
 	if count >= 2 {
 		return nil // layout already exists
 	}
-	cmd := exec.Command("tmux", "split-window", "-h")
-	var out bytes.Buffer
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmux split-window: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return err
+	}
+	if _, err := t.Command("split-window", "-h"); err != nil {
+		return fmt.Errorf("tmux split-window: %w", err)
 	}
 	// split-window focuses the new pane; switch back to devdeploy (left)
-	cmd = exec.Command("tmux", "select-pane", "-L")
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmux select-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	if _, err := t.Command("select-pane", "-L"); err != nil {
+		return fmt.Errorf("tmux select-pane: %w", err)
 	}
 	return nil
 }
@@ -65,35 +79,45 @@ func SplitPane(workDir string) (paneID string, err error) {
 	} else if !info.IsDir() {
 		return "", fmt.Errorf("invalid workdir: %s is not a directory", workDir)
 	}
-	cmd := exec.Command("tmux", "split-window", "-P", "-F", "#{pane_id}", "-c", workDir)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("tmux split-window: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return "", err
 	}
-	return strings.TrimSpace(out.String()), nil
+	// gotmux's SplitWindow doesn't return the new pane ID, so use Command
+	// with -P -F to print the new pane's ID.
+	out, err := t.Command("split-window", "-P", "-F", "#{pane_id}", "-c", workDir)
+	if err != nil {
+		return "", fmt.Errorf("tmux split-window: %w", err)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // KillPane kills the pane with the given ID.
 func KillPane(paneID string) error {
-	cmd := exec.Command("tmux", "kill-pane", "-t", paneID)
-	var out bytes.Buffer
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmux kill-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return err
 	}
-	return nil
+	pane, err := t.GetPaneById(paneID)
+	if err != nil {
+		return fmt.Errorf("tmux get pane %s: %w", paneID, err)
+	}
+	if pane == nil {
+		return fmt.Errorf("tmux pane %s not found", paneID)
+	}
+	return pane.Kill()
 }
 
 // SendKeys sends keys literally to the pane. Use \n for Enter.
 // The -l flag sends keys as typed; newlines are sent as Enter.
 func SendKeys(paneID, keys string) error {
-	cmd := exec.Command("tmux", "send-keys", "-l", "-t", paneID, keys)
-	var out bytes.Buffer
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmux send-keys: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return err
+	}
+	// gotmux's Pane.SendKeys omits -l (literal mode), so use Command directly.
+	if _, err := t.Command("send-keys", "-l", "-t", paneID, keys); err != nil {
+		return fmt.Errorf("tmux send-keys: %w", err)
 	}
 	return nil
 }
@@ -102,11 +126,13 @@ func SendKeys(paneID, keys string) error {
 // window does not become current. The pane ID remains valid for JoinPane.
 // break-pane uses -s for source pane; -t is for destination window.
 func BreakPane(paneID string) error {
-	cmd := exec.Command("tmux", "break-pane", "-d", "-s", paneID)
-	var out bytes.Buffer
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmux break-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return err
+	}
+	// gotmux has no break-pane wrapper; use Command.
+	if _, err := t.Command("break-pane", "-d", "-s", paneID); err != nil {
+		return fmt.Errorf("tmux break-pane: %w", err)
 	}
 	return nil
 }
@@ -114,11 +140,13 @@ func BreakPane(paneID string) error {
 // JoinPane joins the source pane back into the current window. Target "." means
 // the current pane (where the app runs). Use -d so focus stays on the app pane.
 func JoinPane(paneID string) error {
-	cmd := exec.Command("tmux", "join-pane", "-d", "-s", paneID, "-t", ".")
-	var out bytes.Buffer
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmux join-pane: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return err
+	}
+	// gotmux has no join-pane wrapper; use Command.
+	if _, err := t.Command("join-pane", "-d", "-s", paneID, "-t", "."); err != nil {
+		return fmt.Errorf("tmux join-pane: %w", err)
 	}
 	return nil
 }
@@ -126,19 +154,17 @@ func JoinPane(paneID string) error {
 // ListPaneIDs returns all live pane IDs across all tmux sessions/windows.
 // Each ID looks like "%42". Used for liveness checks by the session tracker.
 func ListPaneIDs() (map[string]bool, error) {
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("tmux list-panes: %w: %s", err, strings.TrimSpace(out.String()))
+	t, err := client()
+	if err != nil {
+		return nil, err
 	}
-	panes := make(map[string]bool)
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			panes[line] = true
-		}
+	panes, err := t.ListAllPanes()
+	if err != nil {
+		return nil, fmt.Errorf("tmux list-panes: %w", err)
 	}
-	return panes, nil
+	result := make(map[string]bool, len(panes))
+	for _, p := range panes {
+		result[p.Id] = true
+	}
+	return result, nil
 }
