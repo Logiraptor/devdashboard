@@ -546,6 +546,41 @@ func TestProjectDetailView_SelectedBead(t *testing.T) {
 	}
 }
 
+func TestProjectDetailView_SelectedBead_IssueType(t *testing.T) {
+	// Test that IssueType is accessible via SelectedBead() for epic detection
+	v := NewProjectDetailView("proj")
+	v.Resources = []project.Resource{
+		{
+			Kind: project.ResourceRepo, RepoName: "devdeploy", WorktreePath: "/tmp/devdeploy",
+			Beads: []project.BeadInfo{
+				{ID: "epic-1", Title: "Epic One", Status: "open", IssueType: "epic"},
+				{ID: "task-1", Title: "Task One", Status: "open", IssueType: "task"},
+			},
+		},
+	}
+	v.buildItems()
+
+	// Move to epic bead.
+	v.Update(keyMsg("j"))
+	bd := v.SelectedBead()
+	if bd == nil || bd.ID != "epic-1" {
+		t.Fatalf("expected epic-1, got %+v", bd)
+	}
+	if bd.IssueType != "epic" {
+		t.Errorf("expected IssueType 'epic', got %q", bd.IssueType)
+	}
+
+	// Move to task bead.
+	v.Update(keyMsg("j"))
+	bd = v.SelectedBead()
+	if bd == nil || bd.ID != "task-1" {
+		t.Fatalf("expected task-1, got %+v", bd)
+	}
+	if bd.IssueType != "task" {
+		t.Errorf("expected IssueType 'task', got %q", bd.IssueType)
+	}
+}
+
 func TestProjectDetailView_BeadSelectionHighlight(t *testing.T) {
 	v := NewProjectDetailView("proj")
 	v.Resources = testResourcesWithBeads()

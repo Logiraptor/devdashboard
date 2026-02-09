@@ -1,14 +1,14 @@
 {
   "state": "running",
-  "iteration": 11,
+  "iteration": 12,
   "max_iterations": 20,
   "current_bead": {
-    "id": "devdeploy-w5a.1",
-    "title": "Detect epic bead selection in LaunchRalphMsg handler"
+    "id": "devdeploy-w5a.2",
+    "title": "Add BeadInfo.IssueType to project.Resource model"
   },
-  "elapsed_ns": 673790904917,
+  "elapsed_ns": 713496248875,
   "tallies": {
-    "completed": 9,
+    "completed": 10,
     "questions": 0,
     "failed": 1,
     "timed_out": 0,
