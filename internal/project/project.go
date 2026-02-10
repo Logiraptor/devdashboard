@@ -248,7 +248,7 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(emptyHooksDir)
+	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
 	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
 
 	// Fetch to ensure we have latest main
@@ -786,7 +786,7 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	if err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(emptyHooksDir)
+	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
 	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
 
 	// Try the local branch first; fall back to origin/<branch>.

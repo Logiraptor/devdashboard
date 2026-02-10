@@ -90,7 +90,7 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 	if err != nil {
 		return "", "", fmt.Errorf("create temp hooks dir: %w", err)
 	}
-	defer os.RemoveAll(emptyHooksDir)
+	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
 	gitNoHooks := []string{"-C", w.srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
 
 	// Check if branch already exists
