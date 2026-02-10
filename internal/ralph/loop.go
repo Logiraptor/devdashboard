@@ -1405,7 +1405,6 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	}
 
 	// Shared state protected by mutex
-	var mu sync.Mutex
 	summary := &RunSummary{}
 	consecutiveFailures := int32(0)
 	lastFailedBeadID := ""
@@ -1424,7 +1423,7 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 		assessFn:            assessFn,
 		syncFn:              syncFn,
 		consecutiveLimit:    consecutiveLimit,
-		mu:                  mu,
+		mu:                  sync.Mutex{}, // Initialize as zero value, don't copy
 		consecutiveFailures: consecutiveFailures,
 		lastFailedBeadID:    lastFailedBeadID,
 		skippedBeads:        skippedBeads,
