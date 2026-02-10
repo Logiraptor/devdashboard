@@ -30,7 +30,7 @@ func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 
 	// Write cursor prefix if selected
 	if isSelected {
-		fmt.Fprint(w, "▸ ")
+		_, _ = fmt.Fprint(w, "▸ ")
 	}
 
 	// Delegate to default renderer
