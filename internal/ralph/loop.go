@@ -419,7 +419,7 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 
 	cleanup := func() {
 		cancelWall()
-		statusWriter.Clear()
+		_ = statusWriter.Clear()
 	}
 
 	return ctx, setup, cleanup, nil
@@ -974,7 +974,7 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 
 	cleanup := func() {
 		cancelWall()
-		statusWriter.Clear()
+		_ = statusWriter.Clear()
 	}
 
 	return ctx, setup, cleanup, nil
