@@ -53,6 +53,33 @@ func randAlnum(n int) string {
 	return string(b)
 }
 
+// resolveDefaultBranch finds the default branch for a repository.
+// It first tries to use git symbolic-ref to get the remote HEAD,
+// then falls back to common branch names (main, master).
+func resolveDefaultBranch(repoPath string) (string, error) {
+	// Try to get the default branch from origin/HEAD
+	cmd := exec.Command("git", "-C", repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
+	out, err := cmd.Output()
+	if err == nil {
+		// Output is like "refs/remotes/origin/main" - extract the branch name
+		ref := strings.TrimSpace(string(out))
+		// Use the full remote ref (origin/main) for reliability
+		if strings.HasPrefix(ref, "refs/remotes/") {
+			return strings.TrimPrefix(ref, "refs/remotes/"), nil
+		}
+	}
+
+	// Fallback: try common default branch names
+	candidates := []string{"origin/main", "main", "origin/master", "master"}
+	for _, candidate := range candidates {
+		if exec.Command("git", "-C", repoPath, "rev-parse", "--verify", candidate).Run() == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("cannot find default branch (tried origin/HEAD, main, master)")
+}
+
 // prCacheEntry holds cached PR data with a timestamp.
 type prCacheEntry struct {
 	prs       []PRInfo
@@ -251,19 +278,16 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
 	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
 
-	// Fetch to ensure we have latest main
+	// Fetch to ensure we have latest default branch
 	fetchCmd := exec.Command("git", "-C", srcRepo, "fetch", "origin")
 	fetchCmd.Stderr = nil
 	// Best-effort fetch; failure is okay if we already have the ref locally
 	_ = fetchCmd.Run()
 
-	// Resolve main ref (origin/main or main)
-	mainRef := "origin/main"
-	if err := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", mainRef).Run(); err != nil {
-		mainRef = "main"
-		if err := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", mainRef).Run(); err != nil {
-			return fmt.Errorf("cannot find main branch (tried origin/main, main)")
-		}
+	// Resolve default branch ref
+	mainRef, err := resolveDefaultBranch(srcRepo)
+	if err != nil {
+		return err
 	}
 
 	var addStderr bytes.Buffer
