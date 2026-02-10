@@ -42,7 +42,8 @@ func SplitPane(workDir string) (paneID string, err error) {
 	}
 	// gotmux's SplitWindow doesn't return the new pane ID, so use Command
 	// with -P -F to print the new pane's ID.
-	out, err := t.Command("split-window", "-P", "-F", "#{pane_id}", "-c", workDir)
+	// Use -h flag for horizontal split (pane opens to the right).
+	out, err := t.Command("split-window", "-h", "-P", "-F", "#{pane_id}", "-c", workDir)
 	if err != nil {
 		return "", fmt.Errorf("tmux split-window: %w", err)
 	}
