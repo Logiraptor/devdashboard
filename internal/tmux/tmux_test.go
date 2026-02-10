@@ -40,7 +40,7 @@ func TestSendKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SplitPane: %v", err)
 	}
-	defer KillPane(paneID)
+	defer func() { _ = KillPane(paneID) }()
 	if err := SendKeys(paneID, "echo ok\n"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestBreakPane_JoinPane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SplitPane: %v", err)
 	}
-	defer KillPane(paneID)
+	defer func() { _ = KillPane(paneID) }()
 	if err := BreakPane(paneID); err != nil {
 		t.Fatalf("BreakPane: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestListPaneIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SplitPane: %v", err)
 	}
-	defer KillPane(paneID)
+	defer func() { _ = KillPane(paneID) }()
 
 	// List all pane IDs
 	paneIDs, err := ListPaneIDs()
