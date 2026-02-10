@@ -1187,6 +1187,7 @@ func TestLaunchRalphMsg_NoOpenBeads(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo", Beads: nil},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -1207,6 +1208,7 @@ func TestLaunchRalphMsg_EmptyBeadsSlice(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: "/tmp/myrepo", Beads: []project.BeadInfo{}},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -1266,6 +1268,7 @@ func TestLaunchRalphMsg_PRNoWorktree(t *testing.T) {
 			Beads:    []project.BeadInfo{{ID: "b-1", Title: "Work", Status: "open"}},
 		},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
@@ -1287,6 +1290,7 @@ func TestLaunchRalphMsg_NoBeadsError(t *testing.T) {
 	detail.Resources = []project.Resource{
 		{Kind: project.ResourceRepo, RepoName: "myrepo", WorktreePath: ta.Dir},
 	}
+	detail.buildItems()
 	detail.setSelected(0)
 
 	ta.Mode = ModeProjectDetail
