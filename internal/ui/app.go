@@ -794,7 +794,7 @@ func (a *appModelAdapter) handleDeleteProject(msg DeleteProjectMsg) (tea.Model, 
 				rk := resourceKeyFromResource(r)
 				panes := a.Sessions.PanesForResource(rk)
 				for _, p := range panes {
-					_ = tmux.KillPane(p.PaneID)
+					_ = tmux.KillPane(p.PaneID) // ignore errors for dead panes
 				}
 				a.Sessions.UnregisterAll(rk)
 			}
