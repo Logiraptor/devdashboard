@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/beads"
@@ -148,6 +149,9 @@ type RemoveResourceMsg struct {
 // DismissModalMsg is sent when user cancels a modal (Esc).
 type DismissModalMsg struct{}
 
+// tickMsg triggers periodic refresh of panes and beads.
+type tickMsg time.Time
+
 // AppModel is the root model implementing Option E (Dashboard + Detail).
 // It switches between Dashboard and ProjectDetail modes.
 type AppModel struct {
@@ -181,6 +185,7 @@ func (a *appModelAdapter) Init() tea.Cmd {
 	return tea.Batch(
 		a.currentView().Init(),
 		loadProjectsCmd(a.ProjectManager),
+		tickCmd(), // Start periodic refresh ticker
 	)
 }
 
@@ -813,7 +818,33 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.Mode = ModeProjectDetail
 		detail, cmd := a.newProjectDetailView(msg.Name)
 		a.Detail = detail
-		return a, tea.Batch(a.Detail.Init(), cmd)
+		return a, tea.Batch(a.Detail.Init(), cmd, tickCmd()) // Start ticker when entering detail mode
+	case tickMsg:
+		// Periodic refresh: update panes and beads when in project detail mode
+		if a.Mode == ModeProjectDetail && a.Detail != nil {
+			// Refresh panes (fast, local operation)
+			a.refreshDetailPanes()
+			
+			// Refresh beads (slower, runs bd command)
+			// Only refresh if we have resources with worktrees
+			if a.ProjectManager != nil && len(a.Detail.Resources) > 0 {
+				hasWorktrees := false
+				for _, r := range a.Detail.Resources {
+					if r.WorktreePath != "" {
+						hasWorktrees = true
+						break
+					}
+				}
+				if hasWorktrees {
+					return a, tea.Batch(
+						loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
+						tickCmd(), // Schedule next tick
+					)
+				}
+			}
+			return a, tickCmd() // Schedule next tick even if no worktrees
+		}
+		return a, tickCmd() // Keep ticking even if not in detail mode
 	case tea.KeyMsg:
 		// When overlay is showing, it receives ALL keys first (no KeyHandler, no app nav).
 		// This lets modals capture SPC, Esc, Enter, j/k etc. for text input and list navigation.
@@ -1398,6 +1429,14 @@ func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.
 		
 		return ResourceBeadsLoadedMsg{ProjectName: projectName, BeadsByResource: beadsByResource}
 	}
+}
+
+// tickCmd returns a command that schedules a tickMsg after 5 seconds.
+// Used for periodic refresh of panes and beads in project detail view.
+func tickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // countBeadsFromResources counts open beads across the given resources.
