@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -159,46 +156,4 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
-}
-
-// readRalphStatus reads the ralph status file from the given workdir.
-func readRalphStatus(workdir string) (*RalphStatus, error) {
-	statusPath := filepath.Join(workdir, ".ralph-status.json")
-	data, err := os.ReadFile(statusPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // No status file means ralph isn't running
-		}
-		return nil, err
-	}
-
-	var status RalphStatus
-	if err := json.Unmarshal(data, &status); err != nil {
-		return nil, fmt.Errorf("unmarshal status: %w", err)
-	}
-
-	return &status, nil
-}
-
-// pollRalphStatusCmd returns a command that polls ralph status and sends RalphStatusMsg.
-func pollRalphStatusCmd(workdir string) tea.Cmd {
-	return func() tea.Msg {
-		status, err := readRalphStatus(workdir)
-		if err != nil {
-			// On error, return nil status (ralph not running or error reading)
-			return RalphStatusMsg{Status: nil}
-		}
-		return RalphStatusMsg{Status: status}
-	}
-}
-
-// startRalphStatusPolling starts polling ralph status every ~1s.
-func startRalphStatusPolling(workdir string) tea.Cmd {
-	return tea.Tick(1*time.Second, func(time.Time) tea.Msg {
-		status, err := readRalphStatus(workdir)
-		if err != nil {
-			return RalphStatusMsg{Status: nil}
-		}
-		return RalphStatusMsg{Status: status}
-	})
 }
