@@ -408,13 +408,13 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 		summary:          summary,
 		epicPromptData:   epicPromptData,
 		fetchPrompt:      fetchPrompt,
-		render:            render,
+		render:           render,
 		execute:          execute,
-		assessFn:          assessFn,
-		syncFn:            syncFn,
+		assessFn:         assessFn,
+		syncFn:           syncFn,
 		currentFormatter: currentFormatter,
-		processedBeads:    processedBeads,
-		fetchChildren:     fetchChildren,
+		processedBeads:   processedBeads,
+		fetchChildren:    fetchChildren,
 	}
 
 	cleanup := func() {
@@ -804,20 +804,20 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 // sequentialLoopSetup holds setup state for sequential loop.
 type sequentialLoopSetup struct {
-	out              io.Writer
-	statusWriter     *StatusWriter
-	summary          *RunSummary
-	pickNext         func() (*beads.Bead, error)
-	fetchPrompt      func(beadID string) (*PromptData, error)
-	render           func(data *PromptData) (string, error)
-	execute          func(ctx context.Context, prompt string) (*AgentResult, error)
-	assessFn         func(beadID string, result *AgentResult) (Outcome, string)
-	syncFn           func() error
-	currentFormatter *LogFormatter
-	consecutiveLimit int
+	out                 io.Writer
+	statusWriter        *StatusWriter
+	summary             *RunSummary
+	pickNext            func() (*beads.Bead, error)
+	fetchPrompt         func(beadID string) (*PromptData, error)
+	render              func(data *PromptData) (string, error)
+	execute             func(ctx context.Context, prompt string) (*AgentResult, error)
+	assessFn            func(beadID string, result *AgentResult) (Outcome, string)
+	syncFn              func() error
+	currentFormatter    *LogFormatter
+	consecutiveLimit    int
 	consecutiveFailures int
-	lastFailedBeadID string
-	skippedBeads     map[string]bool
+	lastFailedBeadID    string
+	skippedBeads        map[string]bool
 }
 
 // setupSequentialLoop initializes the sequential loop setup.
@@ -952,20 +952,20 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	statusWriter := NewStatusWriter(cfg.WorkDir)
 
 	setup := &sequentialLoopSetup{
-		out:                out,
-		statusWriter:       statusWriter,
-		summary:            summary,
-		pickNext:           pickNext,
-		fetchPrompt:        fetchPrompt,
-		render:             render,
-		execute:            execute,
-		assessFn:           assessFn,
-		syncFn:             syncFn,
-		currentFormatter:   currentFormatter,
+		out:                 out,
+		statusWriter:        statusWriter,
+		summary:             summary,
+		pickNext:            pickNext,
+		fetchPrompt:         fetchPrompt,
+		render:              render,
+		execute:             execute,
+		assessFn:            assessFn,
+		syncFn:              syncFn,
+		currentFormatter:    currentFormatter,
 		consecutiveLimit:    consecutiveLimit,
 		consecutiveFailures: consecutiveFailures,
-		lastFailedBeadID:   lastFailedBeadID,
-		skippedBeads:       skippedBeads,
+		lastFailedBeadID:    lastFailedBeadID,
+		skippedBeads:        skippedBeads,
 	}
 
 	cleanup := func() {
@@ -1273,22 +1273,22 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 // concurrentLoopSetup holds setup state for concurrent loop.
 type concurrentLoopSetup struct {
-	out                io.Writer
-	summary            *RunSummary
-	wtMgr              *WorktreeManager
-	pickNext           func() (*beads.Bead, error)
-	fetchPrompt        func(beadID string) (*PromptData, error)
-	render             func(data *PromptData) (string, error)
-	assessFn           func(beadID string, result *AgentResult) (Outcome, string)
-	syncFn             func() error
-	consecutiveLimit   int
-	mu                 sync.Mutex
+	out                 io.Writer
+	summary             *RunSummary
+	wtMgr               *WorktreeManager
+	pickNext            func() (*beads.Bead, error)
+	fetchPrompt         func(beadID string) (*PromptData, error)
+	render              func(data *PromptData) (string, error)
+	assessFn            func(beadID string, result *AgentResult) (Outcome, string)
+	syncFn              func() error
+	consecutiveLimit    int
+	mu                  sync.Mutex
 	consecutiveFailures int32
-	lastFailedBeadID   string
-	skippedBeads       map[string]bool
-	iterations         int32
-	stopReason         StopReason
-	shouldStop         int32 // atomic flag for early termination
+	lastFailedBeadID    string
+	skippedBeads        map[string]bool
+	iterations          int32
+	stopReason          StopReason
+	shouldStop          int32 // atomic flag for early termination
 }
 
 // setupConcurrentLoop initializes the concurrent loop setup.
@@ -1368,22 +1368,22 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	shouldStop := int32(0) // atomic flag for early termination
 
 	setup := &concurrentLoopSetup{
-		out:                out,
-		summary:            summary,
-		wtMgr:              wtMgr,
-		pickNext:           pickNext,
-		fetchPrompt:        fetchPrompt,
-		render:             render,
-		assessFn:           assessFn,
-		syncFn:             syncFn,
-		consecutiveLimit:   consecutiveLimit,
-		mu:                 mu,
+		out:                 out,
+		summary:             summary,
+		wtMgr:               wtMgr,
+		pickNext:            pickNext,
+		fetchPrompt:         fetchPrompt,
+		render:              render,
+		assessFn:            assessFn,
+		syncFn:              syncFn,
+		consecutiveLimit:    consecutiveLimit,
+		mu:                  mu,
 		consecutiveFailures: consecutiveFailures,
-		lastFailedBeadID:   lastFailedBeadID,
-		skippedBeads:       skippedBeads,
-		iterations:         iterations,
-		stopReason:         stopReason,
-		shouldStop:         shouldStop,
+		lastFailedBeadID:    lastFailedBeadID,
+		skippedBeads:        skippedBeads,
+		iterations:          iterations,
+		stopReason:          stopReason,
+		shouldStop:          shouldStop,
 	}
 
 	cleanup := func() {
@@ -1395,7 +1395,7 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 
 // createConcurrentWorker creates a worker function for concurrent execution.
 func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurrentLoopSetup) func(workerID int) {
-		return func(workerID int) {
+	return func(workerID int) {
 		for atomic.LoadInt32(&setup.shouldStop) == 0 {
 			// Check context cancellation
 			if ctx.Err() != nil {
