@@ -24,7 +24,6 @@ type LogFormatter struct {
 	editsCount    int
 	shellsCount   int
 	searchesCount int
-	thinksCount   int
 	errorsCount   int
 	// Track last shell command to detect if it had output
 	lastShellCmd  string
@@ -84,8 +83,7 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 		// Try to parse as JSON
 		var event map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			// Not JSON, pass through as-is
-			fmt.Fprintf(&formatted, "%s\n", line)
+			// Not JSON, filter it out
 			continue
 		}
 
@@ -118,6 +116,10 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 // formatEvent formats a single JSON event into a human-readable line.
 // Returns empty string if the event should be skipped.
 // Updates internal counters for summary generation.
+// Handles documented Cursor CLI stream-json event types:
+// - system, user, assistant: skipped (we only care about tool activity)
+// - tool_call: only process "started" subtype to avoid double-counting
+// - result: final event marking completion (skipped)
 func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -129,17 +131,21 @@ func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
 	}
 
 	switch eventType {
-	case "tool_call":
-		return f.formatToolCall(event)
-	case "tool_result":
-		return f.formatToolResult(event)
-	case "think":
-		f.thinksCount++
-		// Skip think events - they're too noisy
+	case "system", "user", "assistant":
+		// Skip - we only care about tool activity
 		return ""
-	case "edit":
-		f.editsCount++
-		return f.formatEdit(event)
+	case "tool_call":
+		// Only process "started" events to avoid double-counting
+		// "completed" events contain results but we've already processed the tool call
+		subtype, _ := event["subtype"].(string)
+		if subtype == "completed" {
+			return ""
+		}
+		return f.formatToolCall(event)
+	case "result":
+		// Final event - marks completion and contains timing info
+		// Could extract duration_ms if needed, but for now just skip
+		return ""
 	default:
 		// Skip unknown event types
 		return ""
@@ -451,51 +457,6 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 	return ""
 }
 
-// formatToolResult formats a tool_result event.
-// Shows errors and tracks shell command output.
-func (f *LogFormatter) formatToolResult(event map[string]interface{}) string {
-	content, _ := event["content"].(string)
-	isError, _ := event["is_error"].(bool)
-
-	// Track if shell command had output
-	if f.lastShellCmd != "" {
-		if content != "" && !isError {
-			f.shellHadOutput = true
-			// Parse test output from shell results
-			if f.beadID != "" {
-				f.parseTestOutput(content)
-			}
-		}
-	}
-
-	// Show errors - track in activity stream when bead is set
-	if isError {
-		f.errorsCount++
-		if content != "" {
-			// Store last error for summary
-			if f.beadID != "" {
-				f.lastError = content
-			}
-			if f.beadID != "" {
-				// Add to activity stream when bead is set
-				displayError := content
-				if len(displayError) > 40 {
-					displayError = displayError[:37] + "..."
-				}
-				f.addActivity(fmt.Sprintf("error: %s", displayError))
-				return "" // Don't print inline, activity stream handles it
-			}
-			// Return formatted string when no bead (backward compatibility)
-			displayError := content
-			if len(displayError) > 100 {
-				displayError = displayError[:97] + "..."
-			}
-			return fmt.Sprintf("[error] %s", displayError)
-		}
-	}
-	return ""
-}
-
 // parseTestOutput parses Go test output to extract test results.
 func (f *LogFormatter) parseTestOutput(output string) {
 	// Look for Go test output patterns
@@ -515,15 +476,6 @@ func (f *LogFormatter) parseTestOutput(output string) {
 			f.failedTests = append(f.failedTests, match[1])
 		}
 	}
-}
-
-// formatEdit formats an edit event (different from tool_call edit).
-func (f *LogFormatter) formatEdit(event map[string]interface{}) string {
-	// Edit events might have file paths
-	if path, ok := event["file"].(string); ok {
-		return fmt.Sprintf("[edit] %s", path)
-	}
-	return "[edit]"
 }
 
 // Summary returns a formatted summary of all events processed.
@@ -737,7 +689,6 @@ func (f *LogFormatter) Reset() {
 	f.editsCount = 0
 	f.shellsCount = 0
 	f.searchesCount = 0
-	f.thinksCount = 0
 	f.errorsCount = 0
 	f.lastShellCmd = ""
 	f.shellHadOutput = false

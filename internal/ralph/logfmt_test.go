@@ -360,3 +360,48 @@ func TestLogFormatter_Summary_CountsAllToolTypes(t *testing.T) {
 		t.Errorf("summary should contain 'commands 1', got %q", summary)
 	}
 }
+
+func TestLogFormatter_ToolCallSubtype(t *testing.T) {
+	var buf bytes.Buffer
+	f := NewLogFormatter(&buf, false)
+
+	// Process a "started" tool_call event - should be counted
+	started := map[string]interface{}{
+		"type":    "tool_call",
+		"subtype": "started",
+		"tool_call": map[string]interface{}{
+			"readToolCall": map[string]interface{}{
+				"args": map[string]interface{}{
+					"target_file": "test.txt",
+				},
+			},
+		},
+	}
+	f.formatEvent(started)
+
+	// Process a "completed" tool_call event - should be ignored (not counted again)
+	completed := map[string]interface{}{
+		"type":    "tool_call",
+		"subtype": "completed",
+		"tool_call": map[string]interface{}{
+			"readToolCall": map[string]interface{}{
+				"args": map[string]interface{}{
+					"target_file": "test.txt",
+				},
+				"result": map[string]interface{}{
+					"success": map[string]interface{}{},
+				},
+			},
+		},
+	}
+	f.formatEvent(completed)
+
+	// Should only count once, not twice
+	summary := f.Summary()
+	if !strings.Contains(summary, "read 1") {
+		t.Errorf("expected readsCount=1, got summary: %q", summary)
+	}
+	if strings.Contains(summary, "read 2") {
+		t.Errorf("should not count completed events, got summary: %q", summary)
+	}
+}
