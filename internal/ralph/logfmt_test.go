@@ -260,7 +260,10 @@ func TestLogFormatter_Write_NewSchema(t *testing.T) {
 	}
 	jsonBytes, _ := json.Marshal(event)
 	jsonBytes = append(jsonBytes, '\n')
-	f.Write(jsonBytes)
+	_, err := f.Write(jsonBytes)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
 
 	// Should output the search line
 	output := buf.String()
@@ -286,7 +289,10 @@ func TestLogFormatter_Write_EditEvent(t *testing.T) {
 	}
 	jsonBytes, _ := json.Marshal(event)
 	jsonBytes = append(jsonBytes, '\n')
-	f.Write(jsonBytes)
+	_, err := f.Write(jsonBytes)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
 
 	output := buf.String()
 	want := "[edit] test.go\n"
