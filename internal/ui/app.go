@@ -1149,38 +1149,6 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	return v, nil
 }
 
-// populateResourceBeads queries bd for beads associated with each resource
-// and attaches them. Only resources with worktrees are queried (bd needs a
-// working directory). Called once during view construction to avoid
-// re-querying on every keypress.
-func (a *AppModel) populateResourceBeads(v *ProjectDetailView) {
-	for i := range v.Resources {
-		r := &v.Resources[i]
-		if r.WorktreePath == "" {
-			continue
-		}
-		var bdBeads []beads.Bead
-		switch r.Kind {
-		case project.ResourceRepo:
-			bdBeads = beads.ListForRepo(r.WorktreePath, v.ProjectName)
-		case project.ResourcePR:
-			if r.PR != nil {
-				bdBeads = beads.ListForPR(r.WorktreePath, v.ProjectName, r.PR.Number)
-			}
-		}
-		r.Beads = make([]project.BeadInfo, len(bdBeads))
-		for j, b := range bdBeads {
-			r.Beads[j] = project.BeadInfo{
-				ID:        b.ID,
-				Title:     b.Title,
-				Status:    b.Status,
-				IssueType: b.IssueType,
-				IsChild:   b.ParentID != "",
-			}
-		}
-	}
-}
-
 // populateResourcePanes attaches tracked pane info to each resource in the detail view.
 func (a *AppModel) populateResourcePanes(v *ProjectDetailView) {
 	if a.Sessions == nil {
@@ -1443,96 +1411,6 @@ func loadProjectPRsCmd(m *project.Manager, projectName string) tea.Cmd {
 		}
 		prsByRepo, _ := m.ListProjectPRs(projectName)
 		return ProjectPRsLoadedMsg{ProjectName: projectName, PRsByRepo: prsByRepo}
-	}
-}
-
-// loadProjectDetailPRsCmd returns a command that loads PRs asynchronously (phase 2: async data).
-// Uses loadProjectPRsCmd to fetch PRs, then merges them into repo resources.
-func loadProjectDetailPRsCmd(m *project.Manager, projectName string, repoResources []project.Resource) tea.Cmd {
-	return func() tea.Msg {
-		if m == nil {
-			return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: repoResources}
-		}
-		prsByRepo, _ := m.ListProjectPRs(projectName)
-		projDir := m.ProjectDir(projectName)
-
-		// Build map of PRs by repo name for quick lookup
-		repoPRsMap := make(map[string][]project.PRInfo)
-		for _, repoPRs := range prsByRepo {
-			repoPRsMap[repoPRs.Repo] = repoPRs.PRs
-		}
-
-		// Build resources: repos + PRs in repo order.
-		resources := make([]project.Resource, 0, len(repoResources))
-		for _, repoRes := range repoResources {
-			resources = append(resources, repoRes)
-			prs := repoPRsMap[repoRes.RepoName]
-			for i := range prs {
-				pr := &prs[i]
-				prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoRes.RepoName, pr.Number))
-				var wtPath string
-				if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-					wtPath = prWT
-				}
-				resources = append(resources, project.Resource{
-					Kind:         project.ResourcePR,
-					RepoName:     repoRes.RepoName,
-					PR:           pr,
-					WorktreePath: wtPath,
-				})
-			}
-		}
-
-		return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: resources}
-	}
-}
-
-// loadProjectDetailBeadsCmd returns a command that loads beads asynchronously (phase 3: async data).
-// Beads are fetched in parallel across resources for optimal performance.
-func loadProjectDetailBeadsCmd(projectName string, resourcesWithPRs []project.Resource) tea.Cmd {
-	return func() tea.Msg {
-		resources := make([]project.Resource, len(resourcesWithPRs))
-		copy(resources, resourcesWithPRs)
-
-		// Fetch beads concurrently across resources.
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-
-		for i := range resources {
-			r := &resources[i]
-			if r.WorktreePath == "" {
-				continue
-			}
-			wg.Add(1)
-			go func(resIdx int) {
-				defer wg.Done()
-				var bdBeads []beads.Bead
-				switch resources[resIdx].Kind {
-				case project.ResourceRepo:
-					bdBeads = beads.ListForRepo(resources[resIdx].WorktreePath, projectName)
-				case project.ResourcePR:
-					if resources[resIdx].PR != nil {
-						bdBeads = beads.ListForPR(resources[resIdx].WorktreePath, projectName, resources[resIdx].PR.Number)
-					}
-				}
-				mu.Lock()
-				resources[resIdx].Beads = make([]project.BeadInfo, len(bdBeads))
-				for j, b := range bdBeads {
-					resources[resIdx].Beads[j] = project.BeadInfo{
-						ID:        b.ID,
-						Title:     b.Title,
-						Status:    b.Status,
-						IssueType: b.IssueType,
-						IsChild:   b.ParentID != "",
-					}
-				}
-				mu.Unlock()
-			}(i)
-		}
-
-		wg.Wait()
-
-		return ProjectDetailBeadsLoadedMsg{ProjectName: projectName, Resources: resources}
 	}
 }
 
