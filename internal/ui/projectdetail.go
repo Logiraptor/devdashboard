@@ -96,36 +96,6 @@ func (d detailItem) Description() string {
 	return ""
 }
 
-// renderResourceTitle renders the title for a resource item.
-func (d detailItem) renderResourceTitle() string {
-	status := resourceStatus(*d.resource)
-
-	switch d.resource.Kind {
-	case project.ResourceRepo:
-		prefix := "◆ "
-		text := d.resource.RepoName + "/"
-		if status != "" {
-			text += "  " + Styles.Status.Render(status)
-		}
-		return prefix + Styles.Normal.Render(text)
-	case project.ResourcePR:
-		if d.resource.PR == nil {
-			return ""
-		}
-		prefix := "◇ "
-		state := strings.ToLower(d.resource.PR.State)
-		if state == "" {
-			state = "open"
-		}
-		text := fmt.Sprintf("#%d %s (%s)", d.resource.PR.Number, d.resource.PR.Title, state)
-		if status != "" {
-			text += "  " + Styles.Status.Render(status)
-		}
-		return prefix + Styles.Muted.Render(text)
-	}
-	return ""
-}
-
 // renderResourceTitleWithLoading renders the title for a resource item with loading indicators.
 func (d detailItem) renderResourceTitleWithLoading() string {
 	status := resourceStatusWithLoading(*d.resource, d.view)
