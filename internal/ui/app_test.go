@@ -70,7 +70,7 @@ func TestProjectKeybinds_ShowDeleteProjectMsg(t *testing.T) {
 	adapter := ta.adapter()
 
 	// SPC p d in Dashboard with project: should show confirmation modal
-	_, cmd := adapter.Update(ShowDeleteProjectMsg{})
+	_, _ = adapter.Update(ShowDeleteProjectMsg{})
 	if ta.Overlays.Len() != 1 {
 		t.Errorf("expected 1 overlay (confirmation modal) after ShowDeleteProjectMsg, got %d", ta.Overlays.Len())
 	}
