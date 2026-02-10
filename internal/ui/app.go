@@ -166,7 +166,6 @@ type AppModel struct {
 	StatusIsError   bool
 	agentCancelFunc func()           // cancels in-flight agent run; nil when none
 	RalphStatus     *RalphStatusView // ralph status display
-	ralphWorkdir    string           // workdir for current ralph run (for polling)
 	termWidth       int              // terminal width from last WindowSizeMsg
 	termHeight      int              // terminal height from last WindowSizeMsg
 }
