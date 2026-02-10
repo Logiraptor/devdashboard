@@ -302,16 +302,28 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	return runConcurrent(ctx, cfg, concurrency)
 }
 
-// runEpicOrchestrator orchestrates epic leaf tasks sequentially, then runs opus verification.
-// This is invoked when --epic flag is set (and --bead is not set).
-// It queries 'bd ready --parent <epic-id>' after each completion to get fresh state
-// and handle newly ready leaves, continuing until all leaves are done.
-func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+// epicOrchestratorSetup holds setup state for epic orchestrator.
+type epicOrchestratorSetup struct {
+	out              io.Writer
+	statusWriter     *StatusWriter
+	summary          *RunSummary
+	epicPromptData   *PromptData
+	fetchPrompt      func(beadID string) (*PromptData, error)
+	render           func(data *PromptData) (string, error)
+	execute          func(ctx context.Context, prompt string) (*AgentResult, error)
+	assessFn         func(beadID string, result *AgentResult) (Outcome, string)
+	syncFn           func() error
+	currentFormatter *LogFormatter
+	processedBeads   map[string]bool
+	fetchChildren    func() ([]beads.Bead, error)
+}
+
+// setupEpicOrchestrator initializes the epic orchestrator setup.
+func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context, *epicOrchestratorSetup, func(), error) {
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout
 	}
-	loopStart := time.Now()
 
 	// Resolve defaults.
 	wallTimeout := cfg.Timeout
@@ -321,18 +333,17 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 	// Apply wall-clock timeout to context.
 	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
-	defer cancelWall()
 
 	// Set up status writer for devdeploy TUI polling.
 	statusWriter := NewStatusWriter(cfg.WorkDir)
-	defer statusWriter.Clear()
 
 	summary := &RunSummary{}
 
 	// Fetch epic info for verification prompt
 	epicPromptData, err := FetchPromptData(nil, cfg.WorkDir, cfg.Epic)
 	if err != nil {
-		return nil, fmt.Errorf("fetching epic prompt data: %w", err)
+		cancelWall()
+		return nil, nil, nil, fmt.Errorf("fetching epic prompt data: %w", err)
 	}
 
 	fetchPrompt := cfg.FetchPrompt
@@ -391,185 +402,208 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		return FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 	}
 
-	// Main loop: query for ready leaves, process first one, repeat until none remain
-	iteration := 0
-	for {
-		// Guard: context cancellation / wall-clock timeout.
-		if ctx.Err() != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				summary.StopReason = StopWallClock
-			} else {
-				summary.StopReason = StopContextCancelled
-			}
-			break
-		}
-
-		// Query for ready leaf tasks
-		if iteration == 0 {
-			fmt.Fprintf(out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
-		}
-		children, err := fetchChildren()
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("fetching epic children: %w", err)
-		}
-
-		// Filter out already processed beads
-		readyChildren := make([]beads.Bead, 0, len(children))
-		for _, child := range children {
-			if !processedBeads[child.ID] {
-				readyChildren = append(readyChildren, child)
-			}
-		}
-
-		if len(readyChildren) == 0 {
-			if iteration == 0 {
-				fmt.Fprintf(out, "No ready children found for epic %s\n", cfg.Epic)
-			} else {
-				fmt.Fprintf(out, "No more ready children for epic %s\n", cfg.Epic)
-			}
-			summary.StopReason = StopNormal
-			break
-		}
-
-		if iteration == 0 {
-			fmt.Fprintf(out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
-		}
-
-		// Process the first ready leaf (sorted by priority)
-		child := readyChildren[0]
-		iteration++
-
-		// Mark as processed to avoid reprocessing
-		processedBeads[child.ID] = true
-
-		// Write status: starting iteration with current bead.
-		currentBead := &BeadInfo{ID: child.ID, Title: child.Title}
-		status := Status{
-			State:         "running",
-			Iteration:     iteration,
-			MaxIterations: 0, // Unknown total, will be updated
-			CurrentBead:   currentBead,
-			Elapsed:       time.Since(loopStart).Nanoseconds(),
-		}
-		status.Tallies.Completed = summary.Succeeded
-		status.Tallies.Questions = summary.Questions
-		status.Tallies.Failed = summary.Failed
-		status.Tallies.TimedOut = summary.TimedOut
-		status.Tallies.Skipped = summary.Skipped
-		_ = statusWriter.Write(status)
-
-		// Fetch prompt data and render prompt
-		promptData, err := fetchPrompt(child.ID)
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: fetching prompt data for %s: %w", iteration, child.ID, err)
-		}
-
-		prompt, err := render(promptData)
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: rendering prompt for %s: %w", iteration, child.ID, err)
-		}
-
-		// Get commit hash before agent execution for landing check
-		cmd := exec.Command("git", "log", "-1", "--format=%H")
-		cmd.Dir = cfg.WorkDir
-		commitHashBefore := ""
-		if outBytes, err := cmd.Output(); err == nil {
-			commitHashBefore = strings.TrimSpace(string(outBytes))
-		}
-
-		// Set current bead for progress display
-		if currentFormatter != nil {
-			currentFormatter.SetCurrentBead(child.ID, child.Title)
-		}
-
-		// Execute agent
-		result, err := execute(ctx, prompt)
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: running agent for %s: %w", iteration, child.ID, err)
-		}
-
-		// Print summary if formatter was used
-		if currentFormatter != nil && !cfg.Verbose {
-			// Clear progress line before printing summary
-			fmt.Fprintf(out, "\n")
-			if summaryStr := currentFormatter.Summary(); summaryStr != "" {
-				fmt.Fprintf(out, "%s\n", summaryStr)
-			}
-			currentFormatter = nil // Reset for next iteration
-		}
-
-		// Assess outcome
-		outcome, outcomeSummary := assessFn(child.ID, result)
-
-		// Check landing status
-		landingStatus, landingErr := CheckLanding(cfg.WorkDir, child.ID, commitHashBefore)
-		if landingErr == nil {
-			landingMsg := FormatLandingStatus(landingStatus)
-			if landingMsg != "landed successfully" {
-				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
-				if cfg.StrictLanding && outcome == OutcomeSuccess {
-					if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
-						outcome = OutcomeFailure
-						outcomeSummary = fmt.Sprintf("%s; %s", outcomeSummary, landingMsg)
-					}
-				}
-			} else {
-				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
-			}
-		}
-
-		// Print structured per-iteration log line
-		fmt.Fprintf(out, "%s\n", formatIterationLog(iteration, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
-		// Print bead summary if formatter was used
-		if currentFormatter != nil && !cfg.Verbose {
-			if summary := currentFormatter.BeadSummary(); summary != "" {
-				fmt.Fprintf(out, "%s\n", summary)
-			}
-		}
-
-		// Update counters
-		summary.Iterations++
-		switch outcome {
-		case OutcomeSuccess:
-			summary.Succeeded++
-		case OutcomeQuestion:
-			summary.Questions++
-		case OutcomeFailure:
-			summary.Failed++
-			// If a child fails, stop the epic orchestration
-			summary.StopReason = StopConsecutiveFails
-			summary.Duration = time.Since(loopStart)
-			return summary, nil
-		case OutcomeTimeout:
-			summary.TimedOut++
-			// If a child times out, stop the epic orchestration
-			summary.StopReason = StopWallClock
-			summary.Duration = time.Since(loopStart)
-			return summary, nil
-		}
-
-		// Sync beads state after each completion
-		if err := syncFn(); err != nil {
-			if cfg.Verbose {
-				fmt.Fprintf(out, "  bd sync warning: %v\n", err)
-			}
-		}
-
-		// Continue loop to query for next ready leaf
+	setup := &epicOrchestratorSetup{
+		out:              out,
+		statusWriter:     statusWriter,
+		summary:          summary,
+		epicPromptData:   epicPromptData,
+		fetchPrompt:      fetchPrompt,
+		render:            render,
+		execute:          execute,
+		assessFn:          assessFn,
+		syncFn:            syncFn,
+		currentFormatter: currentFormatter,
+		processedBeads:    processedBeads,
+		fetchChildren:     fetchChildren,
 	}
 
-	// If all children completed successfully, run opus verification
-	if summary.Failed == 0 && summary.TimedOut == 0 && summary.Iterations > 0 {
-		fmt.Fprintf(out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", summary.Iterations)
+	cleanup := func() {
+		cancelWall()
+		statusWriter.Clear()
+	}
+
+	return ctx, setup, cleanup, nil
+}
+
+// processEpicIteration processes a single epic iteration.
+func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrchestratorSetup, loopStart time.Time, iteration int) (bool, error) {
+	// Guard: context cancellation / wall-clock timeout.
+	if ctx.Err() != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			setup.summary.StopReason = StopWallClock
+		} else {
+			setup.summary.StopReason = StopContextCancelled
+		}
+		return false, nil
+	}
+
+	// Query for ready leaf tasks
+	if iteration == 0 {
+		fmt.Fprintf(setup.out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
+	}
+	children, err := setup.fetchChildren()
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("fetching epic children: %w", err)
+	}
+
+	// Filter out already processed beads
+	readyChildren := make([]beads.Bead, 0, len(children))
+	for _, child := range children {
+		if !setup.processedBeads[child.ID] {
+			readyChildren = append(readyChildren, child)
+		}
+	}
+
+	if len(readyChildren) == 0 {
+		if iteration == 0 {
+			fmt.Fprintf(setup.out, "No ready children found for epic %s\n", cfg.Epic)
+		} else {
+			fmt.Fprintf(setup.out, "No more ready children for epic %s\n", cfg.Epic)
+		}
+		setup.summary.StopReason = StopNormal
+		return false, nil
+	}
+
+	if iteration == 0 {
+		fmt.Fprintf(setup.out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
+	}
+
+	// Process the first ready leaf (sorted by priority)
+	child := readyChildren[0]
+	iterNum := iteration + 1
+
+	// Mark as processed to avoid reprocessing
+	setup.processedBeads[child.ID] = true
+
+	// Write status: starting iteration with current bead.
+	currentBead := &BeadInfo{ID: child.ID, Title: child.Title}
+	status := Status{
+		State:         "running",
+		Iteration:     iterNum,
+		MaxIterations: 0, // Unknown total, will be updated
+		CurrentBead:   currentBead,
+		Elapsed:       time.Since(loopStart).Nanoseconds(),
+	}
+	status.Tallies.Completed = setup.summary.Succeeded
+	status.Tallies.Questions = setup.summary.Questions
+	status.Tallies.Failed = setup.summary.Failed
+	status.Tallies.TimedOut = setup.summary.TimedOut
+	status.Tallies.Skipped = setup.summary.Skipped
+	_ = setup.statusWriter.Write(status)
+
+	// Fetch prompt data and render prompt
+	promptData, err := setup.fetchPrompt(child.ID)
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: fetching prompt data for %s: %w", iterNum, child.ID, err)
+	}
+
+	prompt, err := setup.render(promptData)
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: rendering prompt for %s: %w", iterNum, child.ID, err)
+	}
+
+	// Get commit hash before agent execution for landing check
+	cmd := exec.Command("git", "log", "-1", "--format=%H")
+	cmd.Dir = cfg.WorkDir
+	commitHashBefore := ""
+	if outBytes, err := cmd.Output(); err == nil {
+		commitHashBefore = strings.TrimSpace(string(outBytes))
+	}
+
+	// Set current bead for progress display
+	if setup.currentFormatter != nil {
+		setup.currentFormatter.SetCurrentBead(child.ID, child.Title)
+	}
+
+	// Execute agent
+	result, err := setup.execute(ctx, prompt)
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: running agent for %s: %w", iterNum, child.ID, err)
+	}
+
+	// Print summary if formatter was used
+	if setup.currentFormatter != nil && !cfg.Verbose {
+		// Clear progress line before printing summary
+		fmt.Fprintf(setup.out, "\n")
+		if summaryStr := setup.currentFormatter.Summary(); summaryStr != "" {
+			fmt.Fprintf(setup.out, "%s\n", summaryStr)
+		}
+		setup.currentFormatter = nil // Reset for next iteration
+	}
+
+	// Assess outcome
+	outcome, outcomeSummary := setup.assessFn(child.ID, result)
+
+	// Check landing status
+	landingStatus, landingErr := CheckLanding(cfg.WorkDir, child.ID, commitHashBefore)
+	if landingErr == nil {
+		landingMsg := FormatLandingStatus(landingStatus)
+		if landingMsg != "landed successfully" {
+			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			if cfg.StrictLanding && outcome == OutcomeSuccess {
+				if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
+					outcome = OutcomeFailure
+					outcomeSummary = fmt.Sprintf("%s; %s", outcomeSummary, landingMsg)
+				}
+			}
+		} else {
+			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+		}
+	}
+
+	// Print structured per-iteration log line
+	fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
+	// Print bead summary if formatter was used
+	if setup.currentFormatter != nil && !cfg.Verbose {
+		if summary := setup.currentFormatter.BeadSummary(); summary != "" {
+			fmt.Fprintf(setup.out, "%s\n", summary)
+		}
+	}
+
+	// Update counters
+	setup.summary.Iterations++
+	switch outcome {
+	case OutcomeSuccess:
+		setup.summary.Succeeded++
+	case OutcomeQuestion:
+		setup.summary.Questions++
+	case OutcomeFailure:
+		setup.summary.Failed++
+		// If a child fails, stop the epic orchestration
+		setup.summary.StopReason = StopConsecutiveFails
+		setup.summary.Duration = time.Since(loopStart)
+		return false, nil
+	case OutcomeTimeout:
+		setup.summary.TimedOut++
+		// If a child times out, stop the epic orchestration
+		setup.summary.StopReason = StopWallClock
+		setup.summary.Duration = time.Since(loopStart)
+		return false, nil
+	}
+
+	// Sync beads state after each completion
+	if err := setup.syncFn(); err != nil {
+		if cfg.Verbose {
+			fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+		}
+	}
+
+	return true, nil
+}
+
+// runOpusVerification runs opus verification after all epic children complete.
+func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchestratorSetup) {
+	if setup.summary.Failed == 0 && setup.summary.TimedOut == 0 && setup.summary.Iterations > 0 {
+		fmt.Fprintf(setup.out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", setup.summary.Iterations)
 
 		// Fetch all epic children (including closed) for review
 		allChildren, err := FetchAllEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 		if err != nil {
-			fmt.Fprintf(out, "Warning: failed to fetch all epic children for verification: %v\n", err)
+			fmt.Fprintf(setup.out, "Warning: failed to fetch all epic children for verification: %v\n", err)
 			allChildren = nil
 		}
 
@@ -592,8 +626,8 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 		// Build verification prompt with closed tasks and code changes
 		var promptBuilder strings.Builder
 		promptBuilder.WriteString(fmt.Sprintf("You are verifying epic %s after all leaf tasks have been completed.\n\n", cfg.Epic))
-		promptBuilder.WriteString(fmt.Sprintf("# %s\n\n", epicPromptData.Title))
-		promptBuilder.WriteString(fmt.Sprintf("%s\n\n", epicPromptData.Description))
+		promptBuilder.WriteString(fmt.Sprintf("# %s\n\n", setup.epicPromptData.Title))
+		promptBuilder.WriteString(fmt.Sprintf("%s\n\n", setup.epicPromptData.Description))
 		promptBuilder.WriteString("---\n\n")
 		promptBuilder.WriteString("## Verification Task\n\n")
 		promptBuilder.WriteString("Verify the epic is fully implemented by:\n")
@@ -676,74 +710,122 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 			opts = append(opts, WithTimeout(cfg.AgentTimeout))
 		}
 		if !cfg.Verbose {
-			verificationFormatter = NewLogFormatter(out, false)
+			verificationFormatter = NewLogFormatter(setup.out, false)
 			opts = append(opts, WithStdoutWriter(verificationFormatter))
-		} else if out != os.Stdout {
-			opts = append(opts, WithStdoutWriter(out))
+		} else if setup.out != os.Stdout {
+			opts = append(opts, WithStdoutWriter(setup.out))
 		}
 
 		opusResult, err := RunAgentOpus(ctx, cfg.WorkDir, verificationPrompt, opts...)
 		if err != nil {
-			fmt.Fprintf(out, "Opus verification failed to run: %v\n", err)
+			fmt.Fprintf(setup.out, "Opus verification failed to run: %v\n", err)
 		} else {
 			// Print summary if formatter was used
 			if verificationFormatter != nil && !cfg.Verbose {
 				if summaryStr := verificationFormatter.Summary(); summaryStr != "" {
-					fmt.Fprintf(out, "%s\n", summaryStr)
+					fmt.Fprintf(setup.out, "%s\n", summaryStr)
 				}
 			}
-			fmt.Fprintf(out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
+			fmt.Fprintf(setup.out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
 		}
 	}
+}
 
-	summary.Duration = time.Since(loopStart)
-	if summary.StopReason == StopNormal && summary.Failed == 0 && summary.TimedOut == 0 {
-		summary.StopReason = StopNormal
+// writeFinalEpicStatus writes the final status and summary for epic orchestrator.
+func writeFinalEpicStatus(cfg LoopConfig, setup *epicOrchestratorSetup, loopStart time.Time) {
+	setup.summary.Duration = time.Since(loopStart)
+	if setup.summary.StopReason == StopNormal && setup.summary.Failed == 0 && setup.summary.TimedOut == 0 {
+		setup.summary.StopReason = StopNormal
 	}
 
 	// Write final status
 	finalStatus := Status{
 		State:         "completed",
-		Iteration:     summary.Iterations,
-		MaxIterations: summary.Iterations, // Total equals completed since we process until none remain
-		Elapsed:       summary.Duration.Nanoseconds(),
-		StopReason:    summary.StopReason.String(),
+		Iteration:     setup.summary.Iterations,
+		MaxIterations: setup.summary.Iterations, // Total equals completed since we process until none remain
+		Elapsed:       setup.summary.Duration.Nanoseconds(),
+		StopReason:    setup.summary.StopReason.String(),
 	}
-	finalStatus.Tallies.Completed = summary.Succeeded
-	finalStatus.Tallies.Questions = summary.Questions
-	finalStatus.Tallies.Failed = summary.Failed
-	finalStatus.Tallies.TimedOut = summary.TimedOut
-	finalStatus.Tallies.Skipped = summary.Skipped
-	_ = statusWriter.Write(finalStatus)
+	finalStatus.Tallies.Completed = setup.summary.Succeeded
+	finalStatus.Tallies.Questions = setup.summary.Questions
+	finalStatus.Tallies.Failed = setup.summary.Failed
+	finalStatus.Tallies.TimedOut = setup.summary.TimedOut
+	finalStatus.Tallies.Skipped = setup.summary.Skipped
+	_ = setup.statusWriter.Write(finalStatus)
 
 	// Count remaining beads for summary
 	remainingBeads := 0
-	if summary.StopReason == StopNormal {
+	if setup.summary.StopReason == StopNormal {
 		// Query one more time to see if any remain
-		remaining, err := fetchChildren()
+		remaining, err := setup.fetchChildren()
 		if err == nil {
 			remainingBeads = len(remaining)
 		}
 	}
 
 	// Print final summary
-	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
-
-	return summary, nil
+	fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 }
 
-// runSequential executes the sequential loop (original implementation).
-func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
-	// Epic mode: when Epic is set and TargetBead is empty, orchestrate children sequentially
-	if cfg.Epic != "" && cfg.TargetBead == "" {
-		return runEpicOrchestrator(ctx, cfg)
+// runEpicOrchestrator orchestrates epic leaf tasks sequentially, then runs opus verification.
+// This is invoked when --epic flag is set (and --bead is not set).
+// It queries 'bd ready --parent <epic-id>' after each completion to get fresh state
+// and handle newly ready leaves, continuing until all leaves are done.
+func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+	ctx, setup, cleanup, err := setupEpicOrchestrator(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	loopStart := time.Now()
+
+	// Main loop: query for ready leaves, process first one, repeat until none remain
+	iteration := 0
+	for {
+		shouldContinue, err := processEpicIteration(ctx, cfg, setup, loopStart, iteration)
+		if err != nil {
+			return setup.summary, err
+		}
+		if !shouldContinue {
+			break
+		}
+		iteration++
 	}
 
+	// If all children completed successfully, run opus verification
+	runOpusVerification(ctx, cfg, setup)
+
+	// Write final status and summary
+	writeFinalEpicStatus(cfg, setup, loopStart)
+
+	return setup.summary, nil
+}
+
+// sequentialLoopSetup holds setup state for sequential loop.
+type sequentialLoopSetup struct {
+	out              io.Writer
+	statusWriter     *StatusWriter
+	summary          *RunSummary
+	pickNext         func() (*beads.Bead, error)
+	fetchPrompt      func(beadID string) (*PromptData, error)
+	render           func(data *PromptData) (string, error)
+	execute          func(ctx context.Context, prompt string) (*AgentResult, error)
+	assessFn         func(beadID string, result *AgentResult) (Outcome, string)
+	syncFn           func() error
+	currentFormatter *LogFormatter
+	consecutiveLimit int
+	consecutiveFailures int
+	lastFailedBeadID string
+	skippedBeads     map[string]bool
+}
+
+// setupSequentialLoop initializes the sequential loop setup.
+func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, *sequentialLoopSetup, func(), error) {
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout
 	}
-	loopStart := time.Now()
 
 	// Resolve defaults.
 	consecutiveLimit := cfg.ConsecutiveFailureLimit
@@ -758,7 +840,6 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	// Apply wall-clock timeout to context.
 	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
-	defer cancelWall()
 
 	pickNext := cfg.PickNext
 	if pickNext == nil {
@@ -779,7 +860,7 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 				// So we'll use bd show to verify it exists and get title, then construct Bead
 				showCmd := exec.Command("bd", "show", cfg.TargetBead, "--json")
 				showCmd.Dir = cfg.WorkDir
-				out, err := showCmd.Output()
+				outBytes, err := showCmd.Output()
 				if err != nil {
 					return nil, fmt.Errorf("bd show %s: %w", cfg.TargetBead, err)
 				}
@@ -788,7 +869,7 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 					ID    string `json:"id"`
 					Title string `json:"title"`
 				}
-				if err := json.Unmarshal(out, &showEntries); err != nil {
+				if err := json.Unmarshal(outBytes, &showEntries); err != nil {
 					return nil, fmt.Errorf("parsing bd show output: %w", err)
 				}
 				if len(showEntries) == 0 {
@@ -869,343 +950,353 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	// Set up status writer for devdeploy TUI polling.
 	statusWriter := NewStatusWriter(cfg.WorkDir)
-	defer statusWriter.Clear() // Clean up status file when done
 
-	for i := 0; i < cfg.MaxIterations; i++ {
-		// Guard: context cancellation / wall-clock timeout.
-		if ctx.Err() != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				summary.StopReason = StopWallClock
+	setup := &sequentialLoopSetup{
+		out:                out,
+		statusWriter:       statusWriter,
+		summary:            summary,
+		pickNext:           pickNext,
+		fetchPrompt:        fetchPrompt,
+		render:             render,
+		execute:            execute,
+		assessFn:           assessFn,
+		syncFn:             syncFn,
+		currentFormatter:   currentFormatter,
+		consecutiveLimit:    consecutiveLimit,
+		consecutiveFailures: consecutiveFailures,
+		lastFailedBeadID:   lastFailedBeadID,
+		skippedBeads:       skippedBeads,
+	}
+
+	cleanup := func() {
+		cancelWall()
+		statusWriter.Clear()
+	}
+
+	return ctx, setup, cleanup, nil
+}
+
+// writeStatus writes status for sequential loop.
+func writeStatus(setup *sequentialLoopSetup, state string, iteration, maxIterations int, loopStart time.Time, currentBead *BeadInfo, stopReason string) {
+	status := Status{
+		State:         state,
+		Iteration:     iteration,
+		MaxIterations: maxIterations,
+		CurrentBead:   currentBead,
+		Elapsed:       time.Since(loopStart).Nanoseconds(),
+		StopReason:    stopReason,
+	}
+	status.Tallies.Completed = setup.summary.Succeeded
+	status.Tallies.Questions = setup.summary.Questions
+	status.Tallies.Failed = setup.summary.Failed
+	status.Tallies.TimedOut = setup.summary.TimedOut
+	status.Tallies.Skipped = setup.summary.Skipped
+	_ = setup.statusWriter.Write(status)
+}
+
+// processSequentialIteration processes a single sequential iteration.
+func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequentialLoopSetup, loopStart time.Time, i int) (bool, error) {
+	// Guard: context cancellation / wall-clock timeout.
+	if ctx.Err() != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			setup.summary.StopReason = StopWallClock
+		} else {
+			setup.summary.StopReason = StopContextCancelled
+		}
+		// Write final status before breaking
+		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
+		return false, nil
+	}
+
+	// 1. Pick next bead.
+	bead, err := setup.pickNext()
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: picking bead: %w", i+1, err)
+	}
+	if bead == nil {
+		setup.summary.StopReason = StopNormal
+		// Write final status before breaking
+		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
+		return false, nil
+	}
+
+	// Write status: starting iteration with current bead.
+	currentBead := &BeadInfo{ID: bead.ID, Title: bead.Title}
+	writeStatus(setup, "running", i+1, cfg.MaxIterations, loopStart, currentBead, "")
+
+	// Guard: same-bead retry detection.
+	// If the same bead that just failed is picked again, skip it.
+	if setup.lastFailedBeadID != "" && bead.ID == setup.lastFailedBeadID {
+		setup.skippedBeads[bead.ID] = true
+		setup.summary.Skipped++
+		setup.lastFailedBeadID = "" // reset so we don't skip indefinitely
+
+		// Check if we should stop: if we've skipped beads and the picker
+		// keeps returning skipped beads, we're in an infinite loop.
+		// Try one more pick; if that's also skipped, stop.
+		retryBead, retryErr := setup.pickNext()
+		if retryErr != nil {
+			setup.summary.Duration = time.Since(loopStart)
+			return false, fmt.Errorf("iteration %d: picking bead (retry): %w", i+1, retryErr)
+		}
+		if retryBead == nil {
+			setup.summary.StopReason = StopNormal
+			return false, nil
+		}
+		if setup.skippedBeads[retryBead.ID] {
+			setup.summary.Skipped++
+			setup.summary.StopReason = StopAllBeadsSkipped
+			// Write final status before breaking
+			writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
+			return false, nil
+		}
+		bead = retryBead
+	}
+
+	// Dry-run: print what would be done without executing.
+	if cfg.DryRun {
+		fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+		setup.summary.Iterations++
+		// Write final status for dry-run
+		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, "dry-run")
+		return false, nil
+	}
+
+	// 2. Fetch full bead data and render prompt.
+	promptData, err := setup.fetchPrompt(bead.ID)
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: fetching prompt data for %s: %w",
+			i+1, bead.ID, err)
+	}
+
+	prompt, err := setup.render(promptData)
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: rendering prompt for %s: %w",
+			i+1, bead.ID, err)
+	}
+
+	// 3. Get commit hash before agent execution for landing check.
+	cmd := exec.Command("git", "log", "-1", "--format=%H")
+	cmd.Dir = cfg.WorkDir
+	commitHashBefore := ""
+	if outBytes, err := cmd.Output(); err == nil {
+		commitHashBefore = strings.TrimSpace(string(outBytes))
+	}
+
+	// Set current bead for progress display
+	if setup.currentFormatter != nil {
+		setup.currentFormatter.SetCurrentBead(bead.ID, bead.Title)
+	}
+
+	// 4. Execute agent.
+	result, err := setup.execute(ctx, prompt)
+	if err != nil {
+		setup.summary.Duration = time.Since(loopStart)
+		return false, fmt.Errorf("iteration %d: running agent for %s: %w",
+			i+1, bead.ID, err)
+	}
+
+	// Print summary if formatter was used
+	if setup.currentFormatter != nil && !cfg.Verbose {
+		// Clear progress line before printing summary
+		fmt.Fprintf(setup.out, "\n")
+		if summaryStr := setup.currentFormatter.Summary(); summaryStr != "" {
+			fmt.Fprintf(setup.out, "%s\n", summaryStr)
+		}
+		setup.currentFormatter = nil // Reset for next iteration
+	}
+
+	// 5. Assess outcome.
+	outcome, outcomeSummary := setup.assessFn(bead.ID, result)
+
+	// 6. Check landing status.
+	landingStatus, landingErr := CheckLanding(cfg.WorkDir, bead.ID, commitHashBefore)
+	if landingErr == nil {
+		landingMsg := FormatLandingStatus(landingStatus)
+		if landingMsg != "landed successfully" {
+			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			// If strict landing is enabled and landing is incomplete, treat as failure
+			if cfg.StrictLanding && outcome == OutcomeSuccess {
+				// Override success if landing is incomplete
+				if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
+					outcome = OutcomeFailure
+					outcomeSummary = fmt.Sprintf("%s; %s", outcomeSummary, landingMsg)
+				}
+			}
+		} else {
+			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+		}
+	}
+
+	// Print structured per-iteration log line.
+	fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+	// Print bead summary if formatter was used
+	if setup.currentFormatter != nil && !cfg.Verbose {
+		if summary := setup.currentFormatter.BeadSummary(); summary != "" {
+			fmt.Fprintf(setup.out, "%s\n", summary)
+		}
+	}
+
+	// Verbose mode: print agent stdout/stderr excerpts.
+	if cfg.Verbose {
+		if result.Stdout != "" {
+			lines := strings.Split(result.Stdout, "\n")
+			maxLines := 10
+			if len(lines) > maxLines {
+				fmt.Fprintf(setup.out, "  stdout (showing last %d lines):\n", maxLines)
+				for _, line := range lines[len(lines)-maxLines:] {
+					fmt.Fprintf(setup.out, "    %s\n", line)
+				}
 			} else {
-				summary.StopReason = StopContextCancelled
-			}
-			// Write final status before breaking
-			status := Status{
-				State:         "completed",
-				Iteration:     summary.Iterations,
-				MaxIterations: cfg.MaxIterations,
-				Elapsed:       time.Since(loopStart).Nanoseconds(),
-				StopReason:    summary.StopReason.String(),
-			}
-			status.Tallies.Completed = summary.Succeeded
-			status.Tallies.Questions = summary.Questions
-			status.Tallies.Failed = summary.Failed
-			status.Tallies.TimedOut = summary.TimedOut
-			status.Tallies.Skipped = summary.Skipped
-			_ = statusWriter.Write(status)
-			break
-		}
-
-		// 1. Pick next bead.
-		bead, err := pickNext()
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: picking bead: %w", i+1, err)
-		}
-		if bead == nil {
-			summary.StopReason = StopNormal
-			// Write final status before breaking
-			status := Status{
-				State:         "completed",
-				Iteration:     summary.Iterations,
-				MaxIterations: cfg.MaxIterations,
-				Elapsed:       time.Since(loopStart).Nanoseconds(),
-				StopReason:    summary.StopReason.String(),
-			}
-			status.Tallies.Completed = summary.Succeeded
-			status.Tallies.Questions = summary.Questions
-			status.Tallies.Failed = summary.Failed
-			status.Tallies.TimedOut = summary.TimedOut
-			status.Tallies.Skipped = summary.Skipped
-			_ = statusWriter.Write(status)
-			break
-		}
-
-		// Write status: starting iteration with current bead.
-		currentBead := &BeadInfo{ID: bead.ID, Title: bead.Title}
-		status := Status{
-			State:         "running",
-			Iteration:     i + 1,
-			MaxIterations: cfg.MaxIterations,
-			CurrentBead:   currentBead,
-			Elapsed:       time.Since(loopStart).Nanoseconds(),
-		}
-		status.Tallies.Completed = summary.Succeeded
-		status.Tallies.Questions = summary.Questions
-		status.Tallies.Failed = summary.Failed
-		status.Tallies.TimedOut = summary.TimedOut
-		status.Tallies.Skipped = summary.Skipped
-		_ = statusWriter.Write(status) // Best effort; don't fail loop on status write errors
-
-		// Guard: same-bead retry detection.
-		// If the same bead that just failed is picked again, skip it.
-		if lastFailedBeadID != "" && bead.ID == lastFailedBeadID {
-			skippedBeads[bead.ID] = true
-			summary.Skipped++
-			lastFailedBeadID = "" // reset so we don't skip indefinitely
-
-			// Check if we should stop: if we've skipped beads and the picker
-			// keeps returning skipped beads, we're in an infinite loop.
-			// Try one more pick; if that's also skipped, stop.
-			retryBead, retryErr := pickNext()
-			if retryErr != nil {
-				summary.Duration = time.Since(loopStart)
-				return summary, fmt.Errorf("iteration %d: picking bead (retry): %w", i+1, retryErr)
-			}
-			if retryBead == nil {
-				summary.StopReason = StopNormal
-				break
-			}
-			if skippedBeads[retryBead.ID] {
-				summary.Skipped++
-				summary.StopReason = StopAllBeadsSkipped
-				// Write final status before breaking
-				status := Status{
-					State:         "completed",
-					Iteration:     summary.Iterations,
-					MaxIterations: cfg.MaxIterations,
-					Elapsed:       time.Since(loopStart).Nanoseconds(),
-					StopReason:    summary.StopReason.String(),
-				}
-				status.Tallies.Completed = summary.Succeeded
-				status.Tallies.Questions = summary.Questions
-				status.Tallies.Failed = summary.Failed
-				status.Tallies.TimedOut = summary.TimedOut
-				status.Tallies.Skipped = summary.Skipped
-				_ = statusWriter.Write(status)
-				break
-			}
-			bead = retryBead
-		}
-
-		// Dry-run: print what would be done without executing.
-		if cfg.DryRun {
-			fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
-			summary.Iterations++
-			// Write final status for dry-run
-			status := Status{
-				State:         "completed",
-				Iteration:     summary.Iterations,
-				MaxIterations: cfg.MaxIterations,
-				Elapsed:       time.Since(loopStart).Nanoseconds(),
-				StopReason:    "dry-run",
-			}
-			status.Tallies.Completed = summary.Succeeded
-			status.Tallies.Questions = summary.Questions
-			status.Tallies.Failed = summary.Failed
-			status.Tallies.TimedOut = summary.TimedOut
-			status.Tallies.Skipped = summary.Skipped
-			_ = statusWriter.Write(status)
-			break
-		}
-
-		// 2. Fetch full bead data and render prompt.
-		promptData, err := fetchPrompt(bead.ID)
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: fetching prompt data for %s: %w",
-				i+1, bead.ID, err)
-		}
-
-		prompt, err := render(promptData)
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: rendering prompt for %s: %w",
-				i+1, bead.ID, err)
-		}
-
-		// 3. Get commit hash before agent execution for landing check.
-		cmd := exec.Command("git", "log", "-1", "--format=%H")
-		cmd.Dir = cfg.WorkDir
-		commitHashBefore := ""
-		if out, err := cmd.Output(); err == nil {
-			commitHashBefore = strings.TrimSpace(string(out))
-		}
-
-		// Set current bead for progress display
-		if currentFormatter != nil {
-			currentFormatter.SetCurrentBead(bead.ID, bead.Title)
-		}
-
-		// 4. Execute agent.
-		result, err := execute(ctx, prompt)
-		if err != nil {
-			summary.Duration = time.Since(loopStart)
-			return summary, fmt.Errorf("iteration %d: running agent for %s: %w",
-				i+1, bead.ID, err)
-		}
-
-		// Print summary if formatter was used
-		if currentFormatter != nil && !cfg.Verbose {
-			// Clear progress line before printing summary
-			fmt.Fprintf(out, "\n")
-			if summaryStr := currentFormatter.Summary(); summaryStr != "" {
-				fmt.Fprintf(out, "%s\n", summaryStr)
-			}
-			currentFormatter = nil // Reset for next iteration
-		}
-
-		// 5. Assess outcome.
-		outcome, outcomeSummary := assessFn(bead.ID, result)
-
-		// 6. Check landing status.
-		landingStatus, landingErr := CheckLanding(cfg.WorkDir, bead.ID, commitHashBefore)
-		if landingErr == nil {
-			landingMsg := FormatLandingStatus(landingStatus)
-			if landingMsg != "landed successfully" {
-				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
-				// If strict landing is enabled and landing is incomplete, treat as failure
-				if cfg.StrictLanding && outcome == OutcomeSuccess {
-					// Override success if landing is incomplete
-					if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
-						outcome = OutcomeFailure
-						outcomeSummary = fmt.Sprintf("%s; %s", outcomeSummary, landingMsg)
+				fmt.Fprintf(setup.out, "  stdout:\n")
+				for _, line := range lines {
+					if line != "" {
+						fmt.Fprintf(setup.out, "    %s\n", line)
 					}
+				}
+			}
+		}
+		if result.Stderr != "" {
+			lines := strings.Split(result.Stderr, "\n")
+			maxLines := 10
+			if len(lines) > maxLines {
+				fmt.Fprintf(setup.out, "  stderr (showing last %d lines):\n", maxLines)
+				for _, line := range lines[len(lines)-maxLines:] {
+					fmt.Fprintf(setup.out, "    %s\n", line)
 				}
 			} else {
-				fmt.Fprintf(out, "  Landing: %s\n", landingMsg)
-			}
-		}
-
-		// Print structured per-iteration log line.
-		fmt.Fprintf(out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
-		// Print bead summary if formatter was used
-		if currentFormatter != nil && !cfg.Verbose {
-			if summary := currentFormatter.BeadSummary(); summary != "" {
-				fmt.Fprintf(out, "%s\n", summary)
-			}
-		}
-
-		// Verbose mode: print agent stdout/stderr excerpts.
-		if cfg.Verbose {
-			if result.Stdout != "" {
-				lines := strings.Split(result.Stdout, "\n")
-				maxLines := 10
-				if len(lines) > maxLines {
-					fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
-					for _, line := range lines[len(lines)-maxLines:] {
-						fmt.Fprintf(out, "    %s\n", line)
-					}
-				} else {
-					fmt.Fprintf(out, "  stdout:\n")
-					for _, line := range lines {
-						if line != "" {
-							fmt.Fprintf(out, "    %s\n", line)
-						}
+				fmt.Fprintf(setup.out, "  stderr:\n")
+				for _, line := range lines {
+					if line != "" {
+						fmt.Fprintf(setup.out, "    %s\n", line)
 					}
 				}
-			}
-			if result.Stderr != "" {
-				lines := strings.Split(result.Stderr, "\n")
-				maxLines := 10
-				if len(lines) > maxLines {
-					fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
-					for _, line := range lines[len(lines)-maxLines:] {
-						fmt.Fprintf(out, "    %s\n", line)
-					}
-				} else {
-					fmt.Fprintf(out, "  stderr:\n")
-					for _, line := range lines {
-						if line != "" {
-							fmt.Fprintf(out, "    %s\n", line)
-						}
-					}
-				}
-			}
-		}
-
-		// 5. Update counters.
-		summary.Iterations++
-		switch outcome {
-		case OutcomeSuccess:
-			summary.Succeeded++
-			consecutiveFailures = 0
-			lastFailedBeadID = ""
-		case OutcomeQuestion:
-			summary.Questions++
-			consecutiveFailures = 0
-			lastFailedBeadID = ""
-		case OutcomeFailure:
-			summary.Failed++
-			consecutiveFailures++
-			lastFailedBeadID = bead.ID
-		case OutcomeTimeout:
-			summary.TimedOut++
-			consecutiveFailures++
-			lastFailedBeadID = bead.ID
-		}
-
-		// Write status update after iteration completes.
-		status = Status{
-			State:         "running",
-			Iteration:     i + 1,
-			MaxIterations: cfg.MaxIterations,
-			Elapsed:       time.Since(loopStart).Nanoseconds(),
-		}
-		status.Tallies.Completed = summary.Succeeded
-		status.Tallies.Questions = summary.Questions
-		status.Tallies.Failed = summary.Failed
-		status.Tallies.TimedOut = summary.TimedOut
-		status.Tallies.Skipped = summary.Skipped
-		_ = statusWriter.Write(status) // Best effort
-
-		// Guard: consecutive failure limit.
-		if consecutiveFailures >= consecutiveLimit {
-			summary.StopReason = StopConsecutiveFails
-			// Write final status before breaking
-			status.State = "completed"
-			status.StopReason = summary.StopReason.String()
-			_ = statusWriter.Write(status)
-			break
-		}
-
-		// 6. Sync beads state.
-		if err := syncFn(); err != nil {
-			if cfg.Verbose {
-				fmt.Fprintf(out, "  bd sync warning: %v\n", err)
 			}
 		}
 	}
 
+	// 5. Update counters.
+	setup.summary.Iterations++
+	switch outcome {
+	case OutcomeSuccess:
+		setup.summary.Succeeded++
+		setup.consecutiveFailures = 0
+		setup.lastFailedBeadID = ""
+	case OutcomeQuestion:
+		setup.summary.Questions++
+		setup.consecutiveFailures = 0
+		setup.lastFailedBeadID = ""
+	case OutcomeFailure:
+		setup.summary.Failed++
+		setup.consecutiveFailures++
+		setup.lastFailedBeadID = bead.ID
+	case OutcomeTimeout:
+		setup.summary.TimedOut++
+		setup.consecutiveFailures++
+		setup.lastFailedBeadID = bead.ID
+	}
+
+	// Write status update after iteration completes.
+	writeStatus(setup, "running", i+1, cfg.MaxIterations, loopStart, nil, "")
+
+	// Guard: consecutive failure limit.
+	if setup.consecutiveFailures >= setup.consecutiveLimit {
+		setup.summary.StopReason = StopConsecutiveFails
+		// Write final status before breaking
+		writeStatus(setup, "completed", i+1, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
+		return false, nil
+	}
+
+	// 6. Sync beads state.
+	if err := setup.syncFn(); err != nil {
+		if cfg.Verbose {
+			fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+		}
+	}
+
+	return true, nil
+}
+
+// writeFinalSequentialStatus writes the final status and summary for sequential loop.
+func writeFinalSequentialStatus(cfg LoopConfig, setup *sequentialLoopSetup, loopStart time.Time) {
 	// If we exhausted all iterations without an earlier stop reason, set it.
-	if summary.StopReason == StopNormal && summary.Iterations >= cfg.MaxIterations {
-		summary.StopReason = StopMaxIterations
+	if setup.summary.StopReason == StopNormal && setup.summary.Iterations >= cfg.MaxIterations {
+		setup.summary.StopReason = StopMaxIterations
 	}
 
 	// Calculate total duration.
-	summary.Duration = time.Since(loopStart)
+	setup.summary.Duration = time.Since(loopStart)
 
 	// Write final status.
-	finalStatus := Status{
-		State:         "completed",
-		Iteration:     summary.Iterations,
-		MaxIterations: cfg.MaxIterations,
-		Elapsed:       summary.Duration.Nanoseconds(),
-		StopReason:    summary.StopReason.String(),
-	}
-	finalStatus.Tallies.Completed = summary.Succeeded
-	finalStatus.Tallies.Questions = summary.Questions
-	finalStatus.Tallies.Failed = summary.Failed
-	finalStatus.Tallies.TimedOut = summary.TimedOut
-	finalStatus.Tallies.Skipped = summary.Skipped
-	_ = statusWriter.Write(finalStatus)
+	writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
 
 	// Count remaining beads.
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary (always printed, even on early termination).
-	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
-
-	return summary, nil
+	fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 }
 
-// runConcurrent executes the concurrent loop with worker pool pattern.
-func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSummary, error) {
+// runSequential executes the sequential loop (original implementation).
+func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+	// Epic mode: when Epic is set and TargetBead is empty, orchestrate children sequentially
+	if cfg.Epic != "" && cfg.TargetBead == "" {
+		return runEpicOrchestrator(ctx, cfg)
+	}
+
+	ctx, setup, cleanup, err := setupSequentialLoop(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	loopStart := time.Now()
+
+	for i := 0; i < cfg.MaxIterations; i++ {
+		shouldContinue, err := processSequentialIteration(ctx, cfg, setup, loopStart, i)
+		if err != nil {
+			return setup.summary, err
+		}
+		if !shouldContinue {
+			break
+		}
+	}
+
+	// Write final status and summary
+	writeFinalSequentialStatus(cfg, setup, loopStart)
+
+	return setup.summary, nil
+}
+
+// concurrentLoopSetup holds setup state for concurrent loop.
+type concurrentLoopSetup struct {
+	out                io.Writer
+	summary            *RunSummary
+	wtMgr              *WorktreeManager
+	pickNext           func() (*beads.Bead, error)
+	fetchPrompt        func(beadID string) (*PromptData, error)
+	render             func(data *PromptData) (string, error)
+	assessFn           func(beadID string, result *AgentResult) (Outcome, string)
+	syncFn             func() error
+	consecutiveLimit   int
+	mu                 sync.Mutex
+	consecutiveFailures int32
+	lastFailedBeadID   string
+	skippedBeads       map[string]bool
+	iterations         int32
+	stopReason         StopReason
+	shouldStop         int32 // atomic flag for early termination
+}
+
+// setupConcurrentLoop initializes the concurrent loop setup.
+func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, *concurrentLoopSetup, func(), error) {
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout
 	}
-	loopStart := time.Now()
 
 	// Resolve defaults.
 	consecutiveLimit := cfg.ConsecutiveFailureLimit
@@ -1220,12 +1311,12 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 
 	// Apply wall-clock timeout to context.
 	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
-	defer cancelWall()
 
 	// Initialize worktree manager
 	wtMgr, err := NewWorktreeManager(cfg.WorkDir)
 	if err != nil {
-		return nil, fmt.Errorf("creating worktree manager: %w", err)
+		cancelWall()
+		return nil, nil, nil, fmt.Errorf("creating worktree manager: %w", err)
 	}
 
 	// Set up picker
@@ -1248,17 +1339,6 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 	render := cfg.Render
 	if render == nil {
 		render = RenderPrompt
-	}
-
-	execute := cfg.Execute
-	if execute == nil {
-		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
-			var opts []Option
-			if cfg.AgentTimeout > 0 {
-				opts = append(opts, WithTimeout(cfg.AgentTimeout))
-			}
-			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
-		}
 	}
 
 	assessFn := cfg.AssessFn
@@ -1287,109 +1367,136 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 	stopReason := StopNormal
 	shouldStop := int32(0) // atomic flag for early termination
 
-	// Worker function
-	worker := func(workerID int) {
-		for atomic.LoadInt32(&shouldStop) == 0 {
+	setup := &concurrentLoopSetup{
+		out:                out,
+		summary:            summary,
+		wtMgr:              wtMgr,
+		pickNext:           pickNext,
+		fetchPrompt:        fetchPrompt,
+		render:             render,
+		assessFn:           assessFn,
+		syncFn:             syncFn,
+		consecutiveLimit:   consecutiveLimit,
+		mu:                 mu,
+		consecutiveFailures: consecutiveFailures,
+		lastFailedBeadID:   lastFailedBeadID,
+		skippedBeads:       skippedBeads,
+		iterations:         iterations,
+		stopReason:         stopReason,
+		shouldStop:         shouldStop,
+	}
+
+	cleanup := func() {
+		cancelWall()
+	}
+
+	return ctx, setup, cleanup, nil
+}
+
+// createConcurrentWorker creates a worker function for concurrent execution.
+func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurrentLoopSetup) func(workerID int) {
+		return func(workerID int) {
+		for atomic.LoadInt32(&setup.shouldStop) == 0 {
 			// Check context cancellation
 			if ctx.Err() != nil {
-				mu.Lock()
+				setup.mu.Lock()
 				if ctx.Err() == context.DeadlineExceeded {
-					stopReason = StopWallClock
+					setup.stopReason = StopWallClock
 				} else {
-					stopReason = StopContextCancelled
+					setup.stopReason = StopContextCancelled
 				}
-				atomic.StoreInt32(&shouldStop, 1)
-				mu.Unlock()
+				atomic.StoreInt32(&setup.shouldStop, 1)
+				setup.mu.Unlock()
 				return
 			}
 
 			// Check max iterations
-			if int(atomic.LoadInt32(&iterations)) >= cfg.MaxIterations {
-				mu.Lock()
-				if stopReason == StopNormal {
-					stopReason = StopMaxIterations
+			if int(atomic.LoadInt32(&setup.iterations)) >= cfg.MaxIterations {
+				setup.mu.Lock()
+				if setup.stopReason == StopNormal {
+					setup.stopReason = StopMaxIterations
 				}
-				atomic.StoreInt32(&shouldStop, 1)
-				mu.Unlock()
+				atomic.StoreInt32(&setup.shouldStop, 1)
+				setup.mu.Unlock()
 				return
 			}
 
 			// Pick next bead (thread-safe)
-			bead, err := pickNext()
+			bead, err := setup.pickNext()
 			if err != nil {
-				mu.Lock()
-				atomic.StoreInt32(&shouldStop, 1)
-				mu.Unlock()
+				setup.mu.Lock()
+				atomic.StoreInt32(&setup.shouldStop, 1)
+				setup.mu.Unlock()
 				return
 			}
 			if bead == nil {
-				mu.Lock()
-				if stopReason == StopNormal {
-					stopReason = StopNormal
+				setup.mu.Lock()
+				if setup.stopReason == StopNormal {
+					setup.stopReason = StopNormal
 				}
-				atomic.StoreInt32(&shouldStop, 1)
-				mu.Unlock()
+				atomic.StoreInt32(&setup.shouldStop, 1)
+				setup.mu.Unlock()
 				return
 			}
 
 			// Check if bead should be skipped
-			mu.Lock()
-			if skippedBeads[bead.ID] {
-				mu.Unlock()
+			setup.mu.Lock()
+			if setup.skippedBeads[bead.ID] {
+				setup.mu.Unlock()
 				continue
 			}
 			// Skip if this is the same bead that just failed
-			if lastFailedBeadID != "" && bead.ID == lastFailedBeadID {
-				skippedBeads[bead.ID] = true
-				summary.Skipped++
-				lastFailedBeadID = ""
-				mu.Unlock()
+			if setup.lastFailedBeadID != "" && bead.ID == setup.lastFailedBeadID {
+				setup.skippedBeads[bead.ID] = true
+				setup.summary.Skipped++
+				setup.lastFailedBeadID = ""
+				setup.mu.Unlock()
 				continue
 			}
-			mu.Unlock()
+			setup.mu.Unlock()
 
 			// Dry-run: print what would be done without executing
 			if cfg.DryRun {
-				mu.Lock()
-				iterNum := int(atomic.AddInt32(&iterations, 1))
-				fmt.Fprintf(out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
-				summary.Iterations++
-				atomic.StoreInt32(&shouldStop, 1)
-				mu.Unlock()
+				setup.mu.Lock()
+				iterNum := int(atomic.AddInt32(&setup.iterations, 1))
+				fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+				setup.summary.Iterations++
+				atomic.StoreInt32(&setup.shouldStop, 1)
+				setup.mu.Unlock()
 				return
 			}
 
 			// Create worktree for this bead
-			worktreePath, branchName, err := wtMgr.CreateWorktree(bead.ID)
+			worktreePath, branchName, err := setup.wtMgr.CreateWorktree(bead.ID)
 			if err != nil {
-				mu.Lock()
-				fmt.Fprintf(out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
-				mu.Unlock()
+				setup.mu.Lock()
+				fmt.Fprintf(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
+				setup.mu.Unlock()
 				continue
 			}
 			defer func() {
-				if err := wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
-					mu.Lock()
-					fmt.Fprintf(out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
-					mu.Unlock()
+				if err := setup.wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
+					setup.mu.Lock()
+					fmt.Fprintf(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
+					setup.mu.Unlock()
 				}
 			}()
 
 			// Fetch prompt data (beads state is shared, so use original workdir)
-			promptData, err := fetchPrompt(bead.ID)
+			promptData, err := setup.fetchPrompt(bead.ID)
 			if err != nil {
-				mu.Lock()
-				fmt.Fprintf(out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
-				mu.Unlock()
+				setup.mu.Lock()
+				fmt.Fprintf(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
+				setup.mu.Unlock()
 				continue
 			}
 
 			// Render prompt
-			prompt, err := render(promptData)
+			prompt, err := setup.render(promptData)
 			if err != nil {
-				mu.Lock()
-				fmt.Fprintf(out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
-				mu.Unlock()
+				setup.mu.Lock()
+				fmt.Fprintf(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
+				setup.mu.Unlock()
 				continue
 			}
 
@@ -1403,22 +1510,22 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 			}
 			result, err := agentExecute(ctx, prompt)
 			if err != nil {
-				mu.Lock()
-				fmt.Fprintf(out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
-				mu.Unlock()
+				setup.mu.Lock()
+				fmt.Fprintf(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
+				setup.mu.Unlock()
 				continue
 			}
 
 			// Assess outcome (beads state is shared, so use original workdir)
-			outcome, outcomeSummary := assessFn(bead.ID, result)
+			outcome, outcomeSummary := setup.assessFn(bead.ID, result)
 
 			// Update shared state atomically
-			mu.Lock()
-			iterNum := int(atomic.AddInt32(&iterations, 1))
-			summary.Iterations++
+			setup.mu.Lock()
+			iterNum := int(atomic.AddInt32(&setup.iterations, 1))
+			setup.summary.Iterations++
 
 			// Print structured per-iteration log line
-			fmt.Fprintf(out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+			fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
 			// Note: Bead summary not printed in concurrent mode (no formatter tracking per worker)
 
 			// Verbose mode output
@@ -1427,15 +1534,15 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 					lines := strings.Split(result.Stdout, "\n")
 					maxLines := 10
 					if len(lines) > maxLines {
-						fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
+						fmt.Fprintf(setup.out, "  stdout (showing last %d lines):\n", maxLines)
 						for _, line := range lines[len(lines)-maxLines:] {
-							fmt.Fprintf(out, "    %s\n", line)
+							fmt.Fprintf(setup.out, "    %s\n", line)
 						}
 					} else {
-						fmt.Fprintf(out, "  stdout:\n")
+						fmt.Fprintf(setup.out, "  stdout:\n")
 						for _, line := range lines {
 							if line != "" {
-								fmt.Fprintf(out, "    %s\n", line)
+								fmt.Fprintf(setup.out, "    %s\n", line)
 							}
 						}
 					}
@@ -1444,15 +1551,15 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 					lines := strings.Split(result.Stderr, "\n")
 					maxLines := 10
 					if len(lines) > maxLines {
-						fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
+						fmt.Fprintf(setup.out, "  stderr (showing last %d lines):\n", maxLines)
 						for _, line := range lines[len(lines)-maxLines:] {
-							fmt.Fprintf(out, "    %s\n", line)
+							fmt.Fprintf(setup.out, "    %s\n", line)
 						}
 					} else {
-						fmt.Fprintf(out, "  stderr:\n")
+						fmt.Fprintf(setup.out, "  stderr:\n")
 						for _, line := range lines {
 							if line != "" {
-								fmt.Fprintf(out, "    %s\n", line)
+								fmt.Fprintf(setup.out, "    %s\n", line)
 							}
 						}
 					}
@@ -1462,40 +1569,54 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 			// Update counters
 			switch outcome {
 			case OutcomeSuccess:
-				summary.Succeeded++
-				atomic.StoreInt32(&consecutiveFailures, 0)
-				lastFailedBeadID = ""
+				setup.summary.Succeeded++
+				atomic.StoreInt32(&setup.consecutiveFailures, 0)
+				setup.lastFailedBeadID = ""
 			case OutcomeQuestion:
-				summary.Questions++
-				atomic.StoreInt32(&consecutiveFailures, 0)
-				lastFailedBeadID = ""
+				setup.summary.Questions++
+				atomic.StoreInt32(&setup.consecutiveFailures, 0)
+				setup.lastFailedBeadID = ""
 			case OutcomeFailure:
-				summary.Failed++
-				atomic.AddInt32(&consecutiveFailures, 1)
-				lastFailedBeadID = bead.ID
+				setup.summary.Failed++
+				atomic.AddInt32(&setup.consecutiveFailures, 1)
+				setup.lastFailedBeadID = bead.ID
 			case OutcomeTimeout:
-				summary.TimedOut++
-				atomic.AddInt32(&consecutiveFailures, 1)
-				lastFailedBeadID = bead.ID
+				setup.summary.TimedOut++
+				atomic.AddInt32(&setup.consecutiveFailures, 1)
+				setup.lastFailedBeadID = bead.ID
 			}
 
 			// Check consecutive failure limit
-			if int(atomic.LoadInt32(&consecutiveFailures)) >= consecutiveLimit {
-				stopReason = StopConsecutiveFails
-				atomic.StoreInt32(&shouldStop, 1)
+			if int(atomic.LoadInt32(&setup.consecutiveFailures)) >= setup.consecutiveLimit {
+				setup.stopReason = StopConsecutiveFails
+				atomic.StoreInt32(&setup.shouldStop, 1)
 			}
 
 			// Sync beads state (best-effort, don't fail on error)
-			mu.Unlock()
-			if err := syncFn(); err != nil {
-				mu.Lock()
+			setup.mu.Unlock()
+			if err := setup.syncFn(); err != nil {
+				setup.mu.Lock()
 				if cfg.Verbose {
-					fmt.Fprintf(out, "  bd sync warning: %v\n", err)
+					fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
 				}
-				mu.Unlock()
+				setup.mu.Unlock()
 			}
 		}
 	}
+}
+
+// runConcurrent executes the concurrent loop with worker pool pattern.
+func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSummary, error) {
+	ctx, setup, cleanup, err := setupConcurrentLoop(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	loopStart := time.Now()
+
+	// Create worker function
+	worker := createConcurrentWorker(ctx, cfg, setup)
 
 	// Start worker pool
 	var wg sync.WaitGroup
@@ -1511,14 +1632,14 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 	wg.Wait()
 
 	// Calculate total duration
-	summary.Duration = time.Since(loopStart)
-	summary.StopReason = stopReason
+	setup.summary.Duration = time.Since(loopStart)
+	setup.summary.StopReason = setup.stopReason
 
 	// Count remaining beads
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary
-	fmt.Fprintf(out, "\n%s\n", formatSummary(summary, remainingBeads))
+	fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 
-	return summary, nil
+	return setup.summary, nil
 }
