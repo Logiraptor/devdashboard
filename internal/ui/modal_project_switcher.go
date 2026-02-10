@@ -1,8 +1,8 @@
 package ui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // ProjectSwitcherModal is a modal for selecting a project from a list.

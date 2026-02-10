@@ -276,4 +276,3 @@ func FetchAllEpicChildren(runBD RunBDFunc, workDir string, epicID string) ([]bea
 
 	return result, nil
 }
-

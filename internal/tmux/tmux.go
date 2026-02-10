@@ -136,26 +136,26 @@ func FocusPaneAsSidebar(paneID string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Get current pane ID (where devdeploy is running)
 	currentPaneID, err := t.Command("display-message", "-p", "#{pane_id}")
 	if err != nil {
 		return fmt.Errorf("get current pane: %w", err)
 	}
 	currentPaneID = strings.TrimSpace(currentPaneID)
-	
+
 	// If the target pane is the current pane, nothing to do
 	if paneID == currentPaneID {
 		return nil
 	}
-	
+
 	// Get current window ID
 	currentWindowID, err := t.Command("display-message", "-p", "#{window_id}")
 	if err != nil {
 		return fmt.Errorf("get current window: %w", err)
 	}
 	currentWindowID = strings.TrimSpace(currentWindowID)
-	
+
 	// Check if pane is already in current window by listing panes
 	paneList, err := t.Command("list-panes", "-t", currentWindowID, "-F", "#{pane_id}")
 	if err != nil {
@@ -169,7 +169,7 @@ func FocusPaneAsSidebar(paneID string) error {
 			break
 		}
 	}
-	
+
 	// If pane is not in current window, join it
 	if !paneInWindow {
 		// Join the pane horizontally to the right of current pane
@@ -178,7 +178,7 @@ func FocusPaneAsSidebar(paneID string) error {
 			return fmt.Errorf("join pane: %w", err)
 		}
 	}
-	
+
 	// Set layout to main-vertical (50/50 horizontal split)
 	// This ensures devdeploy on left, selected pane on right
 	if _, err := t.Command("select-layout", "-t", currentWindowID, "main-vertical"); err != nil {
@@ -187,6 +187,6 @@ func FocusPaneAsSidebar(paneID string) error {
 			return fmt.Errorf("set layout: %w (tried main-vertical and even-vertical)", err)
 		}
 	}
-	
+
 	return nil
 }

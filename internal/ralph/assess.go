@@ -36,10 +36,10 @@ func (o Outcome) String() string {
 // bdShowEntry mirrors the JSON shape emitted by `bd show <id> --json`.
 // Only the fields we need for assessment are included.
 type bdShowEntry struct {
-	ID           string         `json:"id"`
-	Status       string         `json:"status"`
-	Dependencies []bdShowDep    `json:"dependencies"`
-	Dependents   []bdShowDep    `json:"dependents"`
+	ID           string      `json:"id"`
+	Status       string      `json:"status"`
+	Dependencies []bdShowDep `json:"dependencies"`
+	Dependents   []bdShowDep `json:"dependents"`
 }
 
 // bdShowDep represents a dependency or dependent in bd show --json output.

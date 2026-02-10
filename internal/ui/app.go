@@ -19,7 +19,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
 	Name string
@@ -165,11 +164,11 @@ type AppModel struct {
 	Overlays        OverlayStack
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
-	agentCancelFunc func() // cancels in-flight agent run; nil when none
+	agentCancelFunc func()           // cancels in-flight agent run; nil when none
 	RalphStatus     *RalphStatusView // ralph status display
-	ralphWorkdir    string            // workdir for current ralph run (for polling)
-	termWidth       int               // terminal width from last WindowSizeMsg
-	termHeight      int               // terminal height from last WindowSizeMsg
+	ralphWorkdir    string           // workdir for current ralph run (for polling)
+	termWidth       int              // terminal width from last WindowSizeMsg
+	termHeight      int              // terminal height from last WindowSizeMsg
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -286,19 +285,19 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Phase 2: PRs loaded, merge into existing repo resources
 		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
 			projDir := a.ProjectManager.ProjectDir(msg.ProjectName)
-			
+
 			// Build map of PRs by repo name for quick lookup
 			repoPRsMap := make(map[string][]project.PRInfo)
 			for _, repoPRs := range msg.PRsByRepo {
 				repoPRsMap[repoPRs.Repo] = repoPRs.PRs
 			}
-			
+
 			// Merge PR resources into existing repo resources
 			resources := make([]project.Resource, 0, len(a.Detail.Resources))
 			for _, repoRes := range a.Detail.Resources {
 				// Add repo resource
 				resources = append(resources, repoRes)
-				
+
 				// Add PR resources for this repo
 				prs := repoPRsMap[repoRes.RepoName]
 				for i := range prs {
@@ -316,7 +315,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 			}
-			
+
 			a.Detail.Resources = resources
 			a.Detail.loadingPRs = false
 			a.Detail.loadingBeads = true
@@ -824,7 +823,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Mode == ModeProjectDetail && a.Detail != nil {
 			// Refresh panes (fast, local operation)
 			a.refreshDetailPanes()
-			
+
 			// Refresh beads (slower, runs bd command)
 			// Only refresh if we have resources with worktrees
 			if a.ProjectManager != nil && len(a.Detail.Resources) > 0 {
@@ -977,7 +976,7 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 		v.Resources = a.ProjectManager.ListProjectReposOnly(name)
 		v.loadingPRs = true // PRs will be loaded asynchronously
 		v.loadingBeads = false
-		v.buildItems() // Build list items immediately so repos are visible
+		v.buildItems()                          // Build list items immediately so repos are visible
 		cmds = append(cmds, v.spinnerTickCmd()) // Start spinner for PR loading
 	}
 	// Prune dead panes then populate pane info from session tracker
@@ -1081,10 +1080,10 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 	if a.Sessions == nil || a.Detail == nil {
 		return nil
 	}
-	
+
 	// Prune dead panes first and refresh pane info
 	a.refreshDetailPanes()
-	
+
 	// Collect panes from Resources in the same order as displayed in UI
 	// Convert project.PaneInfo to session.TrackedPane by looking up in Sessions
 	var allPanes []session.TrackedPane
@@ -1110,7 +1109,7 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 			break
 		}
 	}
-	
+
 	return allPanes
 }
 
@@ -1119,17 +1118,17 @@ func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 	if a.Detail == nil {
 		return pane.PaneID
 	}
-	
+
 	// Parse resource key to get repo/PR info
 	// Format: "repo:name" or "pr:name:#number"
 	parts := strings.Split(pane.ResourceKey, ":")
 	if len(parts) < 2 {
 		return pane.PaneID
 	}
-	
+
 	kind := parts[0]
 	repoName := parts[1]
-	
+
 	var name string
 	if kind == "pr" && len(parts) >= 3 {
 		// PR resource: "pr:name:#number"
@@ -1139,13 +1138,13 @@ func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 		// Repo resource
 		name = repoName
 	}
-	
+
 	// Add pane type
 	paneType := "shell"
 	if pane.Type == session.PaneAgent {
 		paneType = "agent"
 	}
-	
+
 	return fmt.Sprintf("%s (%s)", name, paneType)
 }
 
@@ -1225,18 +1224,18 @@ func enrichesProjectsCmd(m *project.Manager, projectInfos []project.ProjectInfo)
 			return ProjectsEnrichedMsg{Projects: nil}
 		}
 		projects := make([]ProjectSummary, len(projectInfos))
-		
+
 		// Parallelize across projects (each project's data is independent).
 		var wg sync.WaitGroup
 		var mu sync.Mutex
-		
+
 		for i, info := range projectInfos {
 			wg.Add(1)
 			go func(idx int, projectName string, repoCount int) {
 				defer wg.Done()
 				summary := m.LoadProjectSummary(projectName)
 				beadCount := countBeadsFromResources(summary.Resources, projectName)
-				
+
 				mu.Lock()
 				projects[idx] = ProjectSummary{
 					Name:      projectName,
@@ -1248,9 +1247,9 @@ func enrichesProjectsCmd(m *project.Manager, projectInfos []project.ProjectInfo)
 				mu.Unlock()
 			}(i, info.Name, info.RepoCount)
 		}
-		
+
 		wg.Wait()
-		
+
 		return ProjectsEnrichedMsg{Projects: projects}
 	}
 }
@@ -1264,7 +1263,7 @@ func loadProjectDetailResourcesCmd(m *project.Manager, projectName string) tea.C
 		}
 		repos, _ := m.ListProjectRepos(projectName)
 		projDir := m.ProjectDir(projectName)
-		
+
 		// Phase 1: Instant data (filesystem-only, no network calls)
 		resources := make([]project.Resource, 0, len(repos))
 		for _, repoName := range repos {
@@ -1300,13 +1299,13 @@ func loadProjectDetailPRsCmd(m *project.Manager, projectName string, repoResourc
 		}
 		prsByRepo, _ := m.ListProjectPRs(projectName)
 		projDir := m.ProjectDir(projectName)
-		
+
 		// Build map of PRs by repo name for quick lookup
 		repoPRsMap := make(map[string][]project.PRInfo)
 		for _, repoPRs := range prsByRepo {
 			repoPRsMap[repoPRs.Repo] = repoPRs.PRs
 		}
-		
+
 		// Build resources: repos + PRs in repo order.
 		resources := make([]project.Resource, 0, len(repoResources))
 		for _, repoRes := range repoResources {
@@ -1327,7 +1326,7 @@ func loadProjectDetailPRsCmd(m *project.Manager, projectName string, repoResourc
 				})
 			}
 		}
-		
+
 		return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: resources}
 	}
 }
@@ -1338,11 +1337,11 @@ func loadProjectDetailBeadsCmd(projectName string, resourcesWithPRs []project.Re
 	return func() tea.Msg {
 		resources := make([]project.Resource, len(resourcesWithPRs))
 		copy(resources, resourcesWithPRs)
-		
+
 		// Fetch beads concurrently across resources.
 		var wg sync.WaitGroup
 		var mu sync.Mutex
-		
+
 		for i := range resources {
 			r := &resources[i]
 			if r.WorktreePath == "" {
@@ -1374,9 +1373,9 @@ func loadProjectDetailBeadsCmd(projectName string, resourcesWithPRs []project.Re
 				mu.Unlock()
 			}(i)
 		}
-		
+
 		wg.Wait()
-		
+
 		return ProjectDetailBeadsLoadedMsg{ProjectName: projectName, Resources: resources}
 	}
 }
@@ -1387,11 +1386,11 @@ func loadProjectDetailBeadsCmd(projectName string, resourcesWithPRs []project.Re
 func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.Cmd {
 	return func() tea.Msg {
 		beadsByResource := make(map[int][]project.BeadInfo)
-		
+
 		// Fetch beads concurrently across resources.
 		var wg sync.WaitGroup
 		var mu sync.Mutex
-		
+
 		for i := range resources {
 			r := &resources[i]
 			if r.WorktreePath == "" {
@@ -1424,9 +1423,9 @@ func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.
 				mu.Unlock()
 			}(i)
 		}
-		
+
 		wg.Wait()
-		
+
 		return ResourceBeadsLoadedMsg{ProjectName: projectName, BeadsByResource: beadsByResource}
 	}
 }

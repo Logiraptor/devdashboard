@@ -26,14 +26,14 @@ type LogFormatter struct {
 	searchesCount int
 	errorsCount   int
 	// Track last shell command to detect if it had output
-	lastShellCmd  string
+	lastShellCmd   string
 	shellHadOutput bool
 	// Progress display
-	beadID      string
-	beadTitle   string
-	startTime   time.Time
-	lastLine    string // Track last output to avoid flicker
-	lastNumLines int   // Track number of lines in last display for ANSI clearing
+	beadID       string
+	beadTitle    string
+	startTime    time.Time
+	lastLine     string // Track last output to avoid flicker
+	lastNumLines int    // Track number of lines in last display for ANSI clearing
 	// Activity stream
 	activities    []string // Recent activities
 	maxActivities int      // Max to display (default 4)
@@ -97,14 +97,14 @@ func (f *LogFormatter) Write(p []byte) (int, error) {
 	// Write formatted output
 	formattedBytes := []byte(formatted.String())
 	n, err := f.w.Write(formattedBytes)
-	
+
 	// After processing, update progress line with activities
 	f.mu.Lock()
 	if f.beadID != "" {
 		f.updateDisplay()
 	}
 	f.mu.Unlock()
-	
+
 	// Return the original length to satisfy io.Writer contract
 	if err == nil && n < len(formattedBytes) {
 		// Adjust return value to match original input length
@@ -575,8 +575,8 @@ func (f *LogFormatter) SetCurrentBead(id, title string) {
 	f.beadID = id
 	f.beadTitle = title
 	f.startTime = time.Now()
-	f.lastLine = "" // Reset last line to force update
-	f.lastNumLines = 0 // Reset line count
+	f.lastLine = ""                 // Reset last line to force update
+	f.lastNumLines = 0              // Reset line count
 	f.activities = f.activities[:0] // Clear activities for new bead
 	// Reset per-bead tracking
 	f.filesChanged = make(map[string]*FileChange)
@@ -590,13 +590,13 @@ func (f *LogFormatter) SetCurrentBead(id, title string) {
 // Must be called with mutex held.
 func (f *LogFormatter) renderProgressLine() string {
 	elapsed := time.Since(f.startTime).Round(time.Second)
-	
+
 	// Truncate title
 	title := f.beadTitle
 	if len(title) > 30 {
 		title = title[:27] + "..."
 	}
-	
+
 	parts := []string{fmt.Sprintf("● %s \"%s\"", f.beadID, title)}
 	if f.readsCount > 0 {
 		parts = append(parts, fmt.Sprintf("read %d", f.readsCount))
@@ -611,7 +611,7 @@ func (f *LogFormatter) renderProgressLine() string {
 		parts = append(parts, fmt.Sprintf("shell %d", f.shellsCount))
 	}
 	parts = append(parts, fmt.Sprintf("%ds", int(elapsed.Seconds())))
-	
+
 	return strings.Join(parts, " | ")
 }
 
@@ -620,7 +620,7 @@ func (f *LogFormatter) renderProgressLine() string {
 func (f *LogFormatter) renderProgressWithActivities() string {
 	var lines []string
 	lines = append(lines, f.renderProgressLine())
-	
+
 	// Add activity lines with tree-style prefixes
 	for i, activity := range f.activities {
 		prefix := "  ├─ "
@@ -629,7 +629,7 @@ func (f *LogFormatter) renderProgressWithActivities() string {
 		}
 		lines = append(lines, prefix+activity)
 	}
-	
+
 	return strings.Join(lines, "\n")
 }
 
@@ -655,10 +655,10 @@ func (f *LogFormatter) updateDisplay() {
 	if f.beadID == "" {
 		return
 	}
-	
+
 	display := f.renderProgressWithActivities()
 	numLines := strings.Count(display, "\n") + 1
-	
+
 	// Move cursor up and clear lines if we've displayed before
 	if f.lastNumLines > 0 {
 		// Move up to the first line of the previous display
@@ -673,7 +673,7 @@ func (f *LogFormatter) updateDisplay() {
 		// Move back up to the start position
 		fmt.Fprintf(f.w, "\033[%dA", f.lastNumLines)
 	}
-	
+
 	// Write the new display
 	fmt.Fprintf(f.w, "%s", display)
 	f.lastNumLines = numLines

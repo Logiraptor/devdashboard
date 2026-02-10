@@ -550,4 +550,3 @@ func TestMergePRs_EmptySlices(t *testing.T) {
 		t.Errorf("expected [1], got %v", result)
 	}
 }
-

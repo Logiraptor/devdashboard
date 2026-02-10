@@ -162,11 +162,11 @@ func normalizeSeq(seq string) string {
 
 // KeyHandler manages leader key state and dispatches to the registry.
 type KeyHandler struct {
-	Registry     *KeybindRegistry
-	LeaderKey    string   // "space" (tea.KeyMsg.String() format)
-	LeaderSeq    string   // "SPC" (our format)
-	LeaderWaiting bool   // true when waiting for key after leader
-	Buffer       []string // accumulated sequence in leader mode
+	Registry      *KeybindRegistry
+	LeaderKey     string   // "space" (tea.KeyMsg.String() format)
+	LeaderSeq     string   // "SPC" (our format)
+	LeaderWaiting bool     // true when waiting for key after leader
+	Buffer        []string // accumulated sequence in leader mode
 }
 
 // NewKeyHandler creates a handler with SPC as leader.

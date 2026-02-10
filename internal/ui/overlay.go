@@ -4,7 +4,7 @@ import tea "github.com/charmbracelet/bubbletea"
 
 // Overlay represents a modal or popup view with a dismiss key.
 type Overlay struct {
-	View   View
+	View    View
 	Dismiss string // Key that dismisses (e.g. "esc")
 }
 

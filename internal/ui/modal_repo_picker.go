@@ -1,8 +1,8 @@
 package ui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // RepoPickerModal is a modal for selecting a repo from a list.

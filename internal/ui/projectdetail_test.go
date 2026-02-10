@@ -613,7 +613,7 @@ func TestProjectDetailView_NoBeadsResourceNavUnchanged(t *testing.T) {
 	// When no resources have beads, behavior should be like old resource-only navigation.
 	v := NewProjectDetailView("proj")
 	v.Resources = testResources() // no beads
-	v.buildItems() // Build items after setting resources
+	v.buildItems()                // Build items after setting resources
 
 	v.Update(keyMsg("j"))
 	if v.SelectedResourceIdx() != 1 || v.SelectedBeadIdx() != -1 {
@@ -690,7 +690,7 @@ func TestProjectDetailView_ChildBeadsIndented(t *testing.T) {
 func TestProjectDetailView_NoScrollWhenFits(t *testing.T) {
 	v := NewProjectDetailView("proj")
 	v.Resources = testResources() // 4 resources, no beads
-	v.buildItems() // Build items after setting resources
+	v.buildItems()                // Build items after setting resources
 	v.SetSize(80, 30)             // plenty of room
 
 	output := v.View()
@@ -712,7 +712,7 @@ func TestProjectDetailView_ScrollsDownWhenCursorMovesBelow(t *testing.T) {
 		})
 	}
 	v.Resources = resources
-	v.buildItems() // Build items after setting resources
+	v.buildItems()    // Build items after setting resources
 	v.SetSize(80, 12) // Small terminal: viewHeight = 12 - 4 = 8 lines
 
 	// Navigate to the bottom.
@@ -742,7 +742,7 @@ func TestProjectDetailView_ScrollsUpWhenCursorMovesAbove(t *testing.T) {
 		})
 	}
 	v.Resources = resources
-	v.buildItems() // Build items after setting resources
+	v.buildItems()    // Build items after setting resources
 	v.SetSize(80, 12) // viewHeight = 8
 
 	// Navigate to bottom first.
@@ -821,7 +821,7 @@ func TestProjectDetailView_ScrollWithBeads(t *testing.T) {
 			},
 		},
 	}
-	v.buildItems() // Build items after setting resources
+	v.buildItems()    // Build items after setting resources
 	v.SetSize(80, 10) // viewHeight = 6
 
 	// Navigate down through beads until repo-c's bead is selected.

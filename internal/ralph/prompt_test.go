@@ -37,8 +37,8 @@ func TestRenderPrompt_ContainsAllSections(t *testing.T) {
 
 	// Verify all required sections are present.
 	checks := []struct {
-		name    string
-		substr  string
+		name   string
+		substr string
 	}{
 		{"bead ID header", "bead test-abc.1"},
 		{"title", "# Implement widget factory"},

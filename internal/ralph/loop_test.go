@@ -956,7 +956,7 @@ func TestRunEpicOrchestrator_OpusVerification(t *testing.T) {
 	// This test verifies the logic path for opus verification.
 	// In runEpicOrchestrator (loop.go lines 543-667), opus verification is triggered when:
 	// - summary.Failed == 0
-	// - summary.TimedOut == 0  
+	// - summary.TimedOut == 0
 	// - summary.Iterations > 0
 	//
 	// The verification calls RunAgentOpus with a prompt that includes:

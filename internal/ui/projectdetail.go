@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"devdeploy/internal/project"
@@ -27,12 +27,12 @@ type cursorDelegate struct {
 func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	// Check if this item is selected by comparing index with the list's selected index
 	isSelected := d.listModel != nil && index == d.listModel.Index()
-	
+
 	// Write cursor prefix if selected
 	if isSelected {
 		fmt.Fprint(w, "▸ ")
 	}
-	
+
 	// Delegate to default renderer
 	d.DefaultDelegate.Render(w, m, index, item)
 }
@@ -46,7 +46,7 @@ func newCursorDelegate(listModel *list.Model) cursorDelegate {
 	d.Styles.SelectedDesc = Styles.Selected
 	d.Styles.NormalTitle = Styles.Muted
 	d.Styles.NormalDesc = Styles.Muted
-	
+
 	return cursorDelegate{
 		DefaultDelegate: d,
 		listModel:       listModel,
@@ -63,12 +63,12 @@ const (
 
 // detailItem is a unified item type for the flat list (resources + beads).
 type detailItem struct {
-	itemType      itemType
-	resourceIdx   int // index into Resources (for both resource and bead items)
-	beadIdx       int // -1 for resource items, >=0 for bead items
-	resource      *project.Resource
-	bead          *project.BeadInfo // nil for resource items
-	view          *ProjectDetailView // reference to view for loading state
+	itemType    itemType
+	resourceIdx int // index into Resources (for both resource and bead items)
+	beadIdx     int // -1 for resource items, >=0 for bead items
+	resource    *project.Resource
+	bead        *project.BeadInfo  // nil for resource items
+	view        *ProjectDetailView // reference to view for loading state
 }
 
 func (d detailItem) FilterValue() string {
@@ -99,7 +99,7 @@ func (d detailItem) Description() string {
 // renderResourceTitle renders the title for a resource item.
 func (d detailItem) renderResourceTitle() string {
 	status := resourceStatus(*d.resource)
-	
+
 	switch d.resource.Kind {
 	case project.ResourceRepo:
 		prefix := "◆ "
@@ -129,7 +129,7 @@ func (d detailItem) renderResourceTitle() string {
 // renderResourceTitleWithLoading renders the title for a resource item with loading indicators.
 func (d detailItem) renderResourceTitleWithLoading() string {
 	status := resourceStatusWithLoading(*d.resource, d.view)
-	
+
 	switch d.resource.Kind {
 	case project.ResourceRepo:
 		prefix := "◆ "
@@ -161,7 +161,7 @@ func (d detailItem) renderBeadTitle() string {
 	if d.bead == nil {
 		return ""
 	}
-	
+
 	// Determine indentation based on resource kind and bead hierarchy
 	indent := "    " // default for repo beads
 	if d.resource.Kind == project.ResourcePR {
@@ -170,10 +170,10 @@ func (d detailItem) renderBeadTitle() string {
 	if d.bead.IsChild {
 		indent += "  " // child beads get extra indent
 	}
-	
+
 	beadLine := d.bead.ID + "  " + d.bead.Title
 	beadStatusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorDim))
-	
+
 	rendered := indent + Styles.Muted.Render(beadLine)
 	if d.bead.Status != "" && d.bead.Status != "open" {
 		rendered += "  " + beadStatusStyle.Render("["+d.bead.Status+"]")
@@ -185,18 +185,18 @@ func (d detailItem) renderBeadTitle() string {
 type ProjectDetailView struct {
 	ProjectName string
 	Resources   []project.Resource // unified resource list (repos + PRs)
-	
+
 	// List-based navigation
 	list        list.Model
 	items       []detailItem // flat list of resources + beads
 	itemToIndex map[int]int  // maps list item index to resource index (for SelectedResource)
-	
+
 	termWidth  int // terminal width from WindowSizeMsg; 0 = unknown (use defaults)
 	termHeight int // terminal height from WindowSizeMsg; 0 = unknown (no scroll)
-	
+
 	// Progressive loading state
-	loadingPRs   bool // true when PRs are being loaded (phase 2)
-	loadingBeads bool // true when beads are being loaded (phase 3)
+	loadingPRs   bool          // true when PRs are being loaded (phase 2)
+	loadingBeads bool          // true when beads are being loaded (phase 3)
 	spinner      spinner.Model // spinner for loading indicators
 }
 
@@ -208,7 +208,7 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	// Create list with temporary delegate first
 	tempDelegate := NewCompactListDelegate()
 	l := list.New(nil, tempDelegate, 0, 0)
-	
+
 	// Create custom delegate that adds '▸' cursor for selected items
 	// Pass reference to the list so delegate can check selected index
 	delegate := newCursorDelegate(&l)
@@ -218,7 +218,7 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
-	
+
 	// Set filter styles with theme colors - will be adjusted dynamically in View()
 	// Default to hidden (matching background) when not filtering
 	l.Styles.FilterPrompt = lipgloss.NewStyle().
@@ -230,18 +230,18 @@ func NewProjectDetailView(name string) *ProjectDetailView {
 	l.Styles.DefaultFilterCharacterMatch = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(ColorAccent)).
 		Bold(true)
-	
+
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = Styles.Status
-	
+
 	return &ProjectDetailView{
 		ProjectName:  name,
 		Resources:    nil,
 		list:         l,
 		items:        nil,
 		itemToIndex:  make(map[int]int),
-		loadingPRs:    false,
+		loadingPRs:   false,
 		loadingBeads: false,
 		spinner:      s,
 	}
@@ -280,7 +280,7 @@ func (p *ProjectDetailView) spinnerTickCmd() tea.Cmd {
 func (p *ProjectDetailView) buildItems() {
 	p.items = nil
 	p.itemToIndex = make(map[int]int)
-	
+
 	for i, r := range p.Resources {
 		// Add resource item
 		resourceItemIdx := len(p.items)
@@ -293,7 +293,7 @@ func (p *ProjectDetailView) buildItems() {
 			view:        p,
 		})
 		p.itemToIndex[resourceItemIdx] = i
-		
+
 		// Add bead items for this resource
 		for bi := range r.Beads {
 			beadItemIdx := len(p.items)
@@ -308,7 +308,7 @@ func (p *ProjectDetailView) buildItems() {
 			p.itemToIndex[beadItemIdx] = i
 		}
 	}
-	
+
 	// Convert to list.Item slice
 	listItems := make([]list.Item, len(p.items))
 	for i := range p.items {
@@ -320,7 +320,7 @@ func (p *ProjectDetailView) buildItems() {
 // Update implements View.
 func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 	var cmds []tea.Cmd
-	
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		p.SetSize(msg.Width, msg.Height)
@@ -342,7 +342,7 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 		}
 		return p, tea.Batch(cmds...)
 	}
-	
+
 	// Pass all messages to list.Model - it handles j/k/g/G navigation and filtering natively
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
@@ -445,7 +445,7 @@ func (p *ProjectDetailView) View() string {
 			p.list.SetHeight(20)
 		}
 	}
-	
+
 	// Style filter input based on filter state to hide it when not actively filtering
 	// This prevents the "blue square" from showing when filter is enabled but not active
 	filterState := p.list.FilterState()
@@ -469,35 +469,35 @@ func (p *ProjectDetailView) View() string {
 			Foreground(lipgloss.NoColor{}).
 			Background(lipgloss.NoColor{})
 	}
-	
+
 	// Rebuild items if Resources have changed or loading state changed
 	expectedItems := 0
 	for _, r := range p.Resources {
-		expectedItems++ // resource item
+		expectedItems++               // resource item
 		expectedItems += len(r.Beads) // bead items
 	}
 	// Always rebuild items to reflect loading state changes
 	if len(p.items) != expectedItems || p.loadingPRs || p.loadingBeads {
 		p.buildItems()
 	}
-	
+
 	var b strings.Builder
 	b.WriteString("← " + Styles.Title.Render(p.ProjectName) + "\n\n")
-	
+
 	// Show spinner next to Resources section when PRs are loading
 	resourcesHeader := Styles.Section.Render("Resources")
 	if p.loadingPRs {
 		resourcesHeader += " " + p.spinner.View()
 	}
 	b.WriteString(resourcesHeader + "\n")
-	
+
 	if len(p.Resources) == 0 {
 		b.WriteString("  " + Styles.Empty.Render("(no repos added)") + "\n")
 		return b.String()
 	}
-	
+
 	b.WriteString(p.list.View())
-	
+
 	// Add Active Panes section
 	activePanes := p.getOrderedActivePanes()
 	if len(activePanes) > 0 {
@@ -510,7 +510,7 @@ func (p *ProjectDetailView) View() string {
 			b.WriteString("  " + paneName + "\n")
 		}
 	}
-	
+
 	return b.String()
 }
 
@@ -552,7 +552,7 @@ func resourceStatus(r project.Resource) string {
 // resourceStatusWithLoading returns a status string with loading indicators for beads.
 func resourceStatusWithLoading(r project.Resource, view *ProjectDetailView) string {
 	status := resourceStatus(r)
-	
+
 	// Show "…" for bead counts when beads are loading
 	if view != nil && view.loadingBeads && r.WorktreePath != "" {
 		beadCount := len(r.Beads)
@@ -565,7 +565,7 @@ func resourceStatusWithLoading(r project.Resource, view *ProjectDetailView) stri
 			}
 		}
 	}
-	
+
 	return status
 }
 
@@ -603,15 +603,15 @@ func (p *ProjectDetailView) getPaneDisplayName(pane project.PaneInfo, index int)
 			break
 		}
 	}
-	
+
 	if resourceName == "" {
 		resourceName = pane.ID
 	}
-	
+
 	paneType := "shell"
 	if pane.IsAgent {
 		paneType = "agent"
 	}
-	
+
 	return fmt.Sprintf("%d. %s (%s)", index, resourceName, paneType)
 }

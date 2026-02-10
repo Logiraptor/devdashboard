@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // ProjectSummary holds minimal project info for the dashboard list.
@@ -30,9 +30,9 @@ func (p projectItem) Title() string {
 	if p.PRCount >= 0 {
 		prCountStr = fmt.Sprintf("%d", p.PRCount)
 	}
-	
+
 	line := fmt.Sprintf("%s  %d repos, %s PRs", p.Name, p.RepoCount, prCountStr)
-	
+
 	// Format bead count (show only if loaded and > 0)
 	if p.BeadCount > 0 {
 		line += fmt.Sprintf(", %d beads", p.BeadCount)
@@ -59,7 +59,7 @@ var _ View = (*DashboardView)(nil)
 // NewDashboardView creates a dashboard. Projects are loaded from disk via ProjectsLoadedMsg.
 func NewDashboardView() *DashboardView {
 	delegate := NewCompactListDelegate()
-	
+
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "Projects"
 	l.SetShowStatusBar(false)
@@ -67,11 +67,11 @@ func NewDashboardView() *DashboardView {
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 	l.Styles.Title = Styles.Title
-	
+
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = Styles.Status
-	
+
 	return &DashboardView{
 		list:     l,
 		Projects: nil,
@@ -102,7 +102,7 @@ func (d *DashboardView) SetLoading(loading bool) tea.Cmd {
 // Update implements View.
 func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 	var cmds []tea.Cmd
-	
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		d.list.SetWidth(msg.Width)
@@ -117,7 +117,7 @@ func (d *DashboardView) Update(msg tea.Msg) (View, tea.Cmd) {
 		}
 		return d, tea.Batch(cmds...)
 	}
-	
+
 	// Pass all messages to list.Model - it handles j/k/g/G navigation natively.
 	// Enter is handled by app.go at the application level.
 	var cmd tea.Cmd
@@ -135,7 +135,7 @@ func (d *DashboardView) View() string {
 	if d.list.Height() == 0 {
 		d.list.SetHeight(20)
 	}
-	
+
 	var b strings.Builder
 	count := len(d.Projects)
 	title := fmt.Sprintf("Projects (%d)", count)

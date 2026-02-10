@@ -13,11 +13,11 @@ import (
 
 // RalphStatus represents the current state of a ralph loop (read from status file).
 type RalphStatus struct {
-	State         string     `json:"state"`
-	Iteration     int        `json:"iteration"`
-	MaxIterations int        `json:"max_iterations"`
-	CurrentBead   *BeadInfo  `json:"current_bead,omitempty"`
-	Elapsed       int64      `json:"elapsed_ns"` // nanoseconds
+	State         string    `json:"state"`
+	Iteration     int       `json:"iteration"`
+	MaxIterations int       `json:"max_iterations"`
+	CurrentBead   *BeadInfo `json:"current_bead,omitempty"`
+	Elapsed       int64     `json:"elapsed_ns"` // nanoseconds
 	Tallies       struct {
 		Completed int `json:"completed"`
 		Questions int `json:"questions"`
@@ -54,7 +54,7 @@ func NewRalphStatusView() *RalphStatusView {
 	return &RalphStatusView{
 		status: nil,
 		width:  50,
-		height:  10,
+		height: 10,
 	}
 }
 

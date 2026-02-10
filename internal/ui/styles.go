@@ -7,19 +7,19 @@ import (
 
 // Theme colors used throughout the UI
 const (
-	ColorAccent   = "86"   // Cyan/green - for titles, highlights
+	ColorAccent    = "86"  // Cyan/green - for titles, highlights
 	ColorHighlight = "205" // Magenta - for selected items, borders
-	ColorDanger   = "196"  // Red - for warnings, errors
-	ColorMuted    = "241"  // Gray - for dimmed text, hints
-	ColorText     = "252"  // Light gray - for normal text
-	ColorDim      = "243"  // Darker gray - for very dim text
-	ColorWarning  = "208"  // Orange - for warning details
+	ColorDanger    = "196" // Red - for warnings, errors
+	ColorMuted     = "241" // Gray - for dimmed text, hints
+	ColorText      = "252" // Light gray - for normal text
+	ColorDim       = "243" // Darker gray - for very dim text
+	ColorWarning   = "208" // Orange - for warning details
 )
 
 // Styles contains shared style definitions used across views and modals.
 var Styles = struct {
 	// Title styles
-	Title      lipgloss.Style // Bold accent color - for main titles
+	Title        lipgloss.Style // Bold accent color - for main titles
 	TitleWarning lipgloss.Style // Bold danger color - for warning titles
 
 	// Box styles
@@ -28,15 +28,15 @@ var Styles = struct {
 	BoxCompact lipgloss.Style // Compact box with less padding (for lists)
 
 	// Text styles
-	Selected   lipgloss.Style // Highlighted/selected items (bold highlight color)
-	Muted      lipgloss.Style // Dimmed text (muted color)
-	Normal     lipgloss.Style // Normal text (text color)
-	Hint       lipgloss.Style // Help/hint text (muted color)
-	Status     lipgloss.Style // Status indicators (accent color)
-	Section    lipgloss.Style // Section headers (highlight color)
-	Empty      lipgloss.Style // Empty state text (muted, italic)
-	Label      lipgloss.Style // Modal label/content (default)
-	Details    lipgloss.Style // Warning details (warning color)
+	Selected lipgloss.Style // Highlighted/selected items (bold highlight color)
+	Muted    lipgloss.Style // Dimmed text (muted color)
+	Normal   lipgloss.Style // Normal text (text color)
+	Hint     lipgloss.Style // Help/hint text (muted color)
+	Status   lipgloss.Style // Status indicators (accent color)
+	Section  lipgloss.Style // Section headers (highlight color)
+	Empty    lipgloss.Style // Empty state text (muted, italic)
+	Label    lipgloss.Style // Modal label/content (default)
+	Details  lipgloss.Style // Warning details (warning color)
 }{
 	Title: lipgloss.NewStyle().
 		Bold(true).
@@ -96,21 +96,21 @@ func NewCompactListDelegate() list.DefaultDelegate {
 // ModalStyles is kept for backward compatibility but now delegates to Styles.
 // New code should use Styles directly.
 var ModalStyles = struct {
-	BoxDefault  lipgloss.Style
-	BoxWarning  lipgloss.Style
-	BoxCompact  lipgloss.Style
-	Title       lipgloss.Style
+	BoxDefault   lipgloss.Style
+	BoxWarning   lipgloss.Style
+	BoxCompact   lipgloss.Style
+	Title        lipgloss.Style
 	TitleWarning lipgloss.Style
-	Label       lipgloss.Style
-	Help        lipgloss.Style
-	Details     lipgloss.Style
+	Label        lipgloss.Style
+	Help         lipgloss.Style
+	Details      lipgloss.Style
 }{
-	BoxDefault:  Styles.Box,
-	BoxWarning:  Styles.BoxDanger,
-	BoxCompact:  Styles.BoxCompact,
-	Title:       Styles.Title,
+	BoxDefault:   Styles.Box,
+	BoxWarning:   Styles.BoxDanger,
+	BoxCompact:   Styles.BoxCompact,
+	Title:        Styles.Title,
 	TitleWarning: Styles.TitleWarning,
-	Label:       Styles.Label,
-	Help:        Styles.Hint,
-	Details:     Styles.Details,
+	Label:        Styles.Label,
+	Help:         Styles.Hint,
+	Details:      Styles.Details,
 }

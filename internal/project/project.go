@@ -214,7 +214,7 @@ func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
 func (m *Manager) ListProjectReposOnly(projectName string) []Resource {
 	repos, _ := m.ListProjectRepos(projectName)
 	projDir := m.projectDir(projectName)
-	
+
 	resources := make([]Resource, 0, len(repos))
 	for _, repoName := range repos {
 		worktreePath := filepath.Join(projDir, repoName)
@@ -275,15 +275,15 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 			if msg == "" {
 				msg = err.Error()
 			}
-		return fmt.Errorf("git worktree add: %s", msg)
+			return fmt.Errorf("git worktree add: %s", msg)
+		}
+		if err := InjectWorktreeRules(dstPath); err != nil {
+			return err
+		}
+		// Invalidate cache for this project since a repo was added
+		m.ClearPRCacheForProject(projectName)
+		return nil
 	}
-	if err := InjectWorktreeRules(dstPath); err != nil {
-		return err
-	}
-	// Invalidate cache for this project since a repo was added
-	m.ClearPRCacheForProject(projectName)
-	return nil
-}
 
 	// Branch exists: add worktree, then update it with main (without touching main repo's HEAD)
 	addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", dstPath, branch)...)
@@ -356,7 +356,7 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 		}
 		return fmt.Errorf("git worktree remove (PR): %s", msg)
 	}
-	
+
 	// Invalidate cache for this project since a worktree was removed
 	m.ClearPRCacheForProject(projectName)
 	return nil
@@ -683,27 +683,27 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 		go func(name string) {
 			defer wg.Done()
 			worktreePath := filepath.Join(m.projectDir(projectName), name)
-			
+
 			// Fetch open and merged PRs concurrently within each repo
 			var openPRs []PRInfo
 			var mergedPRs []PRInfo
 			var openErr, mergedErr error
-			
+
 			var prWg sync.WaitGroup
 			prWg.Add(2)
-			
+
 			go func() {
 				defer prWg.Done()
 				openPRs, openErr = m.listFilteredPRsInRepo(worktreePath, "open", 0)
 			}()
-			
+
 			go func() {
 				defer prWg.Done()
 				mergedPRs, mergedErr = m.listFilteredPRsInRepo(worktreePath, "merged", mergedPRsLimit)
 			}()
-			
+
 			prWg.Wait()
-			
+
 			// Combine results, ignoring errors (best-effort)
 			var allPRs []PRInfo
 			if openErr == nil {
@@ -712,7 +712,7 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 			if mergedErr == nil {
 				allPRs = append(allPRs, mergedPRs...)
 			}
-			
+
 			resultChan <- repoResult{repoName: name, prs: allPRs, err: nil}
 		}(repoName)
 	}
@@ -823,7 +823,7 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	if err := InjectWorktreeRules(dstPath); err != nil {
 		return "", fmt.Errorf("inject rules: %w", err)
 	}
-	
+
 	// Invalidate cache for this project since a new worktree was created
 	m.ClearPRCacheForProject(projectName)
 	return dstPath, nil

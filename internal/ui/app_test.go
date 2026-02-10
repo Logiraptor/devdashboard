@@ -1281,7 +1281,6 @@ func TestLaunchRalphMsg_PRNoWorktree(t *testing.T) {
 	}
 }
 
-
 // TestLaunchRalphMsg_NoBeadsError validates the "no beads" error message
 // is shown when resource has no beads, regardless of bead cursor position.
 func TestLaunchRalphMsg_NoBeadsError(t *testing.T) {

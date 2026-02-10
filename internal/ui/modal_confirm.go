@@ -63,7 +63,7 @@ func NewRemoveResourceConfirmModal(projectName string, r project.Resource) *Conf
 	if len(r.Panes) > 0 {
 		details += fmt.Sprintf("\n%d active pane(s) will be killed", len(r.Panes))
 	}
-	
+
 	modal := NewConfirmModal(
 		"Remove resource?",
 		label,
