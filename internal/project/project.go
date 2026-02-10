@@ -254,6 +254,7 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	// Fetch to ensure we have latest main
 	fetchCmd := exec.Command("git", "-C", srcRepo, "fetch", "origin")
 	fetchCmd.Stderr = nil
+	// Best-effort fetch; failure is okay if we already have the ref locally
 	_ = fetchCmd.Run()
 
 	// Resolve main ref (origin/main or main)
