@@ -79,7 +79,7 @@ func TestProjectKeybinds_ShowDeleteProjectMsg(t *testing.T) {
 		t.Errorf("expected ConfirmModal on overlay, got %T", top.View)
 	}
 	// Simulate user pressing Enter to confirm
-	_, cmd = adapter.Update(keyMsg("enter"))
+	_, cmd := adapter.Update(keyMsg("enter"))
 	if cmd != nil {
 		msg := cmd()
 		_, cmd = adapter.Update(msg)
@@ -946,7 +946,7 @@ func TestPopulateResourcePanes(t *testing.T) {
 		{Kind: project.ResourceRepo, RepoName: "other"},
 	}
 
-	ta.AppModel.populateResourcePanes(detail)
+	ta.populateResourcePanes(detail)
 
 	// myrepo repo should have 2 panes (1 shell, 1 agent).
 	if len(detail.Resources[0].Panes) != 2 {
@@ -1075,7 +1075,7 @@ func TestRefreshDetailPanes_PrunesDeadPanes(t *testing.T) {
 	ta.Mode = ModeProjectDetail
 	ta.Detail = detail
 
-	ta.AppModel.refreshDetailPanes()
+	ta.refreshDetailPanes()
 
 	// Only %1 should remain.
 	if ta.Sessions.Count() != 1 {

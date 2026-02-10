@@ -281,10 +281,9 @@ func TestManager_EnsurePRWorktree_SourceRepoNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent source repo")
 	}
-	if !os.IsNotExist(err) && !filepath.IsAbs(err.Error()) {
-		// Just verify it contains a reference to the source repo
-		// (Error should mention source repo)
-	}
+	// Just verify we got an error - the exact error type/message depends on
+	// how far the function gets before failing with a nonexistent repo.
+	_ = os.IsNotExist(err) // suppress unused warning; we just need the error check above
 }
 
 func TestManager_EnsurePRWorktree_WorktreePathFormat(t *testing.T) {

@@ -439,7 +439,7 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 
 	// Query for ready leaf tasks
 	if iteration == 0 {
-		fmt.Fprintf(setup.out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
+		_, _ = fmt.Fprintf(setup.out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
 	}
 	children, err := setup.fetchChildren()
 	if err != nil {
@@ -457,16 +457,16 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 
 	if len(readyChildren) == 0 {
 		if iteration == 0 {
-			fmt.Fprintf(setup.out, "No ready children found for epic %s\n", cfg.Epic)
+			_, _ = fmt.Fprintf(setup.out, "No ready children found for epic %s\n", cfg.Epic)
 		} else {
-			fmt.Fprintf(setup.out, "No more ready children for epic %s\n", cfg.Epic)
+			_, _ = fmt.Fprintf(setup.out, "No more ready children for epic %s\n", cfg.Epic)
 		}
 		setup.summary.StopReason = StopNormal
 		return false, nil
 	}
 
 	if iteration == 0 {
-		fmt.Fprintf(setup.out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
+		_, _ = fmt.Fprintf(setup.out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
 	}
 
 	// Process the first ready leaf (sorted by priority)
@@ -530,9 +530,9 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	// Print summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		// Clear progress line before printing summary
-		fmt.Fprintf(setup.out, "\n")
+		_, _ = fmt.Fprintf(setup.out, "\n")
 		if summaryStr := setup.currentFormatter.Summary(); summaryStr != "" {
-			fmt.Fprintf(setup.out, "%s\n", summaryStr)
+			_, _ = fmt.Fprintf(setup.out, "%s\n", summaryStr)
 		}
 		setup.currentFormatter = nil // Reset for next iteration
 	}
@@ -545,7 +545,7 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	if landingErr == nil {
 		landingMsg := FormatLandingStatus(landingStatus)
 		if landingMsg != "landed successfully" {
-			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
 			if cfg.StrictLanding && outcome == OutcomeSuccess {
 				if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
 					outcome = OutcomeFailure
@@ -553,16 +553,16 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 				}
 			}
 		} else {
-			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
 		}
 	}
 
 	// Print structured per-iteration log line
-	fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
+	_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
 	// Print bead summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		if summary := setup.currentFormatter.BeadSummary(); summary != "" {
-			fmt.Fprintf(setup.out, "%s\n", summary)
+			_, _ = fmt.Fprintf(setup.out, "%s\n", summary)
 		}
 	}
 
@@ -590,7 +590,7 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	// Sync beads state after each completion
 	if err := setup.syncFn(); err != nil {
 		if cfg.Verbose {
-			fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+			_, _ = fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
 		}
 	}
 
@@ -600,12 +600,12 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 // runOpusVerification runs opus verification after all epic children complete.
 func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchestratorSetup) {
 	if setup.summary.Failed == 0 && setup.summary.TimedOut == 0 && setup.summary.Iterations > 0 {
-		fmt.Fprintf(setup.out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", setup.summary.Iterations)
+		_, _ = fmt.Fprintf(setup.out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", setup.summary.Iterations)
 
 		// Fetch all epic children (including closed) for review
 		allChildren, err := FetchAllEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 		if err != nil {
-			fmt.Fprintf(setup.out, "Warning: failed to fetch all epic children for verification: %v\n", err)
+			_, _ = fmt.Fprintf(setup.out, "Warning: failed to fetch all epic children for verification: %v\n", err)
 			allChildren = nil
 		}
 
@@ -720,15 +720,15 @@ func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchest
 
 		opusResult, err := RunAgentOpus(ctx, cfg.WorkDir, verificationPrompt, opts...)
 		if err != nil {
-			fmt.Fprintf(setup.out, "Opus verification failed to run: %v\n", err)
+			_, _ = fmt.Fprintf(setup.out, "Opus verification failed to run: %v\n", err)
 		} else {
 			// Print summary if formatter was used
 			if verificationFormatter != nil && !cfg.Verbose {
 				if summaryStr := verificationFormatter.Summary(); summaryStr != "" {
-					fmt.Fprintf(setup.out, "%s\n", summaryStr)
+					_, _ = fmt.Fprintf(setup.out, "%s\n", summaryStr)
 				}
 			}
-			fmt.Fprintf(setup.out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
+			_, _ = fmt.Fprintf(setup.out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
 		}
 	}
 }
@@ -768,7 +768,7 @@ func writeFinalEpicStatus(cfg LoopConfig, setup *epicOrchestratorSetup, loopStar
 	}
 
 	// Print final summary
-	fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
+	_, _ = fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 }
 
 // runEpicOrchestrator orchestrates epic leaf tasks sequentially, then runs opus verification.
@@ -1073,9 +1073,9 @@ func executeAgentForBead(ctx context.Context, cfg LoopConfig, setup *sequentialL
 	// Print summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		// Clear progress line before printing summary
-		fmt.Fprintf(setup.out, "\n")
+		_, _ = fmt.Fprintf(setup.out, "\n")
 		if summaryStr := setup.currentFormatter.Summary(); summaryStr != "" {
-			fmt.Fprintf(setup.out, "%s\n", summaryStr)
+			_, _ = fmt.Fprintf(setup.out, "%s\n", summaryStr)
 		}
 		setup.currentFormatter = nil // Reset for next iteration
 	}
@@ -1090,7 +1090,7 @@ func handleLandingAndLogging(cfg LoopConfig, setup *sequentialLoopSetup, bead *b
 	if landingErr == nil {
 		landingMsg := FormatLandingStatus(landingStatus)
 		if landingMsg != "landed successfully" {
-			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
 			// If strict landing is enabled and landing is incomplete, treat as failure
 			if cfg.StrictLanding && outcome == OutcomeSuccess {
 				// Override success if landing is incomplete
@@ -1100,16 +1100,16 @@ func handleLandingAndLogging(cfg LoopConfig, setup *sequentialLoopSetup, bead *b
 				}
 			}
 		} else {
-			fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
 		}
 	}
 
 	// Print structured per-iteration log line.
-	fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+	_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
 	// Print bead summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		if summary := setup.currentFormatter.BeadSummary(); summary != "" {
-			fmt.Fprintf(setup.out, "%s\n", summary)
+			_, _ = fmt.Fprintf(setup.out, "%s\n", summary)
 		}
 	}
 
@@ -1122,15 +1122,15 @@ func printVerboseOutput(out io.Writer, result *AgentResult) {
 		lines := strings.Split(result.Stdout, "\n")
 		maxLines := 10
 		if len(lines) > maxLines {
-			fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
+			_, _ = fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
 			for _, line := range lines[len(lines)-maxLines:] {
-				fmt.Fprintf(out, "    %s\n", line)
+				_, _ = fmt.Fprintf(out, "    %s\n", line)
 			}
 		} else {
-			fmt.Fprintf(out, "  stdout:\n")
+			_, _ = fmt.Fprintf(out, "  stdout:\n")
 			for _, line := range lines {
 				if line != "" {
-					fmt.Fprintf(out, "    %s\n", line)
+					_, _ = fmt.Fprintf(out, "    %s\n", line)
 				}
 			}
 		}
@@ -1139,15 +1139,15 @@ func printVerboseOutput(out io.Writer, result *AgentResult) {
 		lines := strings.Split(result.Stderr, "\n")
 		maxLines := 10
 		if len(lines) > maxLines {
-			fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
+			_, _ = fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
 			for _, line := range lines[len(lines)-maxLines:] {
-				fmt.Fprintf(out, "    %s\n", line)
+				_, _ = fmt.Fprintf(out, "    %s\n", line)
 			}
 		} else {
-			fmt.Fprintf(out, "  stderr:\n")
+			_, _ = fmt.Fprintf(out, "  stderr:\n")
 			for _, line := range lines {
 				if line != "" {
-					fmt.Fprintf(out, "    %s\n", line)
+					_, _ = fmt.Fprintf(out, "    %s\n", line)
 				}
 			}
 		}
@@ -1219,7 +1219,7 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 
 	// Dry-run: print what would be done without executing.
 	if cfg.DryRun {
-		fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+		_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 		setup.summary.Iterations++
 		// Write final status for dry-run
 		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, "dry-run")
@@ -1260,7 +1260,7 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	// 6. Sync beads state.
 	if err := setup.syncFn(); err != nil {
 		if cfg.Verbose {
-			fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+			_, _ = fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
 		}
 	}
 
@@ -1284,7 +1284,7 @@ func writeFinalSequentialStatus(cfg LoopConfig, setup *sequentialLoopSetup, loop
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary (always printed, even on early termination).
-	fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
+	_, _ = fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 }
 
 // runSequential executes the sequential loop (original implementation).
@@ -1513,7 +1513,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 	promptData, err := setup.fetchPrompt(bead.ID)
 	if err != nil {
 		setup.mu.Lock()
-		fmt.Fprintf(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
+		_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
 		setup.mu.Unlock()
 		return nil, err
 	}
@@ -1522,7 +1522,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 	prompt, err := setup.render(promptData)
 	if err != nil {
 		setup.mu.Lock()
-		fmt.Fprintf(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
+		_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
 		setup.mu.Unlock()
 		return nil, err
 	}
@@ -1538,7 +1538,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 	result, err := agentExecute(ctx, prompt)
 	if err != nil {
 		setup.mu.Lock()
-		fmt.Fprintf(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
+		_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
 		setup.mu.Unlock()
 		return nil, err
 	}
@@ -1549,7 +1549,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 // logWorkerIteration logs iteration results and verbose output.
 func logWorkerIteration(setup *concurrentLoopSetup, cfg LoopConfig, iterNum int, bead *beads.Bead, outcome Outcome, result *AgentResult, outcomeSummary string) {
 	// Print structured per-iteration log line
-	fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+	_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
 	// Note: Bead summary not printed in concurrent mode (no formatter tracking per worker)
 
 	// Verbose mode output
@@ -1612,7 +1612,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			if cfg.DryRun {
 				setup.mu.Lock()
 				iterNum := int(atomic.AddInt32(&setup.iterations, 1))
-				fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+				_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 				setup.summary.Iterations++
 				atomic.StoreInt32(&setup.shouldStop, 1)
 				setup.mu.Unlock()
@@ -1623,14 +1623,14 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			worktreePath, branchName, err := setup.wtMgr.CreateWorktree(bead.ID)
 			if err != nil {
 				setup.mu.Lock()
-				fmt.Fprintf(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
+				_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
 				setup.mu.Unlock()
 				continue
 			}
 			defer func() {
 				if err := setup.wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
 					setup.mu.Lock()
-					fmt.Fprintf(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
+					_, _ = fmt.Fprintf(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
 					setup.mu.Unlock()
 				}
 			}()
@@ -1660,7 +1660,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			if err := setup.syncFn(); err != nil {
 				setup.mu.Lock()
 				if cfg.Verbose {
-					fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+					_, _ = fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
 				}
 				setup.mu.Unlock()
 			}
@@ -1702,7 +1702,7 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary
-	fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
+	_, _ = fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 
 	return setup.summary, nil
 }
