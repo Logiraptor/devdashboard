@@ -283,9 +283,7 @@ func TestManager_EnsurePRWorktree_SourceRepoNotFound(t *testing.T) {
 	}
 	if !os.IsNotExist(err) && !filepath.IsAbs(err.Error()) {
 		// Just verify it contains a reference to the source repo
-		if !testing.Verbose() {
-			// Error should mention source repo
-		}
+		// (Error should mention source repo)
 	}
 }
 
