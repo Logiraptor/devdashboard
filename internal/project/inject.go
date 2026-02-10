@@ -110,7 +110,7 @@ func resolveGitCommonDir(worktreePath string) (string, error) {
 
 // ensureExcludeEntries appends entries to <gitDir>/info/exclude, skipping
 // any that are already present.
-func ensureExcludeEntries(gitDir string, entries []string) error {
+func ensureExcludeEntries(gitDir string, entries []string) (err error) {
 	infoDir := filepath.Join(gitDir, "info")
 	if err := os.MkdirAll(infoDir, 0755); err != nil {
 		return err
@@ -148,7 +148,11 @@ func ensureExcludeEntries(gitDir string, entries []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	_, err = f.WriteString(prefix + strings.Join(toAdd, "\n") + "\n")
 	return err
