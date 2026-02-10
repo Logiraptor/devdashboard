@@ -1311,6 +1311,8 @@ func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 // the injection feature was added still get rules on first shell/agent open.
 func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 	if r.WorktreePath != "" {
+		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
+		// The worktree is usable even if rule injection fails.
 		_ = project.InjectWorktreeRules(r.WorktreePath)
 		return r.WorktreePath, nil
 	}

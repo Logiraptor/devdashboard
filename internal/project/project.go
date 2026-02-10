@@ -770,6 +770,8 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 
 	// Scan existing worktrees for one already on this branch.
 	if existing := m.findWorktreeForBranch(srcRepo, branchName); existing != "" {
+		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
+		// The worktree is usable even if rule injection fails.
 		_ = InjectWorktreeRules(existing)
 		return existing, nil // Reusing existing worktree, no cache invalidation needed
 	}

@@ -490,6 +490,8 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	status.Tallies.Failed = setup.summary.Failed
 	status.Tallies.TimedOut = setup.summary.TimedOut
 	status.Tallies.Skipped = setup.summary.Skipped
+	// Ignore write errors: status updates are best-effort notifications for TUI polling.
+	// Loop execution continues even if status file cannot be written.
 	_ = setup.statusWriter.Write(status)
 
 	// Fetch prompt data and render prompt
@@ -751,6 +753,8 @@ func writeFinalEpicStatus(cfg LoopConfig, setup *epicOrchestratorSetup, loopStar
 	finalStatus.Tallies.Failed = setup.summary.Failed
 	finalStatus.Tallies.TimedOut = setup.summary.TimedOut
 	finalStatus.Tallies.Skipped = setup.summary.Skipped
+	// Ignore write errors: status updates are best-effort notifications for TUI polling.
+	// Loop execution continues even if status file cannot be written.
 	_ = setup.statusWriter.Write(finalStatus)
 
 	// Count remaining beads for summary
@@ -991,6 +995,8 @@ func writeStatus(setup *sequentialLoopSetup, state string, iteration, maxIterati
 	status.Tallies.Failed = setup.summary.Failed
 	status.Tallies.TimedOut = setup.summary.TimedOut
 	status.Tallies.Skipped = setup.summary.Skipped
+	// Ignore write errors: status updates are best-effort notifications for TUI polling.
+	// Loop execution continues even if status file cannot be written.
 	_ = setup.statusWriter.Write(status)
 }
 
