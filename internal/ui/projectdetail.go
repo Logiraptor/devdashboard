@@ -151,6 +151,10 @@ func (d detailItem) renderBeadTitle() string {
 	return rendered
 }
 
+// GlobalPanesGetter is a function type that returns all active panes globally.
+// Used by ProjectDetailView to display panes from all projects, not just the current one.
+type GlobalPanesGetter func() []project.PaneInfo
+
 // ProjectDetailView shows a selected project with resources (repos + PRs).
 type ProjectDetailView struct {
 	ProjectName string
@@ -168,6 +172,9 @@ type ProjectDetailView struct {
 	loadingPRs   bool          // true when PRs are being loaded (phase 2)
 	loadingBeads bool          // true when beads are being loaded (phase 3)
 	spinner      spinner.Model // spinner for loading indicators
+
+	// Global panes access
+	getGlobalPanes GlobalPanesGetter // function to get all panes globally; nil falls back to project-only panes
 }
 
 // Ensure ProjectDetailView implements View.
@@ -468,8 +475,13 @@ func (p *ProjectDetailView) View() string {
 
 	b.WriteString(p.list.View())
 
-	// Add Active Panes section
-	activePanes := p.getOrderedActivePanes()
+	// Add Active Panes section - show global panes if available, otherwise project-only panes
+	var activePanes []project.PaneInfo
+	if p.getGlobalPanes != nil {
+		activePanes = p.getGlobalPanes()
+	} else {
+		activePanes = p.getOrderedActivePanes()
+	}
 	if len(activePanes) > 0 {
 		b.WriteString("\n" + Styles.Section.Render("Active Panes") + "\n")
 		for i, pane := range activePanes {

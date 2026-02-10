@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1117,6 +1118,25 @@ func (a *appModelAdapter) setCurrentView(v View) {
 	}
 }
 
+// getGlobalPanesForDisplay returns all active panes globally as project.PaneInfo for display.
+// Used by ProjectDetailView to show panes from all projects.
+func (a *AppModel) getGlobalPanesForDisplay() []project.PaneInfo {
+	if a.Sessions == nil {
+		return nil
+	}
+	// Get global panes using the same logic as getOrderedActivePanes
+	trackedPanes := a.getOrderedActivePanes()
+	// Convert to project.PaneInfo format
+	panes := make([]project.PaneInfo, len(trackedPanes))
+	for i, tp := range trackedPanes {
+		panes[i] = project.PaneInfo{
+			ID:      tp.PaneID,
+			IsAgent: tp.Type == session.PaneAgent,
+		}
+	}
+	return panes
+}
+
 // newProjectDetailView creates a detail view with resources from disk/gh.
 // Returns the view and a command to start progressive loading.
 func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cmd) {
@@ -1124,6 +1144,8 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	if a.termWidth > 0 || a.termHeight > 0 {
 		v.SetSize(a.termWidth, a.termHeight)
 	}
+	// Set global panes getter so the view can show panes from all projects
+	v.getGlobalPanes = a.getGlobalPanesForDisplay
 	// Phase 1: Load repos instantly (filesystem-only, no GitHub API calls)
 	var cmds []tea.Cmd
 	if a.ProjectManager != nil {
@@ -1196,51 +1218,57 @@ func (a *AppModel) selectedResourceLatestPaneID() string {
 }
 
 // getOrderedActivePanes returns all active panes ordered for indexing (1-9).
-// Panes are ordered by resource (repo first, then PRs), then by pane order within each resource.
-// Uses the same order as displayed in the UI (from Resources.Panes).
+// Panes are ordered by resource key (repos first, then PRs), then by creation time.
+// Works globally from anywhere in devdeploy, not just from project detail view.
 func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
-	if a.Sessions == nil || a.Detail == nil {
+	if a.Sessions == nil {
 		return nil
 	}
 
-	// Prune dead panes first and refresh pane info
-	a.refreshDetailPanes()
+	// Prune dead panes first
+	_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
 
-	// Collect panes from Resources in the same order as displayed in UI
-	// Convert project.PaneInfo to session.TrackedPane by looking up in Sessions
-	var allPanes []session.TrackedPane
-	for _, r := range a.Detail.Resources {
-		rk := resourceKeyFromResource(r)
-		// Get tracked panes for this resource
-		trackedPanes := a.Sessions.PanesForResource(rk)
-		// Create a map of pane ID to TrackedPane for quick lookup
-		paneMap := make(map[string]session.TrackedPane)
-		for _, tp := range trackedPanes {
-			paneMap[tp.PaneID] = tp
-		}
-		// Add panes in the order they appear in r.Panes
-		for _, pi := range r.Panes {
-			if tp, ok := paneMap[pi.ID]; ok {
-				allPanes = append(allPanes, tp)
-				if len(allPanes) >= 9 {
-					break // Limit to 9 panes
-				}
-			}
-		}
-		if len(allPanes) >= 9 {
-			break
+	// Get all panes globally across all resources
+	allPanes := a.Sessions.AllPanes()
+
+	// Sort panes: repos first, then PRs, then by creation time within each group
+	// Resource key format: "repo:name" or "pr:name:#number"
+	var repoPanes []session.TrackedPane
+	var prPanes []session.TrackedPane
+
+	for _, pane := range allPanes {
+		parts := strings.Split(pane.ResourceKey, ":")
+		if len(parts) >= 2 && parts[0] == "pr" {
+			prPanes = append(prPanes, pane)
+		} else {
+			repoPanes = append(repoPanes, pane)
 		}
 	}
 
-	return allPanes
+	// Sort each group by creation time (oldest first for consistent ordering)
+	sort.Slice(repoPanes, func(i, j int) bool {
+		return repoPanes[i].CreatedAt.Before(repoPanes[j].CreatedAt)
+	})
+	sort.Slice(prPanes, func(i, j int) bool {
+		return prPanes[i].CreatedAt.Before(prPanes[j].CreatedAt)
+	})
+
+	// Combine: repos first, then PRs
+	var ordered []session.TrackedPane
+	ordered = append(ordered, repoPanes...)
+	ordered = append(ordered, prPanes...)
+
+	// Limit to 9 panes for SPC 1-9
+	if len(ordered) > 9 {
+		ordered = ordered[:9]
+	}
+
+	return ordered
 }
 
 // getPaneDisplayName returns a human-readable name for a pane.
+// Works globally without requiring Detail view.
 func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
-	if a.Detail == nil {
-		return pane.PaneID
-	}
-
 	// Parse resource key to get repo/PR info
 	// Format: "repo:name" or "pr:name:#number"
 	parts := strings.Split(pane.ResourceKey, ":")
