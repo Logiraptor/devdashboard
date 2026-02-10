@@ -1136,7 +1136,7 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	}
 	// Prune dead panes then populate pane info from session tracker
 	if a.Sessions != nil {
-		a.Sessions.Prune()
+		_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
 		a.populateResourcePanes(v)
 	}
 	// Return command to trigger async enrichment (PRs, then beads)
@@ -1205,7 +1205,7 @@ func (a *AppModel) populateResourcePanes(v *ProjectDetailView) {
 // pane info from the session tracker.
 func (a *AppModel) refreshDetailPanes() {
 	if a.Detail != nil && a.Sessions != nil {
-		a.Sessions.Prune()
+		_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
 		a.populateResourcePanes(a.Detail)
 	}
 }
