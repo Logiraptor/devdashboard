@@ -566,7 +566,7 @@ func TestEnsureResourceWorktree_RepoUsesExisting(t *testing.T) {
 		RepoName:     "myrepo",
 		WorktreePath: "/tmp/existing-worktree",
 	}
-	got, err := ta.AppModel.ensureResourceWorktree(r)
+	got, err := ta.ensureResourceWorktree(r)
 	if err != nil {
 		t.Fatalf("ensureResourceWorktree: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestEnsureResourceWorktree_PRWithWorktreeReuses(t *testing.T) {
 		PR:           &project.PRInfo{Number: 42, Title: "test", HeadRefName: "feat"},
 		WorktreePath: "/tmp/pr-worktree",
 	}
-	got, err := ta.AppModel.ensureResourceWorktree(r)
+	got, err := ta.ensureResourceWorktree(r)
 	if err != nil {
 		t.Fatalf("ensureResourceWorktree: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestEnsureResourceWorktree_RepoNoWorktree(t *testing.T) {
 		Kind:     project.ResourceRepo,
 		RepoName: "myrepo",
 	}
-	_, err := ta.AppModel.ensureResourceWorktree(r)
+	_, err := ta.ensureResourceWorktree(r)
 	if err == nil {
 		t.Fatal("expected error for repo with no worktree")
 	}
