@@ -202,648 +202,67 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case RalphStatusMsg:
-		// Ralph status polling removed - status file still written for CI/scripting
-		// but UI no longer displays it (user sees output in tmux pane)
-		return a, nil
+		return a.handleRalphStatus()
 	case progress.Event:
-		// Run finished (done or aborted); clear cancel so Esc just dismisses
-		if msg.Status == progress.StatusDone || msg.Status == progress.StatusAborted {
-			a.agentCancelFunc = nil
-		}
-		if a.Overlays.Len() > 0 {
-			if top, hasOverlay := a.Overlays.Peek(); hasOverlay {
-				if _, isProgress := top.View.(*ProgressWindow); isProgress {
-					if cmd, updated := a.Overlays.UpdateTop(msg); updated {
-						return a, cmd
-					}
-				}
-			}
-		}
-		return a, nil
+		return a.handleProgressEvent(msg)
 	case ProjectsLoadedMsg:
-		if a.Dashboard != nil {
-			a.Dashboard.Projects = msg.Projects
-			a.Dashboard.updateProjects()
-			a.Dashboard.list.Select(0)
-		}
-		// Trigger async enrichment for PR and bead counts.
-		if a.ProjectManager != nil && len(msg.Projects) > 0 {
-			infos, _ := a.ProjectManager.ListProjects()
-			// Match project infos to loaded projects to preserve repo counts.
-			projectInfos := make([]project.ProjectInfo, 0, len(msg.Projects))
-			for _, p := range msg.Projects {
-				for _, info := range infos {
-					if info.Name == p.Name {
-						projectInfos = append(projectInfos, info)
-						break
-					}
-				}
-			}
-			// Start spinner for async loading
-			if a.Dashboard != nil {
-				return a, tea.Batch(
-					a.Dashboard.SetLoading(true),
-					enrichesProjectsCmd(a.ProjectManager, projectInfos),
-				)
-			}
-			return a, enrichesProjectsCmd(a.ProjectManager, projectInfos)
-		}
-		return a, nil
+		return a.handleProjectsLoaded(msg)
 	case ProjectsEnrichedMsg:
-		if a.Dashboard != nil {
-			// Update projects with enriched data (PR and bead counts).
-			// Preserve selection state.
-			selectedIdx := a.Dashboard.Selected()
-			a.Dashboard.Projects = msg.Projects
-			a.Dashboard.updateProjects()
-			if selectedIdx < len(msg.Projects) {
-				a.Dashboard.list.Select(selectedIdx)
-			}
-			// Stop spinner
-			return a, a.Dashboard.SetLoading(false)
-		}
-		return a, nil
+		return a.handleProjectsEnriched(msg)
 	case ProjectDetailResourcesLoadedMsg:
-		// Phase 1: Repos loaded (for reload scenarios), update view and trigger PR loading
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			a.Detail.Resources = msg.Resources
-			a.Detail.loadingPRs = true
-			a.Detail.loadingBeads = false
-			a.Detail.buildItems() // Rebuild list items
-			a.refreshDetailPanes()
-			// Trigger Phase 2: Load PRs asynchronously and start spinner
-			if a.ProjectManager != nil {
-				return a, tea.Batch(
-					a.Detail.spinnerTickCmd(),
-					loadProjectPRsCmd(a.ProjectManager, msg.ProjectName),
-				)
-			}
-			return a, a.Detail.spinnerTickCmd()
-		}
-		return a, nil
+		return a.handleProjectDetailResourcesLoaded(msg)
 	case ProjectPRsLoadedMsg:
-		// Phase 2: PRs loaded, merge into existing repo resources
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			projDir := a.ProjectManager.ProjectDir(msg.ProjectName)
-
-			// Build map of PRs by repo name for quick lookup
-			repoPRsMap := make(map[string][]project.PRInfo)
-			for _, repoPRs := range msg.PRsByRepo {
-				repoPRsMap[repoPRs.Repo] = repoPRs.PRs
-			}
-
-			// Merge PR resources into existing repo resources
-			resources := make([]project.Resource, 0, len(a.Detail.Resources))
-			for _, repoRes := range a.Detail.Resources {
-				// Add repo resource
-				resources = append(resources, repoRes)
-
-				// Add PR resources for this repo
-				prs := repoPRsMap[repoRes.RepoName]
-				for i := range prs {
-					pr := &prs[i]
-					prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoRes.RepoName, pr.Number))
-					var wtPath string
-					if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-						wtPath = prWT
-					}
-					resources = append(resources, project.Resource{
-						Kind:         project.ResourcePR,
-						RepoName:     repoRes.RepoName,
-						PR:           pr,
-						WorktreePath: wtPath,
-					})
-				}
-			}
-
-			a.Detail.Resources = resources
-			a.Detail.loadingPRs = false
-			a.Detail.loadingBeads = true
-			a.Detail.buildItems() // Rebuild list items to show PRs
-			a.refreshDetailPanes()
-			// Trigger Phase 3: Load beads asynchronously and start spinner
-			return a, tea.Batch(
-				a.Detail.spinnerTickCmd(),
-				loadResourceBeadsCmd(msg.ProjectName, resources),
-			)
-		}
-		return a, nil
+		return a.handleProjectPRsLoaded(msg)
 	case ProjectDetailPRsLoadedMsg:
-		// Phase 2: PRs loaded, update view and trigger bead loading
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			a.Detail.Resources = msg.Resources
-			a.Detail.loadingPRs = false
-			a.Detail.loadingBeads = true
-			a.Detail.buildItems() // Rebuild list items to show PRs
-			a.refreshDetailPanes()
-			// Trigger Phase 3: Load beads asynchronously and start spinner
-			return a, tea.Batch(
-				a.Detail.spinnerTickCmd(),
-				loadResourceBeadsCmd(msg.ProjectName, msg.Resources),
-			)
-		}
-		return a, nil
+		return a.handleProjectDetailPRsLoaded(msg)
 	case ProjectDetailBeadsLoadedMsg:
-		// Phase 3: Beads loaded, update view (complete)
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			a.Detail.Resources = msg.Resources
-			a.Detail.loadingPRs = false
-			a.Detail.loadingBeads = false
-			a.Detail.buildItems() // Rebuild list items to show beads
-			a.refreshDetailPanes()
-		}
-		return a, nil
+		return a.handleProjectDetailBeadsLoaded(msg)
 	case ResourceBeadsLoadedMsg:
-		// Phase 3: Beads loaded, attach to matching resources in Detail view
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			// Attach beads to matching resources by index
-			for idx, beads := range msg.BeadsByResource {
-				if idx >= 0 && idx < len(a.Detail.Resources) {
-					a.Detail.Resources[idx].Beads = beads
-				}
-			}
-			a.Detail.loadingBeads = false
-			a.Detail.buildItems() // Rebuild list items to show beads
-			a.refreshDetailPanes()
-		}
-		return a, nil
+		return a.handleResourceBeadsLoaded(msg)
 	case RefreshBeadsMsg:
-		// Refresh beads for all resources in project detail view
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName != "" {
-			a.Detail.loadingBeads = true
-			a.Detail.buildItems() // Rebuild list items to show loading state
-			a.refreshDetailPanes()
-			// Trigger async bead loading
-			return a, tea.Batch(
-				a.Detail.spinnerTickCmd(),
-				loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
-			)
-		}
-		return a, nil
+		return a.handleRefreshBeads()
 	case CreateProjectMsg:
-		if a.ProjectManager != nil && msg.Name != "" {
-			if err := a.ProjectManager.CreateProject(msg.Name); err != nil {
-				a.Status = fmt.Sprintf("Create project: %v", err)
-				a.StatusIsError = true
-			} else {
-				a.Status = "Project created"
-				a.StatusIsError = false
-			}
-			a.Overlays.Pop()
-			return a, loadProjectsCmd(a.ProjectManager)
-		}
-		return a, nil
+		return a.handleCreateProject(msg)
 	case DeleteProjectMsg:
-		if a.ProjectManager != nil && msg.Name != "" {
-			// Kill all panes for resources in this project before deleting.
-			if a.Sessions != nil {
-				resources := a.ProjectManager.ListProjectResources(msg.Name)
-				for _, r := range resources {
-					rk := resourceKeyFromResource(r)
-					panes := a.Sessions.PanesForResource(rk)
-					for _, p := range panes {
-						_ = tmux.KillPane(p.PaneID)
-					}
-					a.Sessions.UnregisterAll(rk)
-				}
-			}
-			if err := a.ProjectManager.DeleteProject(msg.Name); err != nil {
-				a.Status = fmt.Sprintf("Delete project: %v", err)
-				a.StatusIsError = true
-			} else {
-				a.Status = "Project deleted"
-				a.StatusIsError = false
-			}
-			a.Overlays.Pop()
-			return a, loadProjectsCmd(a.ProjectManager)
-		}
-		return a, nil
+		return a.handleDeleteProject(msg)
 	case AddRepoMsg:
-		if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
-			if err := a.ProjectManager.AddRepo(msg.ProjectName, msg.RepoName); err != nil {
-				a.Status = fmt.Sprintf("Add repo: %v", err)
-				a.StatusIsError = true
-			} else {
-				a.Status = fmt.Sprintf("Added %s to %s", msg.RepoName, msg.ProjectName)
-				a.StatusIsError = false
-			}
-			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-				// Trigger progressive reload
-				return a, tea.Batch(
-					loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName),
-				)
-			}
-			a.Overlays.Pop()
-			return a, nil
-		}
-		return a, nil
+		return a.handleAddRepo(msg)
 	case RemoveRepoMsg:
-		if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
-			if err := a.ProjectManager.RemoveRepo(msg.ProjectName, msg.RepoName); err != nil {
-				a.Status = fmt.Sprintf("Remove repo: %v", err)
-				a.StatusIsError = true
-			} else {
-				a.Status = fmt.Sprintf("Removed %s from %s", msg.RepoName, msg.ProjectName)
-				a.StatusIsError = false
-			}
-			if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-				// Trigger progressive reload
-				return a, tea.Batch(
-					loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName),
-				)
-			}
-			a.Overlays.Pop()
-			return a, nil
-		}
-		return a, nil
+		return a.handleRemoveRepo(msg)
 	case ShowCreateProjectMsg:
-		modal := NewCreateProjectModal()
-		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
-		return a, modal.Init()
+		return a.handleShowCreateProject()
 	case ShowDeleteProjectMsg:
-		if a.Mode == ModeDashboard && a.Dashboard != nil && len(a.Dashboard.Projects) > 0 {
-			idx := a.Dashboard.Selected()
-			if idx >= 0 && idx < len(a.Dashboard.Projects) {
-				name := a.Dashboard.Projects[idx].Name
-				modal := NewDeleteProjectConfirmModal(name)
-				a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
-				return a, modal.Init()
-			}
-		}
-		return a, nil
+		return a.handleShowDeleteProject()
 	case ShowAddRepoMsg:
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
-			repos, err := a.ProjectManager.ListWorkspaceRepos()
-			if err != nil {
-				a.Status = fmt.Sprintf("List workspace repos: %v", err)
-				a.StatusIsError = true
-			} else if len(repos) == 0 {
-				a.Status = "No repos found in ~/workspace (or DEVDEPLOY_WORKSPACE)"
-				a.StatusIsError = true
-			} else {
-				a.Overlays.Push(Overlay{View: NewAddRepoModal(a.Detail.ProjectName, repos), Dismiss: "esc"})
-			}
-		}
-		return a, nil
+		return a.handleShowAddRepo()
 	case ShowRemoveRepoMsg:
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
-			repos, err := a.ProjectManager.ListProjectRepos(a.Detail.ProjectName)
-			if err != nil {
-				a.Status = fmt.Sprintf("List project repos: %v", err)
-				a.StatusIsError = true
-			} else if len(repos) == 0 {
-				a.Status = "No repos in this project"
-				a.StatusIsError = true
-			} else {
-				a.Overlays.Push(Overlay{View: NewRemoveRepoModal(a.Detail.ProjectName, repos), Dismiss: "esc"})
-			}
-		}
-		return a, nil
+		return a.handleShowRemoveRepo()
 	case ShowRemoveResourceMsg:
-		if a.Mode != ModeProjectDetail || a.Detail == nil {
-			return a, nil
-		}
-		r := a.Detail.SelectedResource()
-		if r == nil {
-			a.Status = "No resource selected"
-			a.StatusIsError = true
-			return a, nil
-		}
-		modal := NewRemoveResourceConfirmModal(a.Detail.ProjectName, *r)
-		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
-		return a, modal.Init()
+		return a.handleShowRemoveResource()
 	case ShowProjectSwitcherMsg:
-		if a.ProjectManager != nil {
-			infos, err := a.ProjectManager.ListProjects()
-			if err != nil {
-				a.Status = fmt.Sprintf("List projects: %v", err)
-				a.StatusIsError = true
-				return a, nil
-			}
-			if len(infos) == 0 {
-				a.Status = "No projects found"
-				a.StatusIsError = true
-				return a, nil
-			}
-			names := make([]string, len(infos))
-			for i, info := range infos {
-				names[i] = info.Name
-			}
-			modal := NewProjectSwitcherModal(names)
-			a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
-			return a, modal.Init()
-		}
-		return a, nil
+		return a.handleShowProjectSwitcher()
 	case RemoveResourceMsg:
-		if a.ProjectManager == nil {
-			return a, nil
-		}
-		// Kill associated tmux panes (best-effort; pane may already be dead).
-		if a.Sessions != nil {
-			rk := resourceKeyFromResource(msg.Resource)
-			panes := a.Sessions.PanesForResource(rk)
-			for _, p := range panes {
-				_ = tmux.KillPane(p.PaneID) // ignore errors for dead panes
-			}
-			a.Sessions.UnregisterAll(rk)
-		}
-		// Remove worktree based on resource kind.
-		var removeErr error
-		switch msg.Resource.Kind {
-		case project.ResourceRepo:
-			removeErr = a.ProjectManager.RemoveRepo(msg.ProjectName, msg.Resource.RepoName)
-		case project.ResourcePR:
-			if msg.Resource.PR != nil {
-				removeErr = a.ProjectManager.RemovePRWorktree(msg.ProjectName, msg.Resource.RepoName, msg.Resource.PR.Number)
-			}
-		}
-		if removeErr != nil {
-			a.Status = fmt.Sprintf("Remove resource: %v", removeErr)
-			a.StatusIsError = true
-		} else {
-			label := msg.Resource.RepoName
-			if msg.Resource.Kind == project.ResourcePR && msg.Resource.PR != nil {
-				label = fmt.Sprintf("PR #%d (%s)", msg.Resource.PR.Number, msg.Resource.RepoName)
-			}
-			a.Status = fmt.Sprintf("Removed %s", label)
-			a.StatusIsError = false
-		}
-		a.Overlays.Pop()
-		// Refresh the resource list and pane info via progressive reload.
-		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
-			// Trigger progressive reload
-			return a, loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName)
-		}
-		return a, nil
+		return a.handleRemoveResource(msg)
 	case DismissModalMsg:
-		// If top overlay is ProgressWindow and we have an active agent run, cancel it
-		// but keep the overlay visible so the user can see the "Aborted" state.
-		// They press Esc again to dismiss after seeing it.
-		if a.Overlays.Len() > 0 {
-			if top, ok := a.Overlays.Peek(); ok {
-				if _, isProgress := top.View.(*ProgressWindow); isProgress && a.agentCancelFunc != nil {
-					a.agentCancelFunc()
-					a.agentCancelFunc = nil
-					return a, nil // Don't pop yet; user will see Aborted, then Esc again to dismiss
-				}
-			}
-		}
-		a.Overlays.Pop()
-		return a, nil
+		return a.handleDismissModal()
 	case RefreshMsg:
-		// Clear PR cache
-		if a.ProjectManager != nil {
-			a.ProjectManager.ClearPRCache()
-		}
-		// Reload current view
-		if a.Mode == ModeDashboard {
-			// Reload dashboard
-			return a, loadProjectsCmd(a.ProjectManager)
-		} else if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
-			// Reload project detail
-			return a, loadProjectDetailResourcesCmd(a.ProjectManager, a.Detail.ProjectName)
-		}
-		return a, nil
+		return a.handleRefresh()
 	case OpenShellMsg:
-		if a.Mode != ModeProjectDetail || a.Detail == nil {
-			return a, nil
-		}
-		r := a.Detail.SelectedResource()
-		if r == nil {
-			a.Status = "No resource selected"
-			a.StatusIsError = true
-			return a, nil
-		}
-		workDir, err := a.ensureResourceWorktree(r)
-		if err != nil {
-			a.Status = fmt.Sprintf("Open shell: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		paneID, err := tmux.SplitPane(workDir)
-		if err != nil {
-			a.Status = fmt.Sprintf("Open shell: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		if a.Sessions != nil {
-			rk := resourceKeyFromResource(*r)
-			a.Sessions.Register(rk, paneID, session.PaneShell)
-			a.refreshDetailPanes()
-		}
-		return a, nil
+		return a.handleOpenShell()
 	case LaunchAgentMsg:
-		if a.Mode != ModeProjectDetail || a.Detail == nil {
-			return a, nil
-		}
-		r := a.Detail.SelectedResource()
-		if r == nil {
-			a.Status = "No resource selected"
-			a.StatusIsError = true
-			return a, nil
-		}
-		workDir, err := a.ensureResourceWorktree(r)
-		if err != nil {
-			a.Status = fmt.Sprintf("Launch agent: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		paneID, err := tmux.SplitPane(workDir)
-		if err != nil {
-			a.Status = fmt.Sprintf("Launch agent: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		if err := tmux.SendKeys(paneID, "agent --model claude-4.5-opus-high-thinking --force\n"); err != nil {
-			a.Status = fmt.Sprintf("Send agent command: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		if a.Sessions != nil {
-			rk := resourceKeyFromResource(*r)
-			a.Sessions.Register(rk, paneID, session.PaneAgent)
-			a.refreshDetailPanes()
-		}
-		return a, nil
+		return a.handleLaunchAgent()
 	case LaunchRalphMsg:
-		if a.Mode != ModeProjectDetail || a.Detail == nil {
-			return a, nil
-		}
-		r := a.Detail.SelectedResource()
-		if r == nil {
-			a.Status = "No resource selected"
-			a.StatusIsError = true
-			return a, nil
-		}
-		if len(r.Beads) == 0 {
-			a.Status = "No open beads for this resource"
-			a.StatusIsError = true
-			return a, nil
-		}
-		workDir, err := a.ensureResourceWorktree(r)
-		if err != nil {
-			a.Status = fmt.Sprintf("Ralph: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		// Check if ralph binary is available.
-		ralphPath, err := exec.LookPath("ralph")
-		if err != nil {
-			// Fall back to agent-based approach if ralph not found.
-			paneID, err := tmux.SplitPane(workDir)
-			if err != nil {
-				a.Status = fmt.Sprintf("Ralph: %v", err)
-				a.StatusIsError = true
-				return a, nil
-			}
-			// Use targeted prompt if cursor is on a specific bead, otherwise use generic prompt.
-			prompt := "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
-			selectedBead := a.Detail.SelectedBead()
-			if selectedBead != nil {
-				// Branch to epic-aware flow if the selected bead is an epic
-				if selectedBead.IssueType == "epic" {
-					prompt = fmt.Sprintf("You are working on epic %s. Run `bd show %s` to understand the epic. Then use `bd ready --parent %s` to find its children. Process them sequentially: for each child, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/ and AGENTS.md.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
-				} else {
-					prompt = fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
-				}
-			}
-			// Pass the prompt as a single-quoted positional argument to agent.
-			// Single quotes prevent the shell from interpreting backticks and $.
-			escaped := strings.ReplaceAll(prompt, "'", `'\''`)
-			cmd := fmt.Sprintf("agent --model composer-1 --force '%s'\n", escaped)
-			if err := tmux.SendKeys(paneID, cmd); err != nil {
-				a.Status = fmt.Sprintf("Ralph send agent: %v", err)
-				a.StatusIsError = true
-				return a, nil
-			}
-			if a.Sessions != nil {
-				rk := resourceKeyFromResource(*r)
-				a.Sessions.Register(rk, paneID, session.PaneAgent)
-				a.refreshDetailPanes()
-			}
-			a.Status = "Ralph binary not found, using agent fallback"
-			a.StatusIsError = false
-			return a, nil
-		}
-		// Launch ralph binary with --workdir flag.
-		// If a specific bead is selected, add --bead flag (or --epic if it's an epic).
-		paneID, err := tmux.SplitPane(workDir)
-		if err != nil {
-			a.Status = fmt.Sprintf("Ralph: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		// Escape the workdir path for shell safety (handle spaces, special chars).
-		escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
-		selectedBead := a.Detail.SelectedBead()
-		cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
-		if selectedBead != nil {
-			escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
-			// If selected bead is an epic, use --epic flag for sequential leaf processing
-			if selectedBead.IssueType == "epic" {
-				cmd += fmt.Sprintf(" --epic '%s'", escapedBead)
-			} else {
-				cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
-			}
-		}
-		cmd += "\n"
-		if err := tmux.SendKeys(paneID, cmd); err != nil {
-			a.Status = fmt.Sprintf("Ralph launch: %v", err)
-			a.StatusIsError = true
-			return a, nil
-		}
-		if a.Sessions != nil {
-			rk := resourceKeyFromResource(*r)
-			a.Sessions.Register(rk, paneID, session.PaneAgent)
-			a.refreshDetailPanes()
-		}
-		// Ralph status file (.ralph-status.json) is still written for CI/scripting,
-		// but we don't poll it in the UI - user can see ralph output directly in tmux pane
-		a.Status = "Ralph loop launched"
-		a.StatusIsError = false
-		return a, nil
+		return a.handleLaunchRalph()
 	case HidePaneMsg:
-		paneID := a.selectedResourceLatestPaneID()
-		if paneID == "" {
-			a.Status = "No pane to hide"
-			return a, nil
-		}
-		if err := tmux.BreakPane(paneID); err != nil {
-			a.Status = fmt.Sprintf("Hide pane: %v", err)
-			a.StatusIsError = true
-		}
-		return a, nil
+		return a.handleHidePane()
 	case ShowPaneMsg:
-		paneID := a.selectedResourceLatestPaneID()
-		if paneID == "" {
-			a.Status = "No pane to show"
-			return a, nil
-		}
-		if err := tmux.JoinPane(paneID); err != nil {
-			a.Status = fmt.Sprintf("Show pane: %v", err)
-			a.StatusIsError = true
-		}
-		return a, nil
+		return a.handleShowPane()
 	case FocusPaneMsg:
-		if a.Sessions == nil {
-			a.Status = "No session tracker"
-			a.StatusIsError = true
-			return a, nil
-		}
-		// Get ordered list of active panes
-		panes := a.getOrderedActivePanes()
-		if msg.Index < 1 || msg.Index > len(panes) {
-			a.Status = fmt.Sprintf("Pane %d not available (1-%d)", msg.Index, len(panes))
-			a.StatusIsError = true
-			return a, nil
-		}
-		// Index is 1-based, convert to 0-based
-		pane := panes[msg.Index-1]
-		if err := tmux.FocusPaneAsSidebar(pane.PaneID); err != nil {
-			a.Status = fmt.Sprintf("Focus pane: %v", err)
-			a.StatusIsError = true
-		} else {
-			// Generate pane name for status
-			paneName := a.getPaneDisplayName(pane)
-			a.Status = fmt.Sprintf("Focused pane %d: %s", msg.Index, paneName)
-			a.StatusIsError = false
-		}
-		return a, nil
+		return a.handleFocusPane(msg)
 	case SelectProjectMsg:
-		// Pop overlay if present (e.g., from project switcher modal)
-		if a.Overlays.Len() > 0 {
-			a.Overlays.Pop()
-		}
-		a.Mode = ModeProjectDetail
-		detail, cmd := a.newProjectDetailView(msg.Name)
-		a.Detail = detail
-		return a, tea.Batch(a.Detail.Init(), cmd, tickCmd()) // Start ticker when entering detail mode
+		return a.handleSelectProject(msg)
 	case tickMsg:
-		// Periodic refresh: update panes and beads when in project detail mode
-		if a.Mode == ModeProjectDetail && a.Detail != nil {
-			// Refresh panes (fast, local operation)
-			a.refreshDetailPanes()
-
-			// Refresh beads (slower, runs bd command)
-			// Only refresh if we have resources with worktrees
-			if a.ProjectManager != nil && len(a.Detail.Resources) > 0 {
-				hasWorktrees := false
-				for _, r := range a.Detail.Resources {
-					if r.WorktreePath != "" {
-						hasWorktrees = true
-						break
-					}
-				}
-				if hasWorktrees {
-					return a, tea.Batch(
-						loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
-						tickCmd(), // Schedule next tick
-					)
-				}
-			}
-			return a, tickCmd() // Schedule next tick even if no worktrees
-		}
-		return a, tickCmd() // Keep ticking even if not in detail mode
+		return a.handleTick(msg)
 	case tea.KeyMsg:
 		// When overlay is showing, it receives ALL keys first (no KeyHandler, no app nav).
 		// This lets modals capture SPC, Esc, Enter, j/k etc. for text input and list navigation.
@@ -911,6 +330,742 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	v, cmd := a.currentView().Update(msg)
 	a.setCurrentView(v)
 	return a, cmd
+}
+
+// handleProjectPRsLoaded handles ProjectPRsLoadedMsg by merging PRs into existing repo resources.
+func (a *appModelAdapter) handleProjectPRsLoaded(msg ProjectPRsLoadedMsg) (tea.Model, tea.Cmd) {
+	// Phase 2: PRs loaded, merge into existing repo resources
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+		projDir := a.ProjectManager.ProjectDir(msg.ProjectName)
+
+		// Build map of PRs by repo name for quick lookup
+		repoPRsMap := make(map[string][]project.PRInfo)
+		for _, repoPRs := range msg.PRsByRepo {
+			repoPRsMap[repoPRs.Repo] = repoPRs.PRs
+		}
+
+		// Merge PR resources into existing repo resources
+		resources := make([]project.Resource, 0, len(a.Detail.Resources))
+		for _, repoRes := range a.Detail.Resources {
+			// Add repo resource
+			resources = append(resources, repoRes)
+
+			// Add PR resources for this repo
+			prs := repoPRsMap[repoRes.RepoName]
+			for i := range prs {
+				pr := &prs[i]
+				prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoRes.RepoName, pr.Number))
+				var wtPath string
+				if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+					wtPath = prWT
+				}
+				resources = append(resources, project.Resource{
+					Kind:         project.ResourcePR,
+					RepoName:     repoRes.RepoName,
+					PR:           pr,
+					WorktreePath: wtPath,
+				})
+			}
+		}
+
+		a.Detail.Resources = resources
+		a.Detail.loadingPRs = false
+		a.Detail.loadingBeads = true
+		a.Detail.buildItems() // Rebuild list items to show PRs
+		a.refreshDetailPanes()
+		// Trigger Phase 3: Load beads asynchronously and start spinner
+		return a, tea.Batch(
+			a.Detail.spinnerTickCmd(),
+			loadResourceBeadsCmd(msg.ProjectName, resources),
+		)
+	}
+	return a, nil
+}
+
+// handleRemoveResource handles RemoveResourceMsg by killing panes and removing worktrees.
+func (a *appModelAdapter) handleRemoveResource(msg RemoveResourceMsg) (tea.Model, tea.Cmd) {
+	if a.ProjectManager == nil {
+		return a, nil
+	}
+	// Kill associated tmux panes (best-effort; pane may already be dead).
+	if a.Sessions != nil {
+		rk := resourceKeyFromResource(msg.Resource)
+		panes := a.Sessions.PanesForResource(rk)
+		for _, p := range panes {
+			_ = tmux.KillPane(p.PaneID) // ignore errors for dead panes
+		}
+		a.Sessions.UnregisterAll(rk)
+	}
+	// Remove worktree based on resource kind.
+	var removeErr error
+	switch msg.Resource.Kind {
+	case project.ResourceRepo:
+		removeErr = a.ProjectManager.RemoveRepo(msg.ProjectName, msg.Resource.RepoName)
+	case project.ResourcePR:
+		if msg.Resource.PR != nil {
+			removeErr = a.ProjectManager.RemovePRWorktree(msg.ProjectName, msg.Resource.RepoName, msg.Resource.PR.Number)
+		}
+	}
+	if removeErr != nil {
+		a.Status = fmt.Sprintf("Remove resource: %v", removeErr)
+		a.StatusIsError = true
+	} else {
+		label := msg.Resource.RepoName
+		if msg.Resource.Kind == project.ResourcePR && msg.Resource.PR != nil {
+			label = fmt.Sprintf("PR #%d (%s)", msg.Resource.PR.Number, msg.Resource.RepoName)
+		}
+		a.Status = fmt.Sprintf("Removed %s", label)
+		a.StatusIsError = false
+	}
+	a.Overlays.Pop()
+	// Refresh the resource list and pane info via progressive reload.
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+		// Trigger progressive reload
+		return a, loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName)
+	}
+	return a, nil
+}
+
+// handleLaunchRalph handles LaunchRalphMsg by launching a Ralph loop or agent fallback.
+func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
+	if a.Mode != ModeProjectDetail || a.Detail == nil {
+		return a, nil
+	}
+	r := a.Detail.SelectedResource()
+	if r == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+	if len(r.Beads) == 0 {
+		a.Status = "No open beads for this resource"
+		a.StatusIsError = true
+		return a, nil
+	}
+	workDir, err := a.ensureResourceWorktree(r)
+	if err != nil {
+		a.Status = fmt.Sprintf("Ralph: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	// Check if ralph binary is available.
+	ralphPath, err := exec.LookPath("ralph")
+	if err != nil {
+		// Fall back to agent-based approach if ralph not found.
+		paneID, err := tmux.SplitPane(workDir)
+		if err != nil {
+			a.Status = fmt.Sprintf("Ralph: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		// Use targeted prompt if cursor is on a specific bead, otherwise use generic prompt.
+		prompt := "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
+		selectedBead := a.Detail.SelectedBead()
+		if selectedBead != nil {
+			// Branch to epic-aware flow if the selected bead is an epic
+			if selectedBead.IssueType == "epic" {
+				prompt = fmt.Sprintf("You are working on epic %s. Run `bd show %s` to understand the epic. Then use `bd ready --parent %s` to find its children. Process them sequentially: for each child, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/ and AGENTS.md.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
+			} else {
+				prompt = fmt.Sprintf("Run `bd show %s` to understand the issue. Claim it with `bd update %s --status in_progress`, implement it, then close it with `bd close %s`. Follow the rules in .cursor/rules/.", selectedBead.ID, selectedBead.ID, selectedBead.ID)
+			}
+		}
+		// Pass the prompt as a single-quoted positional argument to agent.
+		// Single quotes prevent the shell from interpreting backticks and $.
+		escaped := strings.ReplaceAll(prompt, "'", `'\''`)
+		cmd := fmt.Sprintf("agent --model composer-1 --force '%s'\n", escaped)
+		if err := tmux.SendKeys(paneID, cmd); err != nil {
+			a.Status = fmt.Sprintf("Ralph send agent: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		if a.Sessions != nil {
+			rk := resourceKeyFromResource(*r)
+			a.Sessions.Register(rk, paneID, session.PaneAgent)
+			a.refreshDetailPanes()
+		}
+		a.Status = "Ralph binary not found, using agent fallback"
+		a.StatusIsError = false
+		return a, nil
+	}
+	// Launch ralph binary with --workdir flag.
+	// If a specific bead is selected, add --bead flag (or --epic if it's an epic).
+	paneID, err := tmux.SplitPane(workDir)
+	if err != nil {
+		a.Status = fmt.Sprintf("Ralph: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	// Escape the workdir path for shell safety (handle spaces, special chars).
+	escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
+	selectedBead := a.Detail.SelectedBead()
+	cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
+	if selectedBead != nil {
+		escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
+		// If selected bead is an epic, use --epic flag for sequential leaf processing
+		if selectedBead.IssueType == "epic" {
+			cmd += fmt.Sprintf(" --epic '%s'", escapedBead)
+		} else {
+			cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
+		}
+	}
+	cmd += "\n"
+	if err := tmux.SendKeys(paneID, cmd); err != nil {
+		a.Status = fmt.Sprintf("Ralph launch: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	if a.Sessions != nil {
+		rk := resourceKeyFromResource(*r)
+		a.Sessions.Register(rk, paneID, session.PaneAgent)
+		a.refreshDetailPanes()
+	}
+	// Ralph status file (.ralph-status.json) is still written for CI/scripting,
+	// but we don't poll it in the UI - user can see ralph output directly in tmux pane
+	a.Status = "Ralph loop launched"
+	a.StatusIsError = false
+	return a, nil
+}
+
+// handleSelectProject handles SelectProjectMsg by switching to project detail view.
+func (a *appModelAdapter) handleSelectProject(msg SelectProjectMsg) (tea.Model, tea.Cmd) {
+	// Pop overlay if present (e.g., from project switcher modal)
+	if a.Overlays.Len() > 0 {
+		a.Overlays.Pop()
+	}
+	a.Mode = ModeProjectDetail
+	detail, cmd := a.newProjectDetailView(msg.Name)
+	a.Detail = detail
+	return a, tea.Batch(a.Detail.Init(), cmd, tickCmd()) // Start ticker when entering detail mode
+}
+
+// handleShowCreateProject handles ShowCreateProjectMsg by showing the create project modal.
+func (a *appModelAdapter) handleShowCreateProject() (tea.Model, tea.Cmd) {
+	modal := NewCreateProjectModal()
+	a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+	return a, modal.Init()
+}
+
+// handleShowDeleteProject handles ShowDeleteProjectMsg by showing the delete confirmation modal.
+func (a *appModelAdapter) handleShowDeleteProject() (tea.Model, tea.Cmd) {
+	if a.Mode == ModeDashboard && a.Dashboard != nil && len(a.Dashboard.Projects) > 0 {
+		idx := a.Dashboard.Selected()
+		if idx >= 0 && idx < len(a.Dashboard.Projects) {
+			name := a.Dashboard.Projects[idx].Name
+			modal := NewDeleteProjectConfirmModal(name)
+			a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+			return a, modal.Init()
+		}
+	}
+	return a, nil
+}
+
+// handleShowAddRepo handles ShowAddRepoMsg by showing the add repo picker modal.
+func (a *appModelAdapter) handleShowAddRepo() (tea.Model, tea.Cmd) {
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
+		repos, err := a.ProjectManager.ListWorkspaceRepos()
+		if err != nil {
+			a.Status = fmt.Sprintf("List workspace repos: %v", err)
+			a.StatusIsError = true
+		} else if len(repos) == 0 {
+			a.Status = "No repos found in ~/workspace (or DEVDEPLOY_WORKSPACE)"
+			a.StatusIsError = true
+		} else {
+			a.Overlays.Push(Overlay{View: NewAddRepoModal(a.Detail.ProjectName, repos), Dismiss: "esc"})
+		}
+	}
+	return a, nil
+}
+
+// handleShowRemoveRepo handles ShowRemoveRepoMsg by showing the remove repo picker modal.
+func (a *appModelAdapter) handleShowRemoveRepo() (tea.Model, tea.Cmd) {
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
+		repos, err := a.ProjectManager.ListProjectRepos(a.Detail.ProjectName)
+		if err != nil {
+			a.Status = fmt.Sprintf("List project repos: %v", err)
+			a.StatusIsError = true
+		} else if len(repos) == 0 {
+			a.Status = "No repos in this project"
+			a.StatusIsError = true
+		} else {
+			a.Overlays.Push(Overlay{View: NewRemoveRepoModal(a.Detail.ProjectName, repos), Dismiss: "esc"})
+		}
+	}
+	return a, nil
+}
+
+// handleShowRemoveResource handles ShowRemoveResourceMsg by showing the remove resource confirmation modal.
+func (a *appModelAdapter) handleShowRemoveResource() (tea.Model, tea.Cmd) {
+	if a.Mode != ModeProjectDetail || a.Detail == nil {
+		return a, nil
+	}
+	r := a.Detail.SelectedResource()
+	if r == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+	modal := NewRemoveResourceConfirmModal(a.Detail.ProjectName, *r)
+	a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+	return a, modal.Init()
+}
+
+// handleShowProjectSwitcher handles ShowProjectSwitcherMsg by showing the project switcher modal.
+func (a *appModelAdapter) handleShowProjectSwitcher() (tea.Model, tea.Cmd) {
+	if a.ProjectManager != nil {
+		infos, err := a.ProjectManager.ListProjects()
+		if err != nil {
+			a.Status = fmt.Sprintf("List projects: %v", err)
+			a.StatusIsError = true
+			return a, nil
+		}
+		if len(infos) == 0 {
+			a.Status = "No projects found"
+			a.StatusIsError = true
+			return a, nil
+		}
+		names := make([]string, len(infos))
+		for i, info := range infos {
+			names[i] = info.Name
+		}
+		modal := NewProjectSwitcherModal(names)
+		a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+		return a, modal.Init()
+	}
+	return a, nil
+}
+
+// handleProjectsLoaded handles ProjectsLoadedMsg by updating the dashboard and triggering enrichment.
+func (a *appModelAdapter) handleProjectsLoaded(msg ProjectsLoadedMsg) (tea.Model, tea.Cmd) {
+	if a.Dashboard != nil {
+		a.Dashboard.Projects = msg.Projects
+		a.Dashboard.updateProjects()
+		a.Dashboard.list.Select(0)
+	}
+	// Trigger async enrichment for PR and bead counts.
+	if a.ProjectManager != nil && len(msg.Projects) > 0 {
+		infos, _ := a.ProjectManager.ListProjects()
+		// Match project infos to loaded projects to preserve repo counts.
+		projectInfos := make([]project.ProjectInfo, 0, len(msg.Projects))
+		for _, p := range msg.Projects {
+			for _, info := range infos {
+				if info.Name == p.Name {
+					projectInfos = append(projectInfos, info)
+					break
+				}
+			}
+		}
+		// Start spinner for async loading
+		if a.Dashboard != nil {
+			return a, tea.Batch(
+				a.Dashboard.SetLoading(true),
+				enrichesProjectsCmd(a.ProjectManager, projectInfos),
+			)
+		}
+		return a, enrichesProjectsCmd(a.ProjectManager, projectInfos)
+	}
+	return a, nil
+}
+
+// handleProjectsEnriched handles ProjectsEnrichedMsg by updating the dashboard with enriched data.
+func (a *appModelAdapter) handleProjectsEnriched(msg ProjectsEnrichedMsg) (tea.Model, tea.Cmd) {
+	if a.Dashboard != nil {
+		// Update projects with enriched data (PR and bead counts).
+		// Preserve selection state.
+		selectedIdx := a.Dashboard.Selected()
+		a.Dashboard.Projects = msg.Projects
+		a.Dashboard.updateProjects()
+		if selectedIdx < len(msg.Projects) {
+			a.Dashboard.list.Select(selectedIdx)
+		}
+		// Stop spinner
+		return a, a.Dashboard.SetLoading(false)
+	}
+	return a, nil
+}
+
+// handleProjectDetailResourcesLoaded handles ProjectDetailResourcesLoadedMsg by updating resources and triggering PR loading.
+func (a *appModelAdapter) handleProjectDetailResourcesLoaded(msg ProjectDetailResourcesLoadedMsg) (tea.Model, tea.Cmd) {
+	// Phase 1: Repos loaded (for reload scenarios), update view and trigger PR loading
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+		a.Detail.Resources = msg.Resources
+		a.Detail.loadingPRs = true
+		a.Detail.loadingBeads = false
+		a.Detail.buildItems() // Rebuild list items
+		a.refreshDetailPanes()
+		// Trigger Phase 2: Load PRs asynchronously and start spinner
+		if a.ProjectManager != nil {
+			return a, tea.Batch(
+				a.Detail.spinnerTickCmd(),
+				loadProjectPRsCmd(a.ProjectManager, msg.ProjectName),
+			)
+		}
+		return a, a.Detail.spinnerTickCmd()
+	}
+	return a, nil
+}
+
+// handleProjectDetailPRsLoaded handles ProjectDetailPRsLoadedMsg by updating resources and triggering bead loading.
+func (a *appModelAdapter) handleProjectDetailPRsLoaded(msg ProjectDetailPRsLoadedMsg) (tea.Model, tea.Cmd) {
+	// Phase 2: PRs loaded, update view and trigger bead loading
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+		a.Detail.Resources = msg.Resources
+		a.Detail.loadingPRs = false
+		a.Detail.loadingBeads = true
+		a.Detail.buildItems() // Rebuild list items to show PRs
+		a.refreshDetailPanes()
+		// Trigger Phase 3: Load beads asynchronously and start spinner
+		return a, tea.Batch(
+			a.Detail.spinnerTickCmd(),
+			loadResourceBeadsCmd(msg.ProjectName, msg.Resources),
+		)
+	}
+	return a, nil
+}
+
+// handleProjectDetailBeadsLoaded handles ProjectDetailBeadsLoadedMsg by updating resources with complete data.
+func (a *appModelAdapter) handleProjectDetailBeadsLoaded(msg ProjectDetailBeadsLoadedMsg) (tea.Model, tea.Cmd) {
+	// Phase 3: Beads loaded, update view (complete)
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+		a.Detail.Resources = msg.Resources
+		a.Detail.loadingPRs = false
+		a.Detail.loadingBeads = false
+		a.Detail.buildItems() // Rebuild list items to show beads
+		a.refreshDetailPanes()
+	}
+	return a, nil
+}
+
+// handleResourceBeadsLoaded handles ResourceBeadsLoadedMsg by attaching beads to matching resources.
+func (a *appModelAdapter) handleResourceBeadsLoaded(msg ResourceBeadsLoadedMsg) (tea.Model, tea.Cmd) {
+	// Phase 3: Beads loaded, attach to matching resources in Detail view
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+		// Attach beads to matching resources by index
+		for idx, beads := range msg.BeadsByResource {
+			if idx >= 0 && idx < len(a.Detail.Resources) {
+				a.Detail.Resources[idx].Beads = beads
+			}
+		}
+		a.Detail.loadingBeads = false
+		a.Detail.buildItems() // Rebuild list items to show beads
+		a.refreshDetailPanes()
+	}
+	return a, nil
+}
+
+// handleRefreshBeads handles RefreshBeadsMsg by refreshing beads for all resources.
+func (a *appModelAdapter) handleRefreshBeads() (tea.Model, tea.Cmd) {
+	// Refresh beads for all resources in project detail view
+	if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName != "" {
+		a.Detail.loadingBeads = true
+		a.Detail.buildItems() // Rebuild list items to show loading state
+		a.refreshDetailPanes()
+		// Trigger async bead loading
+		return a, tea.Batch(
+			a.Detail.spinnerTickCmd(),
+			loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
+		)
+	}
+	return a, nil
+}
+
+// handleCreateProject handles CreateProjectMsg by creating a project and reloading the list.
+func (a *appModelAdapter) handleCreateProject(msg CreateProjectMsg) (tea.Model, tea.Cmd) {
+	if a.ProjectManager != nil && msg.Name != "" {
+		if err := a.ProjectManager.CreateProject(msg.Name); err != nil {
+			a.Status = fmt.Sprintf("Create project: %v", err)
+			a.StatusIsError = true
+		} else {
+			a.Status = "Project created"
+			a.StatusIsError = false
+		}
+		a.Overlays.Pop()
+		return a, loadProjectsCmd(a.ProjectManager)
+	}
+	return a, nil
+}
+
+// handleDeleteProject handles DeleteProjectMsg by deleting a project and cleaning up panes.
+func (a *appModelAdapter) handleDeleteProject(msg DeleteProjectMsg) (tea.Model, tea.Cmd) {
+	if a.ProjectManager != nil && msg.Name != "" {
+		// Kill all panes for resources in this project before deleting.
+		if a.Sessions != nil {
+			resources := a.ProjectManager.ListProjectResources(msg.Name)
+			for _, r := range resources {
+				rk := resourceKeyFromResource(r)
+				panes := a.Sessions.PanesForResource(rk)
+				for _, p := range panes {
+					_ = tmux.KillPane(p.PaneID)
+				}
+				a.Sessions.UnregisterAll(rk)
+			}
+		}
+		if err := a.ProjectManager.DeleteProject(msg.Name); err != nil {
+			a.Status = fmt.Sprintf("Delete project: %v", err)
+			a.StatusIsError = true
+		} else {
+			a.Status = "Project deleted"
+			a.StatusIsError = false
+		}
+		a.Overlays.Pop()
+		return a, loadProjectsCmd(a.ProjectManager)
+	}
+	return a, nil
+}
+
+// handleAddRepo handles AddRepoMsg by adding a repo to a project.
+func (a *appModelAdapter) handleAddRepo(msg AddRepoMsg) (tea.Model, tea.Cmd) {
+	if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
+		if err := a.ProjectManager.AddRepo(msg.ProjectName, msg.RepoName); err != nil {
+			a.Status = fmt.Sprintf("Add repo: %v", err)
+			a.StatusIsError = true
+		} else {
+			a.Status = fmt.Sprintf("Added %s to %s", msg.RepoName, msg.ProjectName)
+			a.StatusIsError = false
+		}
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			// Trigger progressive reload
+			return a, tea.Batch(
+				loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName),
+			)
+		}
+		a.Overlays.Pop()
+		return a, nil
+	}
+	return a, nil
+}
+
+// handleRemoveRepo handles RemoveRepoMsg by removing a repo from a project.
+func (a *appModelAdapter) handleRemoveRepo(msg RemoveRepoMsg) (tea.Model, tea.Cmd) {
+	if a.ProjectManager != nil && msg.ProjectName != "" && msg.RepoName != "" {
+		if err := a.ProjectManager.RemoveRepo(msg.ProjectName, msg.RepoName); err != nil {
+			a.Status = fmt.Sprintf("Remove repo: %v", err)
+			a.StatusIsError = true
+		} else {
+			a.Status = fmt.Sprintf("Removed %s from %s", msg.RepoName, msg.ProjectName)
+			a.StatusIsError = false
+		}
+		if a.Mode == ModeProjectDetail && a.Detail != nil && a.Detail.ProjectName == msg.ProjectName {
+			// Trigger progressive reload
+			return a, tea.Batch(
+				loadProjectDetailResourcesCmd(a.ProjectManager, msg.ProjectName),
+			)
+		}
+		a.Overlays.Pop()
+		return a, nil
+	}
+	return a, nil
+}
+
+// handleDismissModal handles DismissModalMsg by dismissing modals, with special handling for progress windows.
+func (a *appModelAdapter) handleDismissModal() (tea.Model, tea.Cmd) {
+	// If top overlay is ProgressWindow and we have an active agent run, cancel it
+	// but keep the overlay visible so the user can see the "Aborted" state.
+	// They press Esc again to dismiss after seeing it.
+	if a.Overlays.Len() > 0 {
+		if top, ok := a.Overlays.Peek(); ok {
+			if _, isProgress := top.View.(*ProgressWindow); isProgress && a.agentCancelFunc != nil {
+				a.agentCancelFunc()
+				a.agentCancelFunc = nil
+				return a, nil // Don't pop yet; user will see Aborted, then Esc again to dismiss
+			}
+		}
+	}
+	a.Overlays.Pop()
+	return a, nil
+}
+
+// handleRefresh handles RefreshMsg by clearing PR cache and reloading the current view.
+func (a *appModelAdapter) handleRefresh() (tea.Model, tea.Cmd) {
+	// Clear PR cache
+	if a.ProjectManager != nil {
+		a.ProjectManager.ClearPRCache()
+	}
+	// Reload current view
+	if a.Mode == ModeDashboard {
+		// Reload dashboard
+		return a, loadProjectsCmd(a.ProjectManager)
+	} else if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
+		// Reload project detail
+		return a, loadProjectDetailResourcesCmd(a.ProjectManager, a.Detail.ProjectName)
+	}
+	return a, nil
+}
+
+// handleOpenShell handles OpenShellMsg by opening a shell pane for the selected resource.
+func (a *appModelAdapter) handleOpenShell() (tea.Model, tea.Cmd) {
+	if a.Mode != ModeProjectDetail || a.Detail == nil {
+		return a, nil
+	}
+	r := a.Detail.SelectedResource()
+	if r == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+	workDir, err := a.ensureResourceWorktree(r)
+	if err != nil {
+		a.Status = fmt.Sprintf("Open shell: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	paneID, err := tmux.SplitPane(workDir)
+	if err != nil {
+		a.Status = fmt.Sprintf("Open shell: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	if a.Sessions != nil {
+		rk := resourceKeyFromResource(*r)
+		a.Sessions.Register(rk, paneID, session.PaneShell)
+		a.refreshDetailPanes()
+	}
+	return a, nil
+}
+
+// handleLaunchAgent handles LaunchAgentMsg by launching an agent pane for the selected resource.
+func (a *appModelAdapter) handleLaunchAgent() (tea.Model, tea.Cmd) {
+	if a.Mode != ModeProjectDetail || a.Detail == nil {
+		return a, nil
+	}
+	r := a.Detail.SelectedResource()
+	if r == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+	workDir, err := a.ensureResourceWorktree(r)
+	if err != nil {
+		a.Status = fmt.Sprintf("Launch agent: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	paneID, err := tmux.SplitPane(workDir)
+	if err != nil {
+		a.Status = fmt.Sprintf("Launch agent: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	if err := tmux.SendKeys(paneID, "agent --model claude-4.5-opus-high-thinking --force\n"); err != nil {
+		a.Status = fmt.Sprintf("Send agent command: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	if a.Sessions != nil {
+		rk := resourceKeyFromResource(*r)
+		a.Sessions.Register(rk, paneID, session.PaneAgent)
+		a.refreshDetailPanes()
+	}
+	return a, nil
+}
+
+// handleHidePane handles HidePaneMsg by hiding the selected resource's latest pane.
+func (a *appModelAdapter) handleHidePane() (tea.Model, tea.Cmd) {
+	paneID := a.selectedResourceLatestPaneID()
+	if paneID == "" {
+		a.Status = "No pane to hide"
+		return a, nil
+	}
+	if err := tmux.BreakPane(paneID); err != nil {
+		a.Status = fmt.Sprintf("Hide pane: %v", err)
+		a.StatusIsError = true
+	}
+	return a, nil
+}
+
+// handleShowPane handles ShowPaneMsg by showing the selected resource's latest pane.
+func (a *appModelAdapter) handleShowPane() (tea.Model, tea.Cmd) {
+	paneID := a.selectedResourceLatestPaneID()
+	if paneID == "" {
+		a.Status = "No pane to show"
+		return a, nil
+	}
+	if err := tmux.JoinPane(paneID); err != nil {
+		a.Status = fmt.Sprintf("Show pane: %v", err)
+		a.StatusIsError = true
+	}
+	return a, nil
+}
+
+// handleFocusPane handles FocusPaneMsg by focusing a pane by index.
+func (a *appModelAdapter) handleFocusPane(msg FocusPaneMsg) (tea.Model, tea.Cmd) {
+	if a.Sessions == nil {
+		a.Status = "No session tracker"
+		a.StatusIsError = true
+		return a, nil
+	}
+	// Get ordered list of active panes
+	panes := a.getOrderedActivePanes()
+	if msg.Index < 1 || msg.Index > len(panes) {
+		a.Status = fmt.Sprintf("Pane %d not available (1-%d)", msg.Index, len(panes))
+		a.StatusIsError = true
+		return a, nil
+	}
+	// Index is 1-based, convert to 0-based
+	pane := panes[msg.Index-1]
+	if err := tmux.FocusPaneAsSidebar(pane.PaneID); err != nil {
+		a.Status = fmt.Sprintf("Focus pane: %v", err)
+		a.StatusIsError = true
+	} else {
+		// Generate pane name for status
+		paneName := a.getPaneDisplayName(pane)
+		a.Status = fmt.Sprintf("Focused pane %d: %s", msg.Index, paneName)
+		a.StatusIsError = false
+	}
+	return a, nil
+}
+
+// handleTick handles tickMsg by refreshing panes and beads periodically.
+func (a *appModelAdapter) handleTick(msg tickMsg) (tea.Model, tea.Cmd) {
+	// Periodic refresh: update panes and beads when in project detail mode
+	if a.Mode == ModeProjectDetail && a.Detail != nil {
+		// Refresh panes (fast, local operation)
+		a.refreshDetailPanes()
+
+		// Refresh beads (slower, runs bd command)
+		// Only refresh if we have resources with worktrees
+		if a.ProjectManager != nil && len(a.Detail.Resources) > 0 {
+			hasWorktrees := false
+			for _, r := range a.Detail.Resources {
+				if r.WorktreePath != "" {
+					hasWorktrees = true
+					break
+				}
+			}
+			if hasWorktrees {
+				return a, tea.Batch(
+					loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
+					tickCmd(), // Schedule next tick
+				)
+			}
+		}
+		return a, tickCmd() // Schedule next tick even if no worktrees
+	}
+	return a, tickCmd() // Keep ticking even if not in detail mode
+}
+
+// handleRalphStatus handles RalphStatusMsg (no-op, status polling removed).
+func (a *appModelAdapter) handleRalphStatus() (tea.Model, tea.Cmd) {
+	// Ralph status polling removed - status file still written for CI/scripting
+	// but UI no longer displays it (user sees output in tmux pane)
+	return a, nil
+}
+
+// handleProgressEvent handles progress.Event by updating progress windows and clearing cancel func.
+func (a *appModelAdapter) handleProgressEvent(msg progress.Event) (tea.Model, tea.Cmd) {
+	// Run finished (done or aborted); clear cancel so Esc just dismisses
+	if msg.Status == progress.StatusDone || msg.Status == progress.StatusAborted {
+		a.agentCancelFunc = nil
+	}
+	if a.Overlays.Len() > 0 {
+		if top, hasOverlay := a.Overlays.Peek(); hasOverlay {
+			if _, isProgress := top.View.(*ProgressWindow); isProgress {
+				if cmd, updated := a.Overlays.UpdateTop(msg); updated {
+					return a, cmd
+				}
+			}
+		}
+	}
+	return a, nil
 }
 
 // View implements tea.Model.
