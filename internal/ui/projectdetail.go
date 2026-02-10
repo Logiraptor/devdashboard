@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,42 @@ import (
 // reservedChromeLines is the number of terminal lines reserved for app chrome
 // (status bar, keybind hints, etc.) that appear outside the detail view.
 const reservedChromeLines = 4
+
+// cursorDelegate is a custom list delegate that adds '▸' cursor prefix for selected items.
+type cursorDelegate struct {
+	list.DefaultDelegate
+	listModel *list.Model
+}
+
+// Render implements list.ItemDelegate and adds '▸' prefix for selected items.
+func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	// Check if this item is selected by comparing index with the list's selected index
+	isSelected := d.listModel != nil && index == d.listModel.Index()
+	
+	// Write cursor prefix if selected
+	if isSelected {
+		fmt.Fprint(w, "▸ ")
+	}
+	
+	// Delegate to default renderer
+	d.DefaultDelegate.Render(w, m, index, item)
+}
+
+// newCursorDelegate creates a delegate that adds '▸' cursor for selected items.
+func newCursorDelegate(listModel *list.Model) cursorDelegate {
+	d := list.NewDefaultDelegate()
+	d.SetSpacing(0)
+	d.ShowDescription = false
+	d.Styles.SelectedTitle = Styles.Selected
+	d.Styles.SelectedDesc = Styles.Selected
+	d.Styles.NormalTitle = Styles.Muted
+	d.Styles.NormalDesc = Styles.Muted
+	
+	return cursorDelegate{
+		DefaultDelegate: d,
+		listModel:       listModel,
+	}
+}
 
 // itemType distinguishes between resource and bead items in the flat list.
 type itemType int
@@ -168,8 +205,14 @@ var _ View = (*ProjectDetailView)(nil)
 
 // NewProjectDetailView creates a detail view for a project.
 func NewProjectDetailView(name string) *ProjectDetailView {
-	delegate := NewCompactListDelegate()
-	l := list.New(nil, delegate, 0, 0)
+	// Create list with temporary delegate first
+	tempDelegate := NewCompactListDelegate()
+	l := list.New(nil, tempDelegate, 0, 0)
+	
+	// Create custom delegate that adds '▸' cursor for selected items
+	// Pass reference to the list so delegate can check selected index
+	delegate := newCursorDelegate(&l)
+	l.SetDelegate(delegate)
 	l.Title = ""
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)

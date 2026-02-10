@@ -353,8 +353,8 @@ func TestProjectDetailView_BeadTitleTruncation(t *testing.T) {
 	if strings.Contains(output, longTitle) {
 		t.Errorf("expected long bead title to be truncated, got:\n%s", output)
 	}
-	if !strings.Contains(output, "...") {
-		t.Errorf("expected '...' truncation marker, got:\n%s", output)
+	if !strings.Contains(output, "…") {
+		t.Errorf("expected '…' (unicode ellipsis) truncation marker, got:\n%s", output)
 	}
 }
 
