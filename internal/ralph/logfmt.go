@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -455,27 +454,6 @@ func (f *LogFormatter) formatNestedToolCall(toolCall map[string]interface{}) str
 
 	// Unknown tool type - skip it
 	return ""
-}
-
-// parseTestOutput parses Go test output to extract test results.
-func (f *LogFormatter) parseTestOutput(output string) {
-	// Look for Go test output patterns
-	// "--- PASS: TestFoo (0.01s)"
-	// "--- FAIL: TestBar (0.02s)"
-	passRegex := regexp.MustCompile(`--- PASS:\s+(\w+)`)
-	failRegex := regexp.MustCompile(`--- FAIL:\s+(\w+)`)
-
-	for _, match := range passRegex.FindAllStringSubmatch(output, -1) {
-		if len(match) > 1 {
-			f.testsPassed++
-		}
-	}
-	for _, match := range failRegex.FindAllStringSubmatch(output, -1) {
-		if len(match) > 1 {
-			f.testsFailed++
-			f.failedTests = append(f.failedTests, match[1])
-		}
-	}
 }
 
 // Summary returns a formatted summary of all events processed.
