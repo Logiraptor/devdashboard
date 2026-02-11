@@ -153,14 +153,8 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	selectedBead := a.Detail.SelectedBead()
 	cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
 
-	// Determine if we're in epic mode (epics benefit from parallel processing)
-	isEpicMode := selectedBead != nil && selectedBead.IssueType == "epic"
-
-	// Add --max-parallel for concurrency on epics (default 3)
-	// Single beads run sequentially (default maxParallel=1) to avoid conflicts
-	if isEpicMode {
-		cmd += " --max-parallel 3"
-	}
+	// Always run agents in parallel (3 concurrent by default)
+	cmd += " --max-parallel 3"
 
 	if selectedBead != nil {
 		escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
