@@ -175,22 +175,23 @@ func formatDuration(d time.Duration) string {
 
 // formatIterationLog formats a per-iteration log line.
 func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome, duration time.Duration, outcomeSummary string) string {
-	var status string
+	var status strings.Builder
 	switch outcome {
 	case OutcomeSuccess:
-		status = "success"
+		status.WriteString("success")
 	case OutcomeQuestion:
 		// Extract question bead IDs from outcomeSummary: "bead X has N question(s) needing human input: id1, id2"
-		status = "question"
+		status.WriteString("question")
 		if strings.Contains(outcomeSummary, ": ") {
 			parts := strings.Split(outcomeSummary, ": ")
 			if len(parts) > 1 {
 				questionIDs := strings.TrimSpace(parts[1])
-				status = fmt.Sprintf("question: %s", questionIDs)
+				status.Reset()
+				fmt.Fprintf(&status, "question: %s", questionIDs)
 			}
 		}
 	case OutcomeFailure:
-		status = "failed"
+		status.WriteString("failed")
 		// Extract exit code from: "bead X still open after agent run (exit code N, duration ...)"
 		// or: "failed to query bead X: ... (agent exit code N)"
 		if strings.Contains(outcomeSummary, "exit code") {
@@ -200,21 +201,22 @@ func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome
 				afterCode := outcomeSummary[idx+len("exit code"):]
 				afterCode = strings.TrimSpace(afterCode)
 				// Extract first number
-				var exitCode string
+				var exitCode strings.Builder
 				for _, r := range afterCode {
 					if r >= '0' && r <= '9' {
-						exitCode += string(r)
-					} else if exitCode != "" {
+						exitCode.WriteRune(r)
+					} else if exitCode.Len() > 0 {
 						break
 					}
 				}
-				if exitCode != "" {
-					status = fmt.Sprintf("failed: exit code %s", exitCode)
+				if exitCode.Len() > 0 {
+					status.Reset()
+					fmt.Fprintf(&status, "failed: exit code %s", exitCode.String())
 				}
 			}
 		}
 	case OutcomeTimeout:
-		status = "timeout"
+		status.WriteString("timeout")
 		// Extract exit code from: "agent timed out after ... (exit code N)"
 		if strings.Contains(outcomeSummary, "exit code") {
 			idx := strings.Index(outcomeSummary, "exit code")
@@ -222,16 +224,17 @@ func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome
 				afterCode := outcomeSummary[idx+len("exit code"):]
 				afterCode = strings.TrimSpace(afterCode)
 				// Extract first number
-				var exitCode string
+				var exitCode strings.Builder
 				for _, r := range afterCode {
 					if r >= '0' && r <= '9' {
-						exitCode += string(r)
-					} else if exitCode != "" {
+						exitCode.WriteRune(r)
+					} else if exitCode.Len() > 0 {
 						break
 					}
 				}
-				if exitCode != "" {
-					status = fmt.Sprintf("timeout: exit code %s", exitCode)
+				if exitCode.Len() > 0 {
+					status.Reset()
+					fmt.Fprintf(&status, "timeout: exit code %s", exitCode.String())
 				}
 			}
 		}
@@ -244,44 +247,46 @@ func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome
 				// Extract duration (everything up to " (")
 				if parenIdx := strings.Index(afterAfter, " ("); parenIdx >= 0 {
 					timeoutDur := strings.TrimSpace(afterAfter[:parenIdx])
-					status = fmt.Sprintf("timeout (%s)", timeoutDur)
+					status.Reset()
+					fmt.Fprintf(&status, "timeout (%s)", timeoutDur)
 				}
 			}
 		}
 	}
 
-	return fmt.Sprintf("[%d/%d] %s \"%s\" → %s (%s)",
-		iter, maxIter, beadID, title, status, formatDuration(duration))
+	var result strings.Builder
+	fmt.Fprintf(&result, "[%d/%d] %s \"%s\" → %s (%s)",
+		iter, maxIter, beadID, title, status.String(), formatDuration(duration))
+	return result.String()
 }
 
 // formatSummary formats the end-of-loop summary.
 func formatSummary(summary *RunSummary, remainingBeads int) string {
-	// Max 8 lines: 1 header + up to 6 conditionals + 1 duration
-	lines := make([]string, 0, 8)
-	lines = append(lines, "Ralph loop complete:")
+	var b strings.Builder
+	b.WriteString("Ralph loop complete:\n")
 
 	if summary.Succeeded > 0 {
-		lines = append(lines, fmt.Sprintf("  ✓ %d beads completed", summary.Succeeded))
+		fmt.Fprintf(&b, "  ✓ %d beads completed\n", summary.Succeeded)
 	}
 	if summary.Questions > 0 {
-		lines = append(lines, fmt.Sprintf("  ? %d questions created (needs human)", summary.Questions))
+		fmt.Fprintf(&b, "  ? %d questions created (needs human)\n", summary.Questions)
 	}
 	if summary.Failed > 0 {
-		lines = append(lines, fmt.Sprintf("  ✗ %d failure(s)", summary.Failed))
+		fmt.Fprintf(&b, "  ✗ %d failure(s)\n", summary.Failed)
 	}
 	if summary.TimedOut > 0 {
-		lines = append(lines, fmt.Sprintf("  ⏱ %d timeout(s)", summary.TimedOut))
+		fmt.Fprintf(&b, "  ⏱ %d timeout(s)\n", summary.TimedOut)
 	}
 	if summary.Skipped > 0 {
-		lines = append(lines, fmt.Sprintf("  ⊘ %d skipped", summary.Skipped))
+		fmt.Fprintf(&b, "  ⊘ %d skipped\n", summary.Skipped)
 	}
 	if remainingBeads > 0 {
-		lines = append(lines, fmt.Sprintf("  ○ %d beads remaining (blocked)", remainingBeads))
+		fmt.Fprintf(&b, "  ○ %d beads remaining (blocked)\n", remainingBeads)
 	}
 
-	lines = append(lines, fmt.Sprintf("  Duration: %s", formatDuration(summary.Duration)))
+	fmt.Fprintf(&b, "  Duration: %s", formatDuration(summary.Duration))
 
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
 // countRemainingBeads counts the number of ready beads remaining.

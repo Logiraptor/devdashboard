@@ -531,7 +531,7 @@ func (f *LogFormatter) BeadSummary() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	var lines []string
+	var b strings.Builder
 
 	// Files changed
 	if len(f.filesChanged) > 0 {
@@ -553,24 +553,30 @@ func (f *LogFormatter) BeadSummary() string {
 		if len(fileParts) > 5 {
 			fileParts = append(fileParts[:4], fmt.Sprintf("... +%d more", len(fileParts)-4))
 		}
-		lines = append(lines, fmt.Sprintf("      Files: %s", strings.Join(fileParts, ", ")))
+		fmt.Fprintf(&b, "      Files: %s", strings.Join(fileParts, ", "))
 	}
 
 	// Test results
 	if f.testsPassed > 0 || f.testsFailed > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
 		if f.testsFailed > 0 {
 			failed := strings.Join(f.failedTests, ", ")
 			if len(failed) > 40 {
 				failed = failed[:37] + "..."
 			}
-			lines = append(lines, fmt.Sprintf("      Tests: %d failed (%s)", f.testsFailed, failed))
+			fmt.Fprintf(&b, "      Tests: %d failed (%s)", f.testsFailed, failed)
 		} else {
-			lines = append(lines, fmt.Sprintf("      Tests: %d passed", f.testsPassed))
+			fmt.Fprintf(&b, "      Tests: %d passed", f.testsPassed)
 		}
 	}
 
 	// Last error
 	if f.lastError != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
 		err := f.lastError
 		// Extract first line or truncate
 		if idx := strings.Index(err, "\n"); idx > 0 {
@@ -579,10 +585,10 @@ func (f *LogFormatter) BeadSummary() string {
 		if len(err) > 60 {
 			err = err[:57] + "..."
 		}
-		lines = append(lines, fmt.Sprintf("      Error: %s", err))
+		fmt.Fprintf(&b, "      Error: %s", err)
 	}
 
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
 // SetCurrentBead sets the current bead being worked on for progress display.
@@ -637,20 +643,19 @@ func (f *LogFormatter) renderProgressLine() string {
 // renderProgressWithActivities renders the progress line with activity stream below it.
 // Must be called with mutex held.
 func (f *LogFormatter) renderProgressWithActivities() string {
-	// 1 progress line + len(activities) activity lines
-	lines := make([]string, 0, 1+len(f.activities))
-	lines = append(lines, f.renderProgressLine())
+	var b strings.Builder
+	b.WriteString(f.renderProgressLine())
 
 	// Add activity lines with tree-style prefixes
 	for i, activity := range f.activities {
-		prefix := "  ├─ "
 		if i == len(f.activities)-1 {
-			prefix = "  └─ "
+			fmt.Fprintf(&b, "\n  └─ %s", activity)
+		} else {
+			fmt.Fprintf(&b, "\n  ├─ %s", activity)
 		}
-		lines = append(lines, prefix+activity)
 	}
 
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
 // addActivity adds an activity to the activity stream.
