@@ -2,6 +2,7 @@ package ralph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -396,8 +397,22 @@ func (m *TUIModel) runLoopWithMessages() {
 
 // runSequentialLoop runs beads one at a time (original behavior)
 func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitter *LocalTraceEmitter) {
-	// Set up picker
-	picker := &BeadPicker{WorkDir: cfg.WorkDir, Epic: cfg.Epic}
+	// Set up picker - respect TargetBead if set
+	var pickNext func() (*beads.Bead, error)
+	if cfg.TargetBead != "" {
+		// When TargetBead is set, return that bead once then nil
+		once := false
+		pickNext = func() (*beads.Bead, error) {
+			if once {
+				return nil, nil // Signal no more beads
+			}
+			once = true
+			return fetchTargetBead(cfg.WorkDir, cfg.TargetBead)
+		}
+	} else {
+		picker := &BeadPicker{WorkDir: cfg.WorkDir, Epic: cfg.Epic}
+		pickNext = picker.Next
+	}
 
 	summary := &RunSummary{}
 	loopStart := time.Now()
@@ -414,7 +429,7 @@ func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitte
 		}
 
 		// Pick next bead
-		bead, err := picker.Next()
+		bead, err := pickNext()
 		if err != nil {
 			if m.program != nil {
 				m.program.Send(LoopErrorMsg{Err: err})
@@ -517,10 +532,20 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 		return
 	}
 
-	// Fetch all ready beads upfront
+	// Fetch beads to work on
 	var readyBeads []beads.Bead
-	
-	if cfg.Epic != "" {
+
+	// If TargetBead is set, work on just that bead
+	if cfg.TargetBead != "" {
+		targetBead, fetchErr := fetchTargetBead(cfg.WorkDir, cfg.TargetBead)
+		if fetchErr != nil {
+			if m.program != nil {
+				m.program.Send(LoopErrorMsg{Err: fmt.Errorf("fetching target bead: %w", fetchErr)})
+			}
+			return
+		}
+		readyBeads = []beads.Bead{*targetBead}
+	} else if cfg.Epic != "" {
 		// Fetch ready children of epic
 		readyBeads, err = FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 	} else {
@@ -737,6 +762,32 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 	if m.program != nil {
 		m.program.Send(LoopEndMsg{Summary: summary, StopReason: summary.StopReason})
 	}
+}
+
+// fetchTargetBead fetches a specific bead by ID using bd show.
+func fetchTargetBead(workDir, beadID string) (*beads.Bead, error) {
+	showCmd := exec.Command("bd", "show", beadID, "--json")
+	showCmd.Dir = workDir
+	outBytes, err := showCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("bd show %s: %w", beadID, err)
+	}
+	// bd show returns an array with one entry containing id, title, description
+	var showEntries []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(outBytes, &showEntries); err != nil {
+		return nil, fmt.Errorf("parsing bd show output: %w", err)
+	}
+	if len(showEntries) == 0 {
+		return nil, fmt.Errorf("bead %s not found", beadID)
+	}
+	e := showEntries[0]
+	return &beads.Bead{
+		ID:    e.ID,
+		Title: e.Title,
+	}, nil
 }
 
 // executeAgent runs the agent and tracks tool calls via trace emitter
