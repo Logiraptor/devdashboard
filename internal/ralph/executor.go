@@ -1,4 +1,3 @@
-// Package ralph implements the autonomous agent work loop.
 package ralph
 
 import (
