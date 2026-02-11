@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"devdeploy/internal/bd"
+	"devdeploy/internal/beads"
 )
 
 // Outcome represents the result of an agent iteration.
@@ -114,7 +115,7 @@ func Assess(workDir string, beadID string, result *AgentResult) (Outcome, string
 	}
 
 	// 3. Success: bead is now closed.
-	if entry.Status == "closed" {
+	if entry.Status == beads.StatusClosed {
 		return OutcomeSuccess, fmt.Sprintf(
 			"bead %s closed successfully (agent ran for %s)",
 			beadID, result.Duration.Truncate(1e9),
@@ -157,19 +158,19 @@ func needsHumanDeps(entry *bdShowEntry) []string {
 	// Question beads created by the agent will appear as dependencies
 	// that block this bead (dependency_type "blocks").
 	for _, dep := range entry.Dependencies {
-		if dep.Status == "closed" {
+		if dep.Status == beads.StatusClosed {
 			continue
 		}
-		if !hasLabel(dep.Labels, "needs-human") {
+		if !hasLabel(dep.Labels, beads.LabelNeedsHuman) {
 			continue
 		}
 		ids = append(ids, dep.ID)
 	}
 	for _, dep := range entry.Dependents {
-		if dep.Status == "closed" {
+		if dep.Status == beads.StatusClosed {
 			continue
 		}
-		if !hasLabel(dep.Labels, "needs-human") {
+		if !hasLabel(dep.Labels, beads.LabelNeedsHuman) {
 			continue
 		}
 		ids = append(ids, dep.ID)

@@ -281,7 +281,7 @@ func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchest
 			promptBuilder.WriteString("## Closed Tasks\n\n")
 			closedCount := 0
 			for _, child := range allChildren {
-				if child.Status == "closed" {
+				if child.Status == beads.StatusClosed {
 					promptBuilder.WriteString(fmt.Sprintf("- **%s**: %s\n", child.ID, child.Title))
 					closedCount++
 				}
@@ -292,7 +292,7 @@ func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchest
 			promptBuilder.WriteString("\n")
 			promptBuilder.WriteString("Review each closed task to understand what was implemented:\n")
 			for _, child := range allChildren {
-				if child.Status == "closed" {
+				if child.Status == beads.StatusClosed {
 					promptBuilder.WriteString(fmt.Sprintf("- Run `bd show %s` to see details of task \"%s\"\n", child.ID, child.Title))
 				}
 			}
@@ -336,7 +336,7 @@ func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchest
 		promptBuilder.WriteString("   - Edge cases not handled\n\n")
 		promptBuilder.WriteString("3. **If you have questions**: Create question beads:\n")
 		promptBuilder.WriteString("   ```bash\n")
-		promptBuilder.WriteString(fmt.Sprintf("   bd create \"Question: <your question>\" --type task --label needs-human --parent %s\n", cfg.Epic))
+		promptBuilder.WriteString(fmt.Sprintf("   bd create \"Question: <your question>\" --type task --label %s --parent %s\n", beads.LabelNeedsHuman, cfg.Epic))
 		promptBuilder.WriteString("   ```\n\n")
 		promptBuilder.WriteString("**Important**: Do not close the epic if you create any follow-up beads. Only close it when you are confident the epic is fully implemented.\n")
 

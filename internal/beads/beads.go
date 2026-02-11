@@ -94,7 +94,7 @@ func parseBeads(data []byte) []Bead {
 
 	result := make([]Bead, 0, len(entries))
 	for _, e := range entries {
-		if e.Status == "closed" {
+		if e.Status == StatusClosed {
 			continue
 		}
 		result = append(result, Bead{
@@ -115,7 +115,7 @@ func parseBeads(data []byte) []Bead {
 // or "" if none exists.
 func extractParentID(deps []bdDependency) string {
 	for _, d := range deps {
-		if d.Type == "parent-child" {
+		if d.Type == DepTypeParentChild {
 			return d.DependsOnID
 		}
 	}
@@ -198,7 +198,7 @@ func SortHierarchically(beads []Bead) []Bead {
 // hasPRLabel reports whether labels contains a "pr:<number>" label.
 func hasPRLabel(labels []string) bool {
 	for _, l := range labels {
-		if strings.HasPrefix(l, "pr:") {
+		if strings.HasPrefix(l, LabelPRPrefix) {
 			return true
 		}
 	}

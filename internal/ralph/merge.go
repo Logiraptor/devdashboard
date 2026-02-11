@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"text/template"
+
+	"devdeploy/internal/beads"
 )
 
 // MergeBranches merges sourceBranch into targetBranch in the given repository.
@@ -231,7 +233,7 @@ Please resolve the conflicts manually and complete the merge.`, sourceBranch, ta
 		"--title", title,
 		"--description", description,
 		"--type", "task",
-		"--label", "needs-human",
+		"--label", beads.LabelNeedsHuman,
 	}
 	if beadID != "" {
 		createArgs = append(createArgs, "--parent", beadID)
