@@ -362,6 +362,9 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 	// Track formatter for summary output
 	var currentFormatter *LogFormatter
 
+	// Set up trace client for devdeploy trace server.
+	traceClient := NewTraceClient()
+
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
@@ -374,6 +377,10 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 				opts = append(opts, WithStdoutWriter(currentFormatter))
 			} else if out != os.Stdout {
 				opts = append(opts, WithStdoutWriter(out))
+			}
+			// Pass trace client to executor
+			if traceClient != nil {
+				opts = append(opts, WithTraceClient(traceClient))
 			}
 			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 		}
@@ -402,9 +409,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 	fetchChildren := func() ([]beads.Bead, error) {
 		return FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 	}
-
-	// Set up trace client for devdeploy trace server.
-	traceClient := NewTraceClient()
 
 	setup := &epicOrchestratorSetup{
 		out:              out,
@@ -942,6 +946,9 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	// Track formatter for summary output
 	var currentFormatter *LogFormatter
 
+	// Set up trace client for devdeploy trace server.
+	traceClient := NewTraceClient()
+
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
@@ -955,6 +962,10 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 				opts = append(opts, WithStdoutWriter(currentFormatter))
 			} else if out != os.Stdout {
 				opts = append(opts, WithStdoutWriter(out))
+			}
+			// Pass trace client to executor
+			if traceClient != nil {
+				opts = append(opts, WithTraceClient(traceClient))
 			}
 			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 		}
@@ -983,9 +994,6 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 
 	// Set up status writer for devdeploy TUI polling.
 	statusWriter := NewStatusWriter(cfg.WorkDir)
-
-	// Set up trace client for devdeploy trace server.
-	traceClient := NewTraceClient()
 
 	setup := &sequentialLoopSetup{
 		out:                 out,
