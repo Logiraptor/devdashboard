@@ -74,7 +74,7 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 		assessFn:            resolved.assessFn,
 		syncFn:              resolved.syncFn,
 		consecutiveLimit:    resolved.consecutiveLimit,
-		mu:                  sync.Mutex{}, // Initialize as zero value, don't copy
+		// mu is zero-initialized and ready to use
 		consecutiveFailures: consecutiveFailures,
 		lastFailedBeadID:    lastFailedBeadID,
 		skippedBeads:        skippedBeads,
