@@ -159,46 +159,36 @@ func (f *LogFormatter) formatEvent(event map[string]interface{}) string {
 	}
 }
 
-// formatToolCall formats a tool_call event.
-// Only shows significant events (writes, shell commands).
-// Counts all events for summary.
-func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
-	// Check for new schema: {"type":"tool_call","tool_call":{"semSearchToolCall":{...}}}
-	if toolCall, ok := event["tool_call"].(map[string]interface{}); ok {
-		return f.formatNestedToolCall(toolCall)
-	}
+// toolHandler defines how to handle a specific tool type.
+type toolHandler struct {
+	counter    *int   // Counter to increment (e.g., &f.readsCount)
+	argKey     string // Key in args to extract (e.g., "file_path", "command")
+	formatFunc func(f *LogFormatter, value string, args map[string]interface{}) string
+}
 
-	// Fall back to old schema for backwards compatibility
-	name, _ := event["name"].(string)
-	if name == "" {
-		return ""
-	}
-
-	// Extract arguments if available
-	args, _ := event["arguments"].(map[string]interface{})
-	if args == nil {
-		return ""
-	}
-
-	// Format based on tool name and update counters
-	switch name {
-	case "read_file":
-		f.readsCount++
-		if f.beadID != "" {
-			// Only show reads if no significant activities
-			if f.hasSignificantActivities() {
-				return "" // Skip if we have edits/shells/errors
-			}
-			if path, ok := args["file_path"].(string); ok {
+// toolHandlers maps tool names to their handlers using table-driven dispatch.
+var toolHandlers = map[string]toolHandler{
+	"read_file": {
+		counter: nil, // Set dynamically in formatToolCall
+		argKey:  "file_path",
+		formatFunc: func(f *LogFormatter, path string, _ map[string]interface{}) string {
+			f.readsCount++
+			if f.beadID != "" {
+				// Only show reads if no significant activities
+				if f.hasSignificantActivities() {
+					return "" // Skip if we have edits/shells/errors
+				}
 				f.addActivity(fmt.Sprintf("read %s", filepath.Base(path)))
 			}
+			// When no bead, skip reads (too noisy) - backward compatibility
 			return ""
-		}
-		// When no bead, skip reads (too noisy) - backward compatibility
-		return ""
-	case "write":
-		f.writesCount++
-		if path, ok := args["file_path"].(string); ok {
+		},
+	},
+	"write": {
+		counter: nil, // Set dynamically in formatToolCall
+		argKey:  "file_path",
+		formatFunc: func(f *LogFormatter, path string, args map[string]interface{}) string {
+			f.writesCount++
 			contents, _ := args["contents"].(string)
 			lines := strings.Count(contents, "\n") + 1
 			// Track file change
@@ -215,10 +205,13 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 				return "" // Don't print inline, activity stream handles it
 			}
 			return fmt.Sprintf("[write] %s (%d lines)", path, lines)
-		}
-	case "search_replace":
-		f.editsCount++
-		if path, ok := args["file_path"].(string); ok {
+		},
+	},
+	"search_replace": {
+		counter: nil, // Set dynamically in formatToolCall
+		argKey:  "file_path",
+		formatFunc: func(f *LogFormatter, path string, args map[string]interface{}) string {
+			f.editsCount++
 			// Track file change
 			if f.beadID != "" {
 				change := f.filesChanged[path]
@@ -244,10 +237,13 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 				return "" // Don't print inline, activity stream handles it
 			}
 			return fmt.Sprintf("[edit] %s", path)
-		}
-	case "run_terminal_cmd":
-		f.shellsCount++
-		if cmd, ok := args["command"].(string); ok {
+		},
+	},
+	"run_terminal_cmd": {
+		counter: nil, // Set dynamically in formatToolCall
+		argKey:  "command",
+		formatFunc: func(f *LogFormatter, cmd string, _ map[string]interface{}) string {
+			f.shellsCount++
 			// Store command to check if it has output later
 			f.lastShellCmd = cmd
 			f.shellHadOutput = false
@@ -266,43 +262,76 @@ func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
 				displayCmd = displayCmd[:57] + "..."
 			}
 			return fmt.Sprintf("[shell] %s", displayCmd)
-		}
-	case "grep":
-		f.searchesCount++
-		if f.beadID != "" {
-			// Only show grep if no significant activities
-			if f.hasSignificantActivities() {
-				return "" // Skip if we have edits/shells/errors
-			}
-			if pattern, ok := args["pattern"].(string); ok {
+		},
+	},
+	"grep": {
+		counter: nil, // Set dynamically in formatToolCall
+		argKey:  "pattern",
+		formatFunc: func(f *LogFormatter, pattern string, _ map[string]interface{}) string {
+			f.searchesCount++
+			if f.beadID != "" {
+				// Only show grep if no significant activities
+				if f.hasSignificantActivities() {
+					return "" // Skip if we have edits/shells/errors
+				}
 				displayPattern := pattern
 				if len(displayPattern) > 40 {
 					displayPattern = displayPattern[:37] + "..."
 				}
 				f.addActivity(fmt.Sprintf("grep \"%s\"", displayPattern))
 			}
+			// When no bead, skip grep (too noisy) - backward compatibility
 			return ""
-		}
-		// When no bead, skip grep (too noisy) - backward compatibility
-		return ""
-	case "codebase_search":
-		f.searchesCount++
-		if f.beadID != "" {
-			// Only show searches if no significant activities
-			if f.hasSignificantActivities() {
-				return "" // Skip if we have edits/shells/errors
-			}
-			if query, ok := args["query"].(string); ok {
+		},
+	},
+	"codebase_search": {
+		counter: nil, // Set dynamically in formatToolCall
+		argKey:  "query",
+		formatFunc: func(f *LogFormatter, query string, _ map[string]interface{}) string {
+			f.searchesCount++
+			if f.beadID != "" {
+				// Only show searches if no significant activities
+				if f.hasSignificantActivities() {
+					return "" // Skip if we have edits/shells/errors
+				}
 				displayQuery := query
 				if len(displayQuery) > 40 {
 					displayQuery = displayQuery[:37] + "..."
 				}
 				f.addActivity(fmt.Sprintf("search \"%s\"", displayQuery))
 			}
+			// When no bead, skip searches (too noisy) - backward compatibility
 			return ""
-		}
-		// When no bead, skip searches (too noisy) - backward compatibility
+		},
+	},
+}
+
+// formatToolCall formats a tool_call event.
+// Only shows significant events (writes, shell commands).
+// Counts all events for summary.
+func (f *LogFormatter) formatToolCall(event map[string]interface{}) string {
+	// Check for new schema: {"type":"tool_call","tool_call":{"semSearchToolCall":{...}}}
+	if toolCall, ok := event["tool_call"].(map[string]interface{}); ok {
+		return f.formatNestedToolCall(toolCall)
+	}
+
+	// Fall back to old schema for backwards compatibility
+	name, _ := event["name"].(string)
+	if name == "" {
 		return ""
+	}
+
+	// Extract arguments if available
+	args, _ := event["arguments"].(map[string]interface{})
+	if args == nil {
+		return ""
+	}
+
+	// Use table-driven dispatch
+	if handler, ok := toolHandlers[name]; ok {
+		if value, ok := args[handler.argKey].(string); ok {
+			return handler.formatFunc(f, value, args)
+		}
 	}
 
 	return ""
