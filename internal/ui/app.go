@@ -19,6 +19,7 @@ import (
 	"devdeploy/internal/trace"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // SelectProjectMsg is sent when user selects a project from the dashboard.
@@ -153,6 +154,9 @@ type DismissModalMsg struct{}
 // tickMsg triggers periodic refresh of panes and beads.
 type tickMsg time.Time
 
+// ToggleTracePanelMsg toggles the trace panel visibility
+type ToggleTracePanelMsg struct{}
+
 // AppModel is the root model implementing Option E (Dashboard + Detail).
 // It switches between Dashboard and ProjectDetail modes.
 type AppModel struct {
@@ -169,6 +173,9 @@ type AppModel struct {
 	agentCancelFunc func()           // cancels in-flight agent run; nil when none
 	RalphStatus     *RalphStatusView // ralph status display
 	TraceManager    *trace.Manager   // trace manager for ralph loop traces
+	traceView       *TraceView       // trace view panel
+	showTrace       bool             // whether trace panel is visible
+	traceUpdateChan chan *trace.Trace // channel for trace updates from onChange callback
 	termWidth       int              // terminal width from last WindowSizeMsg
 	termHeight      int              // terminal height from last WindowSizeMsg
 }
@@ -183,11 +190,36 @@ type appModelAdapter struct {
 
 // Init implements tea.Model.
 func (a *appModelAdapter) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		a.currentView().Init(),
 		loadProjectsCmd(a.ProjectManager),
 		tickCmd(), // Start periodic refresh ticker
-	)
+	}
+	// Initialize trace view if it exists
+	if a.traceView != nil {
+		cmds = append(cmds, a.traceView.Init())
+	}
+	// Start listening for trace updates if channel exists
+	if a.traceUpdateChan != nil {
+		cmds = append(cmds, a.listenTraceUpdates())
+	}
+	return tea.Batch(cmds...)
+}
+
+// listenTraceUpdates returns a command that listens for trace updates from the channel
+func (a *appModelAdapter) listenTraceUpdates() tea.Cmd {
+	return func() tea.Msg {
+		if a.traceUpdateChan == nil {
+			return nil
+		}
+		select {
+		case trace := <-a.traceUpdateChan:
+			return TraceUpdateMsg{Trace: trace}
+		default:
+			// No update available, return nil (will be called again on next tick)
+			return nil
+		}
+	}
 }
 
 // Update implements tea.Model.
@@ -199,10 +231,58 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.Detail != nil {
 			a.Detail.SetSize(wsm.Width, wsm.Height)
 		}
+		// Update trace view size
+		if a.traceView != nil {
+			// Calculate trace panel width (30% of terminal or 50 chars, whichever is larger)
+			traceWidth := wsm.Width * 30 / 100
+			if traceWidth < 50 {
+				traceWidth = 50
+			}
+			if traceWidth > wsm.Width-20 {
+				traceWidth = wsm.Width - 20 // Leave some space for main view
+			}
+			traceHeight := wsm.Height - reservedChromeLines
+			if traceHeight < 10 {
+				traceHeight = 10
+			}
+			a.traceView.SetSize(traceWidth, traceHeight)
+		}
 		// RalphStatus view removed - no longer handling window size updates for it
 	}
 
 	switch msg := msg.(type) {
+	case TraceUpdateMsg:
+		if a.traceView != nil {
+			_, cmd := a.traceView.Update(msg)
+			// Continue listening for updates
+			var listenCmd tea.Cmd
+			if a.traceUpdateChan != nil {
+				listenCmd = a.listenTraceUpdates()
+			}
+			if listenCmd != nil {
+				return a, tea.Batch(cmd, listenCmd)
+			}
+			return a, cmd
+		}
+		// Continue listening even if trace view doesn't exist
+		if a.traceUpdateChan != nil {
+			return a, a.listenTraceUpdates()
+		}
+		return a, nil
+	case ToggleTracePanelMsg:
+		a.showTrace = !a.showTrace
+		if a.traceView != nil {
+			a.traceView.SetVisible(a.showTrace)
+			if a.showTrace && a.TraceManager != nil {
+				// Update with current active trace
+				activeTrace := a.TraceManager.GetActiveTrace()
+				if activeTrace != nil {
+					_, cmd := a.traceView.Update(TraceUpdateMsg{Trace: activeTrace})
+					return a, cmd
+				}
+			}
+		}
+		return a, nil
 	case RalphStatusMsg:
 		return a.handleRalphStatus()
 	case progress.Event:
@@ -1018,7 +1098,13 @@ func (a *appModelAdapter) handleFocusPane(msg FocusPaneMsg) (tea.Model, tea.Cmd)
 
 // handleTick handles tickMsg by refreshing panes and beads periodically.
 func (a *appModelAdapter) handleTick(msg tickMsg) (tea.Model, tea.Cmd) {
-	// Periodic refresh: update panes and beads when in project detail mode
+	// Poll for trace updates via channel (non-blocking check)
+	var traceCmd tea.Cmd
+	if a.traceUpdateChan != nil {
+		traceCmd = a.listenTraceUpdates()
+	}
+
+		// Periodic refresh: update panes and beads when in project detail mode
 	if a.Mode == ModeProjectDetail && a.Detail != nil {
 		// Refresh panes (fast, local operation)
 		a.refreshDetailPanes()
@@ -1034,15 +1120,27 @@ func (a *appModelAdapter) handleTick(msg tickMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if hasWorktrees {
-				return a, tea.Batch(
+				cmds := []tea.Cmd{
 					loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
 					tickCmd(), // Schedule next tick
-				)
+				}
+				if traceCmd != nil {
+					cmds = append(cmds, traceCmd)
+				}
+				return a, tea.Batch(cmds...)
 			}
 		}
-		return a, tickCmd() // Schedule next tick even if no worktrees
+		cmds := []tea.Cmd{tickCmd()}
+		if traceCmd != nil {
+			cmds = append(cmds, traceCmd)
+		}
+		return a, tea.Batch(cmds...)
 	}
-	return a, tickCmd() // Keep ticking even if not in detail mode
+	cmds := []tea.Cmd{tickCmd()}
+	if traceCmd != nil {
+		cmds = append(cmds, traceCmd)
+	}
+	return a, tea.Batch(cmds...)
 }
 
 // handleRalphStatus handles RalphStatusMsg (no-op, status polling removed).
@@ -1072,24 +1170,37 @@ func (a *appModelAdapter) handleProgressEvent(msg progress.Event) (tea.Model, te
 
 // View implements tea.Model.
 func (a *appModelAdapter) View() string {
-	base := a.currentView().View()
+	mainView := a.currentView().View()
+	
+	// Add keybind help if leader waiting
 	if a.KeyHandler != nil && a.KeyHandler.LeaderWaiting {
-		base += "\n" + RenderKeybindHelp(a.KeyHandler, a.Mode)
+		mainView += "\n" + RenderKeybindHelp(a.KeyHandler, a.Mode)
 	}
+	
+	// Add overlays
 	if a.Overlays.Len() > 0 {
 		if top, ok := a.Overlays.Peek(); ok {
-			base += "\n" + top.View.View()
+			mainView += "\n" + top.View.View()
 		}
 	}
-	// Ralph status view removed - user can see ralph output directly in tmux pane
+	
+	// Add status
 	if a.Status != "" {
 		style := Styles.Status
 		if a.StatusIsError {
 			style = Styles.TitleWarning
 		}
-		base += "\n" + style.Render("▶ "+a.Status) + Styles.Muted.Render(" (any key to dismiss)")
+		mainView += "\n" + style.Render("▶ "+a.Status) + Styles.Muted.Render(" (any key to dismiss)")
 	}
-	return base
+	
+	// Add trace panel if visible
+	if a.showTrace && a.traceView != nil && a.traceView.IsVisible() {
+		tracePanel := a.traceView.View()
+		// Split horizontally: main view | trace panel
+		return lipgloss.JoinHorizontal(lipgloss.Top, mainView, tracePanel)
+	}
+	
+	return mainView
 }
 
 func (a *appModelAdapter) currentView() View {
@@ -1548,6 +1659,21 @@ type AppModelOption func(*AppModel)
 func WithTraceManager(mgr *trace.Manager) AppModelOption {
 	return func(m *AppModel) {
 		m.TraceManager = mgr
+		// Initialize trace view
+		m.traceView = NewTraceView()
+		// Set up channel for trace updates
+		m.traceUpdateChan = make(chan *trace.Trace, 10)
+		// Set up onChange callback to send trace updates to channel
+		mgr.SetOnChange(func() {
+			activeTrace := mgr.GetActiveTrace()
+			if activeTrace != nil {
+				select {
+				case m.traceUpdateChan <- activeTrace:
+				default:
+					// Channel full, skip (non-blocking)
+				}
+			}
+		})
 	}
 }
 
@@ -1574,6 +1700,8 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	reg.BindWithDesc("SPC p l", func() tea.Msg { return ShowProjectSwitcherMsg{} }, "Switch project")
 	// SPC r: refresh beads for all resources in project detail view
 	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
+	// SPC t t: toggle trace panel
+	reg.BindWithDescForMode("SPC t t", func() tea.Msg { return ToggleTracePanelMsg{} }, "Toggle trace panel", []AppMode{ModeProjectDetail})
 	// SPC 1-9: focus pane by index
 	for i := 1; i <= 9; i++ {
 		num := i
