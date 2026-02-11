@@ -16,6 +16,7 @@ import (
 	"devdeploy/internal/project"
 	"devdeploy/internal/session"
 	"devdeploy/internal/tmux"
+	"devdeploy/internal/trace"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -167,6 +168,7 @@ type AppModel struct {
 	StatusIsError   bool
 	agentCancelFunc func()           // cancels in-flight agent run; nil when none
 	RalphStatus     *RalphStatusView // ralph status display
+	TraceManager    *trace.Manager   // trace manager for ralph loop traces
 	termWidth       int              // terminal width from last WindowSizeMsg
 	termHeight      int              // terminal height from last WindowSizeMsg
 }
@@ -1539,8 +1541,18 @@ func countBeadsFromResources(resources []project.Resource, projectName string) i
 	return totalCount
 }
 
+// AppModelOption configures NewAppModel
+type AppModelOption func(*AppModel)
+
+// WithTraceManager sets the trace manager for the app model
+func WithTraceManager(mgr *trace.Manager) AppModelOption {
+	return func(m *AppModel) {
+		m.TraceManager = mgr
+	}
+}
+
 // NewAppModel creates the root application model.
-func NewAppModel() *AppModel {
+func NewAppModel(opts ...AppModelOption) *AppModel {
 	projMgr := (*project.Manager)(nil)
 	if base, err := project.ResolveProjectsBase(); err == nil {
 		projMgr = project.NewManager(base, "")
@@ -1572,7 +1584,7 @@ func NewAppModel() *AppModel {
 			[]AppMode{ModeProjectDetail},
 		)
 	}
-	return &AppModel{
+	model := &AppModel{
 		Mode:           ModeDashboard,
 		Dashboard:      NewDashboardView(),
 		Detail:         nil,
@@ -1581,6 +1593,13 @@ func NewAppModel() *AppModel {
 		AgentRunner:    &agent.StubRunner{},
 		Sessions:       session.New(tmux.ListPaneIDs),
 	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(model)
+	}
+
+	return model
 }
 
 // AsTeaModel returns a tea.Model adapter for use with tea.NewProgram.
