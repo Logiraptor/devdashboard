@@ -305,7 +305,6 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 // epicOrchestratorSetup holds setup state for epic orchestrator.
 type epicOrchestratorSetup struct {
 	out              io.Writer
-	statusWriter     *StatusWriter
 	summary          *RunSummary
 	epicPromptData   *PromptData
 	fetchPrompt      func(beadID string) (*PromptData, error)
@@ -334,9 +333,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 
 	// Apply wall-clock timeout to context.
 	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
-
-	// Set up status writer for devdeploy TUI polling.
-	statusWriter := NewStatusWriter(cfg.WorkDir)
 
 	summary := &RunSummary{}
 
@@ -412,7 +408,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 
 	setup := &epicOrchestratorSetup{
 		out:              out,
-		statusWriter:     statusWriter,
 		summary:          summary,
 		epicPromptData:   epicPromptData,
 		fetchPrompt:      fetchPrompt,
@@ -428,7 +423,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 
 	cleanup := func() {
 		cancelWall()
-		_ = statusWriter.Clear()
 	}
 
 	return ctx, setup, cleanup, nil
@@ -489,24 +483,6 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	iterStartTime := time.Now()
 	iterSpanID := setup.traceClient.StartIteration(child.ID, child.Title, iterNum)
 	setup.traceClient.SetParent(iterSpanID)
-
-	// Write status: starting iteration with current bead.
-	currentBead := &BeadInfo{ID: child.ID, Title: child.Title}
-	status := Status{
-		State:         "running",
-		Iteration:     iterNum,
-		MaxIterations: 0, // Unknown total, will be updated
-		CurrentBead:   currentBead,
-		Elapsed:       time.Since(loopStart).Nanoseconds(),
-	}
-	status.Tallies.Completed = setup.summary.Succeeded
-	status.Tallies.Questions = setup.summary.Questions
-	status.Tallies.Failed = setup.summary.Failed
-	status.Tallies.TimedOut = setup.summary.TimedOut
-	status.Tallies.Skipped = setup.summary.Skipped
-	// Ignore write errors: status updates are best-effort notifications for TUI polling.
-	// Loop execution continues even if status file cannot be written.
-	_ = setup.statusWriter.Write(status)
 
 	// Fetch prompt data and render prompt
 	promptData, err := setup.fetchPrompt(child.ID)
@@ -754,29 +730,12 @@ func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchest
 	}
 }
 
-// writeFinalEpicStatus writes the final status and summary for epic orchestrator.
+// writeFinalEpicStatus writes the final summary for epic orchestrator.
 func writeFinalEpicStatus(cfg LoopConfig, setup *epicOrchestratorSetup, loopStart time.Time) {
 	setup.summary.Duration = time.Since(loopStart)
 	if setup.summary.StopReason == StopNormal && setup.summary.Failed == 0 && setup.summary.TimedOut == 0 {
 		setup.summary.StopReason = StopNormal
 	}
-
-	// Write final status
-	finalStatus := Status{
-		State:         "completed",
-		Iteration:     setup.summary.Iterations,
-		MaxIterations: setup.summary.Iterations, // Total equals completed since we process until none remain
-		Elapsed:       setup.summary.Duration.Nanoseconds(),
-		StopReason:    setup.summary.StopReason.String(),
-	}
-	finalStatus.Tallies.Completed = setup.summary.Succeeded
-	finalStatus.Tallies.Questions = setup.summary.Questions
-	finalStatus.Tallies.Failed = setup.summary.Failed
-	finalStatus.Tallies.TimedOut = setup.summary.TimedOut
-	finalStatus.Tallies.Skipped = setup.summary.Skipped
-	// Ignore write errors: status updates are best-effort notifications for TUI polling.
-	// Loop execution continues even if status file cannot be written.
-	_ = setup.statusWriter.Write(finalStatus)
 
 	// Count remaining beads for summary
 	remainingBeads := 0
@@ -841,7 +800,6 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 // sequentialLoopSetup holds setup state for sequential loop.
 type sequentialLoopSetup struct {
 	out                 io.Writer
-	statusWriter        *StatusWriter
 	summary             *RunSummary
 	pickNext            func() (*beads.Bead, error)
 	fetchPrompt         func(beadID string) (*PromptData, error)
@@ -992,12 +950,8 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	lastFailedBeadID := ""
 	skippedBeads := make(map[string]bool)
 
-	// Set up status writer for devdeploy TUI polling.
-	statusWriter := NewStatusWriter(cfg.WorkDir)
-
 	setup := &sequentialLoopSetup{
 		out:                 out,
-		statusWriter:        statusWriter,
 		summary:             summary,
 		pickNext:            pickNext,
 		fetchPrompt:         fetchPrompt,
@@ -1015,31 +969,11 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 
 	cleanup := func() {
 		cancelWall()
-		_ = statusWriter.Clear()
 	}
 
 	return ctx, setup, cleanup, nil
 }
 
-// writeStatus writes status for sequential loop.
-func writeStatus(setup *sequentialLoopSetup, state string, iteration, maxIterations int, loopStart time.Time, currentBead *BeadInfo, stopReason string) {
-	status := Status{
-		State:         state,
-		Iteration:     iteration,
-		MaxIterations: maxIterations,
-		CurrentBead:   currentBead,
-		Elapsed:       time.Since(loopStart).Nanoseconds(),
-		StopReason:    stopReason,
-	}
-	status.Tallies.Completed = setup.summary.Succeeded
-	status.Tallies.Questions = setup.summary.Questions
-	status.Tallies.Failed = setup.summary.Failed
-	status.Tallies.TimedOut = setup.summary.TimedOut
-	status.Tallies.Skipped = setup.summary.Skipped
-	// Ignore write errors: status updates are best-effort notifications for TUI polling.
-	// Loop execution continues even if status file cannot be written.
-	_ = setup.statusWriter.Write(status)
-}
 
 // handleSameBeadRetry handles same-bead retry detection logic.
 func handleSameBeadRetry(setup *sequentialLoopSetup, bead *beads.Bead, cfg LoopConfig, loopStart time.Time, i int) (*beads.Bead, bool, error) {
@@ -1066,8 +1000,6 @@ func handleSameBeadRetry(setup *sequentialLoopSetup, bead *beads.Bead, cfg LoopC
 	if setup.skippedBeads[retryBead.ID] {
 		setup.summary.Skipped++
 		setup.summary.StopReason = StopAllBeadsSkipped
-		// Write final status before breaking
-		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
 		return nil, false, nil
 	}
 	return retryBead, true, nil
@@ -1227,8 +1159,6 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 		} else {
 			setup.summary.StopReason = StopContextCancelled
 		}
-		// Write final status before breaking
-		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
 		return false, nil
 	}
 
@@ -1240,14 +1170,8 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	}
 	if bead == nil {
 		setup.summary.StopReason = StopNormal
-		// Write final status before breaking
-		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
 		return false, nil
 	}
-
-	// Write status: starting iteration with current bead.
-	currentBead := &BeadInfo{ID: bead.ID, Title: bead.Title}
-	writeStatus(setup, "running", i+1, cfg.MaxIterations, loopStart, currentBead, "")
 
 	// Guard: same-bead retry detection.
 	bead, shouldContinue, err := handleSameBeadRetry(setup, bead, cfg, loopStart, i)
@@ -1267,8 +1191,6 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	if cfg.DryRun {
 		_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 		setup.summary.Iterations++
-		// Write final status for dry-run
-		writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, "dry-run")
 		// End iteration trace for dry-run
 		durationMs := time.Since(iterStartTime).Milliseconds()
 		setup.traceClient.EndIteration(iterSpanID, "success", durationMs)
@@ -1302,14 +1224,9 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	durationMs := time.Since(iterStartTime).Milliseconds()
 	setup.traceClient.EndIteration(iterSpanID, outcome.String(), durationMs)
 
-	// Write status update after iteration completes.
-	writeStatus(setup, "running", i+1, cfg.MaxIterations, loopStart, nil, "")
-
 	// Guard: consecutive failure limit.
 	if setup.consecutiveFailures >= setup.consecutiveLimit {
 		setup.summary.StopReason = StopConsecutiveFails
-		// Write final status before breaking
-		writeStatus(setup, "completed", i+1, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
 		return false, nil
 	}
 
@@ -1323,7 +1240,7 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	return true, nil
 }
 
-// writeFinalSequentialStatus writes the final status and summary for sequential loop.
+// writeFinalSequentialStatus writes the final summary for sequential loop.
 func writeFinalSequentialStatus(cfg LoopConfig, setup *sequentialLoopSetup, loopStart time.Time) {
 	// If we exhausted all iterations without an earlier stop reason, set it.
 	if setup.summary.StopReason == StopNormal && setup.summary.Iterations >= cfg.MaxIterations {
@@ -1332,9 +1249,6 @@ func writeFinalSequentialStatus(cfg LoopConfig, setup *sequentialLoopSetup, loop
 
 	// Calculate total duration.
 	setup.summary.Duration = time.Since(loopStart)
-
-	// Write final status.
-	writeStatus(setup, "completed", setup.summary.Iterations, cfg.MaxIterations, loopStart, nil, setup.summary.StopReason.String())
 
 	// Count remaining beads.
 	remainingBeads := countRemainingBeads(cfg)

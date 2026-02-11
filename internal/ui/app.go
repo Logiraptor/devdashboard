@@ -171,7 +171,6 @@ type AppModel struct {
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
 	agentCancelFunc func()           // cancels in-flight agent run; nil when none
-	RalphStatus     *RalphStatusView // ralph status display
 	TraceManager    *trace.Manager   // trace manager for ralph loop traces
 	traceView       *TraceView       // trace view panel
 	showTrace       bool             // whether trace panel is visible
@@ -247,7 +246,6 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.traceView.SetSize(traceWidth, traceHeight)
 		}
-		// RalphStatus view removed - no longer handling window size updates for it
 	}
 
 	switch msg := msg.(type) {
@@ -283,8 +281,6 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return a, nil
-	case RalphStatusMsg:
-		return a.handleRalphStatus()
 	case progress.Event:
 		return a.handleProgressEvent(msg)
 	case ProjectsLoadedMsg:
@@ -601,8 +597,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 		a.Sessions.Register(rk, paneID, session.PaneAgent)
 		a.refreshDetailPanes()
 	}
-	// Ralph status file (.ralph-status.json) is still written for CI/scripting,
-	// but we don't poll it in the UI - user can see ralph output directly in tmux pane
+	// User can see ralph output directly in tmux pane
 	a.Status = "Ralph loop launched"
 	a.StatusIsError = false
 	return a, nil
@@ -1141,13 +1136,6 @@ func (a *appModelAdapter) handleTick(msg tickMsg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, traceCmd)
 	}
 	return a, tea.Batch(cmds...)
-}
-
-// handleRalphStatus handles RalphStatusMsg (no-op, status polling removed).
-func (a *appModelAdapter) handleRalphStatus() (tea.Model, tea.Cmd) {
-	// Ralph status polling removed - status file still written for CI/scripting
-	// but UI no longer displays it (user sees output in tmux pane)
-	return a, nil
 }
 
 // handleProgressEvent handles progress.Event by updating progress windows and clearing cancel func.
