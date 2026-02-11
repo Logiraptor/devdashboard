@@ -44,7 +44,7 @@ func CheckLanding(workDir string, beadID string, beforeCommitHash string) (*Land
 	status.HasNewCommit = status.CommitHashAfter != "" && status.CommitHashAfter != beforeCommitHash
 
 	// Check if bead is closed (reuse Assess logic)
-	assessOutcome, _ := Assess(workDir, beadID, &AgentResult{ExitCode: 0})
+	assessOutcome, _ := Assess(workDir, beadID, &AgentResult{ExitCode: 0}, nil)
 	status.BeadClosed = assessOutcome == OutcomeSuccess
 
 	return status, nil

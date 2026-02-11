@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// mockBDShow replaces runBDShow for testing. Returns canned JSON output.
-func mockBDShow(entry *bdShowEntry) func(string, string) ([]byte, error) {
+// mockBDShow returns a BDShowFunc for testing. Returns canned JSON output.
+func mockBDShow(entry *bdShowEntry) BDShowFunc {
 	return func(workDir, beadID string) ([]byte, error) {
 		if entry == nil {
 			return nil, fmt.Errorf("bd: bead not found")
@@ -25,7 +25,7 @@ func TestAssess_Timeout(t *testing.T) {
 		TimedOut: true,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, nil)
 
 	if outcome != OutcomeTimeout {
 		t.Errorf("expected OutcomeTimeout, got %v", outcome)
@@ -37,10 +37,7 @@ func TestAssess_Timeout(t *testing.T) {
 }
 
 func TestAssess_Success(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "closed",
 	})
@@ -50,7 +47,7 @@ func TestAssess_Success(t *testing.T) {
 		Duration: 2 * time.Minute,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeSuccess {
 		t.Errorf("expected OutcomeSuccess, got %v", outcome)
@@ -62,10 +59,7 @@ func TestAssess_Success(t *testing.T) {
 }
 
 func TestAssess_QuestionCreated(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "open",
 		Dependencies: []bdShowDep{
@@ -83,7 +77,7 @@ func TestAssess_QuestionCreated(t *testing.T) {
 		Duration: 3 * time.Minute,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeQuestion {
 		t.Errorf("expected OutcomeQuestion, got %v", outcome)
@@ -95,11 +89,8 @@ func TestAssess_QuestionCreated(t *testing.T) {
 }
 
 func TestAssess_QuestionInDependents(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
 	// Question beads may also appear as dependents.
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "open",
 		Dependents: []bdShowDep{
@@ -117,7 +108,7 @@ func TestAssess_QuestionInDependents(t *testing.T) {
 		Duration: 1 * time.Minute,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeQuestion {
 		t.Errorf("expected OutcomeQuestion, got %v", outcome)
@@ -126,10 +117,7 @@ func TestAssess_QuestionInDependents(t *testing.T) {
 }
 
 func TestAssess_Failure_NonZeroExit(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "open",
 	})
@@ -139,7 +127,7 @@ func TestAssess_Failure_NonZeroExit(t *testing.T) {
 		Duration: 30 * time.Second,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeFailure {
 		t.Errorf("expected OutcomeFailure, got %v", outcome)
@@ -151,10 +139,7 @@ func TestAssess_Failure_NonZeroExit(t *testing.T) {
 }
 
 func TestAssess_Failure_BeadStillOpen(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "in_progress",
 	})
@@ -164,7 +149,7 @@ func TestAssess_Failure_BeadStillOpen(t *testing.T) {
 		Duration: 5 * time.Minute,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeFailure {
 		t.Errorf("expected OutcomeFailure, got %v", outcome)
@@ -173,17 +158,14 @@ func TestAssess_Failure_BeadStillOpen(t *testing.T) {
 }
 
 func TestAssess_Failure_BDShowError(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
-	runBDShow = mockBDShow(nil) // simulate bd error
+	bdShow := mockBDShow(nil) // simulate bd error
 
 	result := &AgentResult{
 		ExitCode: 0,
 		Duration: 1 * time.Minute,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeFailure {
 		t.Errorf("expected OutcomeFailure, got %v", outcome)
@@ -192,10 +174,7 @@ func TestAssess_Failure_BDShowError(t *testing.T) {
 }
 
 func TestAssess_Failure_InvalidJSON(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
-	runBDShow = func(workDir, beadID string) ([]byte, error) {
+	bdShow := func(workDir, beadID string) ([]byte, error) {
 		return []byte("not valid json"), nil
 	}
 
@@ -204,7 +183,7 @@ func TestAssess_Failure_InvalidJSON(t *testing.T) {
 		Duration: 1 * time.Minute,
 	}
 
-	outcome, summary := Assess("/fake", "test-1", result)
+	outcome, summary := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeFailure {
 		t.Errorf("expected OutcomeFailure, got %v", outcome)
@@ -213,11 +192,8 @@ func TestAssess_Failure_InvalidJSON(t *testing.T) {
 }
 
 func TestAssess_ClosedQuestionNotCounted(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
 	// A needs-human dep that is already closed should not count as a question.
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "open",
 		Dependencies: []bdShowDep{
@@ -235,7 +211,7 @@ func TestAssess_ClosedQuestionNotCounted(t *testing.T) {
 		Duration: 2 * time.Minute,
 	}
 
-	outcome, _ := Assess("/fake", "test-1", result)
+	outcome, _ := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeFailure {
 		t.Errorf("expected OutcomeFailure (closed question should not count), got %v", outcome)
@@ -243,11 +219,8 @@ func TestAssess_ClosedQuestionNotCounted(t *testing.T) {
 }
 
 func TestAssess_TimeoutTakesPriority(t *testing.T) {
-	old := runBDShow
-	defer func() { runBDShow = old }()
-
 	// Even if the bead is closed, timeout should take priority.
-	runBDShow = mockBDShow(&bdShowEntry{
+	bdShow := mockBDShow(&bdShowEntry{
 		ID:     "test-1",
 		Status: "closed",
 	})
@@ -258,7 +231,7 @@ func TestAssess_TimeoutTakesPriority(t *testing.T) {
 		TimedOut: true,
 	}
 
-	outcome, _ := Assess("/fake", "test-1", result)
+	outcome, _ := Assess("/fake", "test-1", result, bdShow)
 
 	if outcome != OutcomeTimeout {
 		t.Errorf("expected OutcomeTimeout to take priority, got %v", outcome)

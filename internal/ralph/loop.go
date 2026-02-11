@@ -71,7 +71,7 @@ func resolveConfig(cfg LoopConfig) resolvedConfig {
 	assessFn := cfg.AssessFn
 	if assessFn == nil {
 		assessFn = func(beadID string, result *AgentResult) (Outcome, string) {
-			return Assess(cfg.WorkDir, beadID, result)
+			return Assess(cfg.WorkDir, beadID, result, nil)
 		}
 	}
 

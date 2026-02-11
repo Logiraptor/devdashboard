@@ -412,7 +412,7 @@ func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitte
 		}
 
 		// Assess outcome
-		outcome, _ := Assess(cfg.WorkDir, bead.ID, result)
+		outcome, _ := Assess(cfg.WorkDir, bead.ID, result, nil)
 
 		// Update summary
 		summary.Iterations++
@@ -605,7 +605,7 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 			}
 
 			// Assess outcome (use original workdir for beads state)
-			outcome, _ := Assess(cfg.WorkDir, bead.ID, result)
+			outcome, _ := Assess(cfg.WorkDir, bead.ID, result, nil)
 
 			// Update summary atomically
 			summaryMu.Lock()

@@ -78,16 +78,14 @@ type bdShowDep struct {
 	DependencyType string   `json:"dependency_type"`
 }
 
-// runBDShow is the function used to execute `bd show <id> --json`.
-// Replaced in tests for deterministic output.
-var runBDShow = func(workDir string, beadID string) ([]byte, error) {
-	return bd.Run(workDir, "show", beadID, "--json")
-}
+// BDShowFunc executes bd show for a bead. Nil means use real bd command.
+type BDShowFunc func(workDir, beadID string) ([]byte, error)
 
 // Assess evaluates what happened after an agent run. It checks the bead's
 // current state via `bd show` and combines that with the AgentResult to
 // determine one of four outcomes.
-func Assess(workDir string, beadID string, result *AgentResult) (Outcome, string) {
+// If bdShow is nil, the real bd command is used.
+func Assess(workDir string, beadID string, result *AgentResult, bdShow BDShowFunc) (Outcome, string) {
 	// 1. Timeout takes highest priority — the agent didn't finish.
 	if result.TimedOut {
 		return OutcomeTimeout, fmt.Sprintf(
@@ -97,7 +95,12 @@ func Assess(workDir string, beadID string, result *AgentResult) (Outcome, string
 	}
 
 	// 2. Query current bead state.
-	out, err := runBDShow(workDir, beadID)
+	if bdShow == nil {
+		bdShow = func(dir, id string) ([]byte, error) {
+			return bd.Run(dir, "show", id, "--json")
+		}
+	}
+	out, err := bdShow(workDir, beadID)
 	if err != nil {
 		// Can't determine bead state — treat as failure.
 		return OutcomeFailure, fmt.Errorf(
