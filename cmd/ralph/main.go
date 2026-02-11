@@ -163,10 +163,10 @@ func run(cfg config) (ralph.StopReason, error) {
 
 	// Extract stop reason from final model
 	if m, ok := finalModel.(*ralph.TUIModel); ok {
-		if m.GetError() != nil {
-			return ralph.StopNormal, m.GetError()
+		if m.Err() != nil {
+			return ralph.StopNormal, m.Err()
 		}
-		if summary := m.GetSummary(); summary != nil {
+		if summary := m.Summary(); summary != nil {
 			return summary.StopReason, nil
 		}
 	}

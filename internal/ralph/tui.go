@@ -85,18 +85,18 @@ func NewTUIModel(cfg LoopConfig) *TUIModel {
 	}
 }
 
-// GetTraceEmitter returns the trace emitter for loop integration
-func (m *TUIModel) GetTraceEmitter() *LocalTraceEmitter {
+// TraceEmitter returns the trace emitter for loop integration
+func (m *TUIModel) TraceEmitter() *LocalTraceEmitter {
 	return m.traceEmitter
 }
 
-// GetError returns any error that occurred during the loop
-func (m *TUIModel) GetError() error {
+// Err returns any error that occurred during the loop
+func (m *TUIModel) Err() error {
 	return m.err
 }
 
-// GetSummary returns the run summary
-func (m *TUIModel) GetSummary() *RunSummary {
+// Summary returns the run summary
+func (m *TUIModel) Summary() *RunSummary {
 	return m.summary
 }
 
