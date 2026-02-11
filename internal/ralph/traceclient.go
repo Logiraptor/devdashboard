@@ -80,11 +80,10 @@ func NewTraceClient() *TraceClient {
 // StartLoop begins a new trace, returns the trace ID
 func (c *TraceClient) StartLoop(model, epic, workdir string, maxIterations int) string {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	traceID := trace.NewTraceID()
 	c.traceID = traceID
 	c.parentID = "" // Reset parent for new trace
+	c.mu.Unlock()
 
 	event := trace.TraceEvent{
 		TraceID:   traceID,
@@ -108,14 +107,16 @@ func (c *TraceClient) StartLoop(model, epic, workdir string, maxIterations int) 
 // EndLoop completes the current trace
 func (c *TraceClient) EndLoop(stopReason string, iterations, succeeded, failed int) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.traceID == "" {
+	traceID := c.traceID
+	if traceID == "" {
+		c.mu.Unlock()
 		return // No active trace
 	}
+	c.traceID = "" // Clear trace ID
+	c.mu.Unlock()
 
 	event := trace.TraceEvent{
-		TraceID:   c.traceID,
+		TraceID:   traceID,
 		SpanID:    trace.NewSpanID(),
 		ParentID:  "",
 		Type:      trace.EventLoopEnd,
@@ -130,23 +131,23 @@ func (c *TraceClient) EndLoop(stopReason string, iterations, succeeded, failed i
 	}
 
 	c.send(event)
-	c.traceID = "" // Clear trace ID
 }
 
 // StartIteration begins an iteration span, returns span ID
 func (c *TraceClient) StartIteration(beadID, beadTitle string, iterNum int) string {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.traceID == "" {
+	traceID := c.traceID
+	if traceID == "" {
+		c.mu.Unlock()
 		return "" // No active trace
 	}
 
 	spanID := trace.NewSpanID()
 	c.parentID = spanID // Set as parent for nested tool calls
+	c.mu.Unlock()
 
 	event := trace.TraceEvent{
-		TraceID:   c.traceID,
+		TraceID:   traceID,
 		SpanID:    spanID,
 		ParentID:  "",
 		Type:      trace.EventIterationStart,
@@ -166,27 +167,28 @@ func (c *TraceClient) StartIteration(beadID, beadTitle string, iterNum int) stri
 // EndIteration completes an iteration span
 func (c *TraceClient) EndIteration(spanID string, outcome string, durationMs int64) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.traceID == "" || spanID == "" {
+	traceID := c.traceID
+	if traceID == "" || spanID == "" {
+		c.mu.Unlock()
 		return
 	}
+	c.parentID = "" // Clear parent after iteration ends
+	c.mu.Unlock()
 
 	event := trace.TraceEvent{
-		TraceID:   c.traceID,
+		TraceID:   traceID,
 		SpanID:    spanID,
 		ParentID:  "",
 		Type:      trace.EventIterationEnd,
 		Name:      "iteration-end",
 		Timestamp: time.Now(),
 		Attributes: map[string]string{
-			"outcome":       outcome,
-			"duration_ms":   fmt.Sprintf("%d", durationMs),
+			"outcome":     outcome,
+			"duration_ms": fmt.Sprintf("%d", durationMs),
 		},
 	}
 
 	c.send(event)
-	c.parentID = "" // Clear parent after iteration ends
 }
 
 // StartTool begins a tool span, returns span ID
@@ -194,18 +196,20 @@ func (c *TraceClient) EndIteration(spanID string, outcome string, durationMs int
 // attrs: tool-specific attributes (file_path, command, query, etc.)
 func (c *TraceClient) StartTool(toolName string, attrs map[string]string) string {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.traceID == "" {
+	traceID := c.traceID
+	if traceID == "" {
+		c.mu.Unlock()
 		return "" // No active trace
 	}
+	parentID := c.parentID
+	c.mu.Unlock()
 
 	spanID := trace.NewSpanID()
 
 	event := trace.TraceEvent{
-		TraceID:   c.traceID,
+		TraceID:   traceID,
 		SpanID:    spanID,
-		ParentID:  c.parentID, // Use current parent for nesting
+		ParentID:  parentID, // Use current parent for nesting
 		Type:      trace.EventToolStart,
 		Name:      toolName,
 		Timestamp: time.Now(),
@@ -219,16 +223,18 @@ func (c *TraceClient) StartTool(toolName string, attrs map[string]string) string
 // EndTool completes a tool span
 func (c *TraceClient) EndTool(spanID string, attrs map[string]string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.traceID == "" || spanID == "" {
+	traceID := c.traceID
+	if traceID == "" || spanID == "" {
+		c.mu.Unlock()
 		return
 	}
+	parentID := c.parentID
+	c.mu.Unlock()
 
 	event := trace.TraceEvent{
-		TraceID:   c.traceID,
+		TraceID:   traceID,
 		SpanID:    spanID,
-		ParentID:  c.parentID,
+		ParentID:  parentID,
 		Type:      trace.EventToolEnd,
 		Name:      "tool-end",
 		Timestamp: time.Now(),
