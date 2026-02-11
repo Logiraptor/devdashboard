@@ -1,6 +1,7 @@
 package ralph
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,58 @@ func TestTUIModel_HandleIterationEnd_FailureTracking(t *testing.T) {
 	}
 	if m.lastFailure.ExitCode != 1 {
 		t.Errorf("ExitCode = %d, want 1", m.lastFailure.ExitCode)
+	}
+}
+
+func TestTUIModel_HandleIterationEnd_StderrFallback(t *testing.T) {
+	cfg := LoopConfig{WorkDir: "/tmp/test"}
+	model := NewTUIModel(cfg)
+
+	// Send a failure with Stderr but no ErrorMessage
+	msg := IterationEndMsg{
+		BeadID:   "bead-stderr",
+		Outcome:  OutcomeFailure,
+		Duration: 15 * time.Second,
+		ExitCode: 1,
+		Stderr:   "panic: runtime error: invalid memory address\ngoroutine 1 [running]:\nmain.main()\n\t/app/main.go:42 +0x123",
+	}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*TUIModel)
+	if m.lastFailure == nil {
+		t.Fatal("lastFailure should be set")
+	}
+	if m.lastFailure.Stderr == "" {
+		t.Error("Stderr should be preserved")
+	}
+
+	// Verify View includes stderr (shows last 3 lines)
+	view := m.View()
+	if !strings.Contains(view, "Stderr:") {
+		t.Errorf("View should contain 'Stderr:' when ErrorMessage is empty, got: %s", view)
+	}
+	if !strings.Contains(view, "main.main()") {
+		t.Errorf("View should contain stderr content (last 3 lines), got: %s", view)
+	}
+}
+
+func TestTUIModel_HandleIterationEnd_NoErrorInfo(t *testing.T) {
+	cfg := LoopConfig{WorkDir: "/tmp/test"}
+	model := NewTUIModel(cfg)
+
+	// Send a failure with no error info at all
+	msg := IterationEndMsg{
+		BeadID:   "bead-empty",
+		Outcome:  OutcomeFailure,
+		Duration: 10 * time.Second,
+		ExitCode: 1,
+	}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*TUIModel)
+	view := m.View()
+	if !strings.Contains(view, "No error details available") {
+		t.Errorf("View should show 'No error details available' when no error info, got: %s", view)
 	}
 }
 

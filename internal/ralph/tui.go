@@ -60,6 +60,7 @@ type IterationEndMsg struct {
 	ChatID       string // Chat session ID from the agent (for debugging failures)
 	ErrorMessage string // Error message from the agent, if any
 	ExitCode     int    // Agent process exit code
+	Stderr       string // Stderr output from the agent (for debugging when ErrorMessage is empty)
 }
 
 type ToolCallStartMsg struct {
@@ -321,6 +322,27 @@ func (m *TUIModel) View() string {
 				errMsg = errMsg[:97] + "..."
 			}
 			b.WriteString(fmt.Sprintf("  Error: %s\n", m.styles.Error.Render(errMsg)))
+		} else if m.lastFailure.Stderr != "" {
+			// Show stderr as fallback when no structured error message
+			stderrLines := strings.Split(strings.TrimSpace(m.lastFailure.Stderr), "\n")
+			// Show last 3 lines of stderr (most likely to be relevant)
+			start := len(stderrLines) - 3
+			if start < 0 {
+				start = 0
+			}
+			b.WriteString("  Stderr:\n")
+			for _, line := range stderrLines[start:] {
+				if line = strings.TrimSpace(line); line != "" {
+					// Truncate long lines
+					if len(line) > 100 {
+						line = line[:97] + "..."
+					}
+					b.WriteString(fmt.Sprintf("    %s\n", m.styles.Error.Render(line)))
+				}
+			}
+		} else {
+			// No error info at all
+			b.WriteString(fmt.Sprintf("  %s\n", m.styles.Muted.Render("No error details available")))
 		}
 	}
 
@@ -508,6 +530,7 @@ func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitte
 				ChatID:       result.ChatID,
 				ErrorMessage: result.ErrorMessage,
 				ExitCode:     result.ExitCode,
+				Stderr:       result.Stderr,
 			})
 		}
 	}
@@ -754,6 +777,7 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 					ChatID:       result.ChatID,
 					ErrorMessage: result.ErrorMessage,
 					ExitCode:     result.ExitCode,
+					Stderr:       result.Stderr,
 				})
 			}
 
