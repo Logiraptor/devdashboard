@@ -32,6 +32,9 @@ type TUIModel struct {
 	ctx          context.Context // Context for cancellation
 	cancel       context.CancelFunc // Cancel function
 	loopStartTime time.Time // When the loop started
+
+	// Failure tracking for display
+	lastFailure *IterationEndMsg // Last failed iteration for display
 }
 
 // Compile-time interface compliance check
@@ -50,9 +53,12 @@ type IterationStartMsg struct {
 }
 
 type IterationEndMsg struct {
-	BeadID   string
-	Outcome  Outcome
-	Duration time.Duration
+	BeadID       string
+	Outcome      Outcome
+	Duration     time.Duration
+	ChatID       string // Chat session ID from the agent (for debugging failures)
+	ErrorMessage string // Error message from the agent, if any
+	ExitCode     int    // Agent process exit code
 }
 
 type ToolCallStartMsg struct {
@@ -189,8 +195,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.summary.Succeeded++
 		case OutcomeFailure:
 			m.summary.Failed++
+			// Track last failure for display
+			msgCopy := msg
+			m.lastFailure = &msgCopy
 		case OutcomeTimeout:
 			m.summary.TimedOut++
+			// Track timeouts as failures too
+			msgCopy := msg
+			m.lastFailure = &msgCopy
 		case OutcomeQuestion:
 			m.summary.Questions++
 		}
@@ -279,6 +291,37 @@ func (m *TUIModel) View() string {
 	
 	statusLine := strings.Join(statusParts, " | ")
 	b.WriteString(statusLine)
+
+	// Show failure details if there was a failure
+	if m.lastFailure != nil && (m.lastFailure.Outcome == OutcomeFailure || m.lastFailure.Outcome == OutcomeTimeout) {
+		b.WriteString("\n\n")
+		b.WriteString(m.styles.Error.Render("Last Failure:"))
+		b.WriteString("\n")
+		
+		// Bead ID
+		b.WriteString(fmt.Sprintf("  Bead: %s", m.lastFailure.BeadID))
+		
+		// Exit code
+		if m.lastFailure.ExitCode != 0 {
+			b.WriteString(fmt.Sprintf(" (exit code %d)", m.lastFailure.ExitCode))
+		}
+		b.WriteString("\n")
+		
+		// Chat ID - important for debugging
+		if m.lastFailure.ChatID != "" {
+			b.WriteString(fmt.Sprintf("  ChatID: %s\n", m.styles.Muted.Render(m.lastFailure.ChatID)))
+		}
+		
+		// Error message
+		if m.lastFailure.ErrorMessage != "" {
+			errMsg := m.lastFailure.ErrorMessage
+			// Truncate long error messages
+			if len(errMsg) > 100 {
+				errMsg = errMsg[:97] + "..."
+			}
+			b.WriteString(fmt.Sprintf("  Error: %s\n", m.styles.Error.Render(errMsg)))
+		}
+	}
 
 	// Quit hint
 	if m.loopDone {
@@ -428,15 +471,28 @@ func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitte
 			summary.Questions++
 		}
 
-		// End iteration
+		// End iteration with failure details in trace
 		durationMs := time.Since(iterStart).Milliseconds()
-		emitter.EndIteration(spanID, outcome.String(), durationMs)
+		extraAttrs := map[string]string{}
+		if result.ChatID != "" {
+			extraAttrs["chat_id"] = result.ChatID
+		}
+		if result.ErrorMessage != "" {
+			extraAttrs["error"] = result.ErrorMessage
+		}
+		if result.ExitCode != 0 {
+			extraAttrs["exit_code"] = fmt.Sprintf("%d", result.ExitCode)
+		}
+		emitter.EndIterationWithAttrs(spanID, outcome.String(), durationMs, extraAttrs)
 
 		if m.program != nil {
 			m.program.Send(IterationEndMsg{
-				BeadID:   bead.ID,
-				Outcome:  outcome,
-				Duration: time.Since(iterStart),
+				BeadID:       bead.ID,
+				Outcome:      outcome,
+				Duration:     time.Since(iterStart),
+				ChatID:       result.ChatID,
+				ErrorMessage: result.ErrorMessage,
+				ExitCode:     result.ExitCode,
 			})
 		}
 	}
@@ -623,15 +679,28 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 			}
 			summaryMu.Unlock()
 
-			// End iteration
+			// End iteration with failure details in trace
 			durationMs := time.Since(iterStart).Milliseconds()
-			emitter.EndIteration(spanID, outcome.String(), durationMs)
+			extraAttrs := map[string]string{}
+			if result.ChatID != "" {
+				extraAttrs["chat_id"] = result.ChatID
+			}
+			if result.ErrorMessage != "" {
+				extraAttrs["error"] = result.ErrorMessage
+			}
+			if result.ExitCode != 0 {
+				extraAttrs["exit_code"] = fmt.Sprintf("%d", result.ExitCode)
+			}
+			emitter.EndIterationWithAttrs(spanID, outcome.String(), durationMs, extraAttrs)
 
 			if m.program != nil {
 				m.program.Send(IterationEndMsg{
-					BeadID:   bead.ID,
-					Outcome:  outcome,
-					Duration: time.Since(iterStart),
+					BeadID:       bead.ID,
+					Outcome:      outcome,
+					Duration:     time.Since(iterStart),
+					ChatID:       result.ChatID,
+					ErrorMessage: result.ErrorMessage,
+					ExitCode:     result.ExitCode,
 				})
 			}
 

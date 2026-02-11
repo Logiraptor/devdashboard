@@ -82,6 +82,59 @@ func TestTUIModel_HandleIterationEnd_Failure(t *testing.T) {
 	}
 }
 
+func TestTUIModel_HandleIterationEnd_FailureTracking(t *testing.T) {
+	cfg := LoopConfig{WorkDir: "/tmp/test"}
+	model := NewTUIModel(cfg)
+
+	// Send a failure with ChatID and error info
+	msg := IterationEndMsg{
+		BeadID:       "bead-fail",
+		Outcome:      OutcomeFailure,
+		Duration:     20 * time.Second,
+		ChatID:       "chat-123abc",
+		ErrorMessage: "Agent crashed",
+		ExitCode:     1,
+	}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*TUIModel)
+	if m.lastFailure == nil {
+		t.Fatal("lastFailure should be set")
+	}
+	if m.lastFailure.ChatID != "chat-123abc" {
+		t.Errorf("ChatID = %q, want %q", m.lastFailure.ChatID, "chat-123abc")
+	}
+	if m.lastFailure.ErrorMessage != "Agent crashed" {
+		t.Errorf("ErrorMessage = %q, want %q", m.lastFailure.ErrorMessage, "Agent crashed")
+	}
+	if m.lastFailure.ExitCode != 1 {
+		t.Errorf("ExitCode = %d, want 1", m.lastFailure.ExitCode)
+	}
+}
+
+func TestTUIModel_HandleIterationEnd_TimeoutTracking(t *testing.T) {
+	cfg := LoopConfig{WorkDir: "/tmp/test"}
+	model := NewTUIModel(cfg)
+
+	// Timeouts should also be tracked
+	msg := IterationEndMsg{
+		BeadID:   "bead-timeout",
+		Outcome:  OutcomeTimeout,
+		Duration: 10 * time.Minute,
+		ChatID:   "chat-timeout456",
+		ExitCode: -1,
+	}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*TUIModel)
+	if m.lastFailure == nil {
+		t.Fatal("lastFailure should be set for timeout")
+	}
+	if m.lastFailure.ChatID != "chat-timeout456" {
+		t.Errorf("ChatID = %q, want %q", m.lastFailure.ChatID, "chat-timeout456")
+	}
+}
+
 func TestTUIModel_HandleIterationEnd_AllOutcomes(t *testing.T) {
 	cfg := LoopConfig{WorkDir: "/tmp/test"}
 	model := NewTUIModel(cfg)

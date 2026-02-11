@@ -152,7 +152,31 @@ func (v *TraceViewModel) renderIteration(span *trace.Span, prefix string, isLast
 		line += " " + v.styles.Duration.Render(formatDuration(span.Duration))
 	}
 
+	// Show exit code for failures
+	if (outcome == OutcomeFailure || outcome == OutcomeTimeout) {
+		if exitCode, ok := span.Attributes["exit_code"]; ok && exitCode != "" && exitCode != "0" {
+			line += " " + v.styles.Error.Render(fmt.Sprintf("(exit %s)", exitCode))
+		}
+	}
+
 	lines = append(lines, line)
+
+	// Show chat ID for failed iterations (on a separate line)
+	if (outcome == OutcomeFailure || outcome == OutcomeTimeout) {
+		if chatID, ok := span.Attributes["chat_id"]; ok && chatID != "" {
+			childPrefix := prefix
+			if isLast {
+				childPrefix += "   "
+			} else {
+				childPrefix += "│  "
+			}
+			chatLine := fmt.Sprintf("%s  %s %s",
+				childPrefix,
+				v.styles.Muted.Render("ChatID:"),
+				v.styles.Muted.Render(chatID))
+			lines = append(lines, chatLine)
+		}
+	}
 
 	// Render tool children
 	childPrefix := prefix

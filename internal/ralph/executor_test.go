@@ -208,3 +208,94 @@ func TestRunAgent_InvalidWorkDir(t *testing.T) {
 		t.Fatal("expected error for invalid work dir")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// parseAgentResultEvent tests
+// ---------------------------------------------------------------------------
+
+func TestParseAgentResultEvent_ChatID(t *testing.T) {
+	stdout := `{"type":"system","content":"system prompt"}
+{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+{"type":"result","chatId":"chat-abc123","duration_ms":5000}
+`
+	chatID, errMsg := parseAgentResultEvent(stdout)
+	if chatID != "chat-abc123" {
+		t.Errorf("chatID = %q, want %q", chatID, "chat-abc123")
+	}
+	if errMsg != "" {
+		t.Errorf("errorMsg = %q, want empty", errMsg)
+	}
+}
+
+func TestParseAgentResultEvent_ChatIDSnakeCase(t *testing.T) {
+	stdout := `{"type":"result","chat_id":"chat-xyz789","duration_ms":3000}
+`
+	chatID, errMsg := parseAgentResultEvent(stdout)
+	if chatID != "chat-xyz789" {
+		t.Errorf("chatID = %q, want %q", chatID, "chat-xyz789")
+	}
+	if errMsg != "" {
+		t.Errorf("errorMsg = %q, want empty", errMsg)
+	}
+}
+
+func TestParseAgentResultEvent_ErrorString(t *testing.T) {
+	stdout := `{"type":"result","chatId":"chat-err001","error":"Agent crashed unexpectedly"}
+`
+	chatID, errMsg := parseAgentResultEvent(stdout)
+	if chatID != "chat-err001" {
+		t.Errorf("chatID = %q, want %q", chatID, "chat-err001")
+	}
+	if errMsg != "Agent crashed unexpectedly" {
+		t.Errorf("errorMsg = %q, want %q", errMsg, "Agent crashed unexpectedly")
+	}
+}
+
+func TestParseAgentResultEvent_ErrorObject(t *testing.T) {
+	stdout := `{"type":"result","chatId":"chat-err002","error":{"message":"Detailed error message","code":500}}
+`
+	chatID, errMsg := parseAgentResultEvent(stdout)
+	if chatID != "chat-err002" {
+		t.Errorf("chatID = %q, want %q", chatID, "chat-err002")
+	}
+	if errMsg != "Detailed error message" {
+		t.Errorf("errorMsg = %q, want %q", errMsg, "Detailed error message")
+	}
+}
+
+func TestParseAgentResultEvent_NoResult(t *testing.T) {
+	stdout := `{"type":"system","content":"system prompt"}
+{"type":"tool_call","name":"read"}
+`
+	chatID, errMsg := parseAgentResultEvent(stdout)
+	if chatID != "" {
+		t.Errorf("chatID = %q, want empty", chatID)
+	}
+	if errMsg != "" {
+		t.Errorf("errorMsg = %q, want empty", errMsg)
+	}
+}
+
+func TestParseAgentResultEvent_EmptyStdout(t *testing.T) {
+	chatID, errMsg := parseAgentResultEvent("")
+	if chatID != "" {
+		t.Errorf("chatID = %q, want empty", chatID)
+	}
+	if errMsg != "" {
+		t.Errorf("errorMsg = %q, want empty", errMsg)
+	}
+}
+
+func TestParseAgentResultEvent_InvalidJSON(t *testing.T) {
+	stdout := `not json
+{"type":"result","chatId":"chat-123"}
+more garbage`
+	chatID, errMsg := parseAgentResultEvent(stdout)
+	// Should still extract from the valid line
+	if chatID != "chat-123" {
+		t.Errorf("chatID = %q, want %q", chatID, "chat-123")
+	}
+	if errMsg != "" {
+		t.Errorf("errorMsg = %q, want empty", errMsg)
+	}
+}

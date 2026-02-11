@@ -137,6 +137,11 @@ func (e *LocalTraceEmitter) StartIteration(beadID, beadTitle string, iterNum int
 
 // EndIteration completes an iteration span
 func (e *LocalTraceEmitter) EndIteration(spanID string, outcome string, durationMs int64) {
+	e.EndIterationWithAttrs(spanID, outcome, durationMs, nil)
+}
+
+// EndIterationWithAttrs completes an iteration span with additional attributes
+func (e *LocalTraceEmitter) EndIterationWithAttrs(spanID string, outcome string, durationMs int64, extraAttrs map[string]string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -144,17 +149,23 @@ func (e *LocalTraceEmitter) EndIteration(spanID string, outcome string, duration
 		return
 	}
 
+	attrs := map[string]string{
+		"outcome":     outcome,
+		"duration_ms": fmt.Sprintf("%d", durationMs),
+	}
+	// Merge extra attributes
+	for k, v := range extraAttrs {
+		attrs[k] = v
+	}
+
 	event := trace.TraceEvent{
-		TraceID:   e.traceID,
-		SpanID:    spanID,
-		ParentID:  e.loopSpanID, // Iterations are children of the loop span
-		Type:      trace.EventIterationEnd,
-		Name:      "iteration-end",
-		Timestamp: time.Now(),
-		Attributes: map[string]string{
-			"outcome":     outcome,
-			"duration_ms": fmt.Sprintf("%d", durationMs),
-		},
+		TraceID:    e.traceID,
+		SpanID:     spanID,
+		ParentID:   e.loopSpanID, // Iterations are children of the loop span
+		Type:       trace.EventIterationEnd,
+		Name:       "iteration-end",
+		Timestamp:  time.Now(),
+		Attributes: attrs,
 	}
 
 	e.manager.HandleEvent(event)

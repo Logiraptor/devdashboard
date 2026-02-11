@@ -1,12 +1,15 @@
 package ralph
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -22,6 +25,13 @@ type AgentResult struct {
 	Stderr   string
 	Duration time.Duration
 	TimedOut bool // true if the agent was killed due to timeout
+
+	// ChatID is the chat session ID from the agent, extracted from the result event.
+	// Useful for debugging failed runs by finding the chat in Cursor.
+	ChatID string
+
+	// ErrorMessage is the error message from the agent's result event, if any.
+	ErrorMessage string
 }
 
 // CommandFactory builds an *exec.Cmd for the given context, working directory,
@@ -86,13 +96,18 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 		}
 	}
 
-	return &AgentResult{
+	result := &AgentResult{
 		ExitCode: exitCode,
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 		Duration: duration,
 		TimedOut: timedOut,
-	}, nil
+	}
+
+	// Parse chatId and error from the agent's stdout (stream-json format)
+	result.ChatID, result.ErrorMessage = parseAgentResultEvent(stdoutBuf.String())
+
+	return result, nil
 }
 
 // RunAgent spawns an agent process with the given prompt and captures its
@@ -141,4 +156,45 @@ func WithModel(model string) Option {
 // Uses "agent --model claude-4.5-opus-high-thinking --print --force --output-format stream-json".
 func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
 	return runAgentInternal(ctx, workDir, prompt, "claude-4.5-opus-high-thinking", opts...)
+}
+
+// parseAgentResultEvent parses the agent's stdout for the final "result" event
+// and extracts chatId and error message.
+// The agent outputs JSON lines, and the result event has the format:
+// {"type":"result","chatId":"...","error":"...","duration_ms":...}
+func parseAgentResultEvent(stdout string) (chatID, errorMsg string) {
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		eventType, _ := event["type"].(string)
+		if eventType != "result" {
+			continue
+		}
+
+		// Extract chatId - may be at top level or nested
+		if id, ok := event["chatId"].(string); ok {
+			chatID = id
+		} else if id, ok := event["chat_id"].(string); ok {
+			chatID = id
+		}
+
+		// Extract error message
+		if errStr, ok := event["error"].(string); ok && errStr != "" {
+			errorMsg = errStr
+		} else if errObj, ok := event["error"].(map[string]interface{}); ok {
+			if msg, ok := errObj["message"].(string); ok {
+				errorMsg = msg
+			}
+		}
+	}
+	return chatID, errorMsg
 }
