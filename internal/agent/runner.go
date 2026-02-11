@@ -20,6 +20,9 @@ type Runner interface {
 // Emits a stream of events over ~2 seconds to simulate live agent output.
 type StubRunner struct{}
 
+// Compile-time interface compliance check
+var _ Runner = (*StubRunner)(nil)
+
 // Run implements Runner. Emits fake progress events as tea.Msg.
 // Phase 6 will consume these for live display.
 // Respects ctx cancellation: when ctx is done, emits StatusAborted and stops.

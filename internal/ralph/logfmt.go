@@ -44,6 +44,9 @@ type LogFormatter struct {
 	lastError    string
 }
 
+// Compile-time interface compliance check
+var _ io.Writer = (*LogFormatter)(nil)
+
 // FileChange tracks changes to a file.
 type FileChange struct {
 	Path         string

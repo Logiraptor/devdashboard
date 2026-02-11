@@ -34,6 +34,9 @@ type TUIModel struct {
 	loopStartTime time.Time // When the loop started
 }
 
+// Compile-time interface compliance check
+var _ tea.Model = (*TUIModel)(nil)
+
 // Message types for loop communication
 type LoopStartedMsg struct {
 	TraceID string
