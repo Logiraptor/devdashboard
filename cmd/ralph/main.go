@@ -120,6 +120,9 @@ func run(cfg config) (ralph.StopReason, error) {
 
 	// Normal mode: use TUI
 	model := ralph.NewTUIModel(loopCfg)
+	
+	// Pass context for cancellation
+	model.SetContext(ctx, stop)
 
 	// Create program
 	p := tea.NewProgram(model, tea.WithAltScreen())

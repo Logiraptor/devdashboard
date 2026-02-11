@@ -25,6 +25,11 @@ type TUIModel struct {
 	height       int
 	program      *tea.Program // Set after tea.NewProgram() for sending messages
 	loopStartedFlag bool // Track if loop has been started
+	currentIter  int    // Current iteration number (1-indexed)
+	maxIter      int    // Maximum iterations
+	ctx          context.Context // Context for cancellation
+	cancel       context.CancelFunc // Cancel function
+	loopStartTime time.Time // When the loop started
 }
 
 // Message types for loop communication
@@ -65,6 +70,8 @@ type LoopErrorMsg struct {
 	Err error
 }
 
+type DurationTickMsg struct{}
+
 // NewTUIModel creates a new TUI model with the given config
 func NewTUIModel(cfg LoopConfig) *TUIModel {
 	styles := DefaultStyles()
@@ -74,6 +81,7 @@ func NewTUIModel(cfg LoopConfig) *TUIModel {
 		traceEmitter: NewLocalTraceEmitter(),
 		styles:       styles,
 		summary:      &RunSummary{},
+		maxIter:      cfg.MaxIterations,
 	}
 }
 
@@ -100,10 +108,17 @@ func (m *TUIModel) SetProgram(p *tea.Program) {
 	// Start the loop now that we have the program reference
 	if !m.loopStartedFlag {
 		m.loopStartedFlag = true
+		m.loopStartTime = time.Now()
 		go func() {
 			m.runLoopWithMessages()
 		}()
 	}
+}
+
+// SetContext sets the context for cancellation
+func (m *TUIModel) SetContext(ctx context.Context, cancel context.CancelFunc) {
+	m.ctx = ctx
+	m.cancel = cancel
 }
 
 // Init implements tea.Model
@@ -120,7 +135,17 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
+			// Cancel context if set
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, tea.Quit
+		case "ctrl+c":
+			// Cancel context if set
+			if m.cancel != nil {
+				m.cancel()
+			}
 			return m, tea.Quit
 		case "j", "down":
 			cmds = append(cmds, m.traceView.Update(msg))
@@ -131,10 +156,10 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Reserve space for header/footer
+		// Reserve space for header/footer (header + status bar + quit hint)
 		traceHeight := msg.Height - 4
-		if traceHeight < 10 {
-			traceHeight = 10
+		if traceHeight < 5 {
+			traceHeight = 5 // Minimum height for very small terminals
 		}
 		m.traceView.SetSize(msg.Width, traceHeight)
 
@@ -149,6 +174,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the loop will send messages directly via program.Send
 
 	case IterationStartMsg:
+		m.currentIter = msg.IterNum
 		m.status = fmt.Sprintf("Working on %s: %s", msg.BeadID, msg.BeadTitle)
 
 	case IterationEndMsg:
@@ -168,11 +194,22 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LoopEndMsg:
 		m.loopDone = true
 		m.summary = msg.Summary
-		m.status = fmt.Sprintf("Complete: %s", msg.StopReason)
+		if msg.StopReason == StopNormal && m.summary.Iterations == 0 {
+			m.status = "No beads available"
+		} else {
+			m.status = fmt.Sprintf("Complete: %s", msg.StopReason)
+		}
 
 	case LoopErrorMsg:
 		m.err = msg.Err
 		return m, tea.Quit
+
+	case DurationTickMsg:
+		// Update duration display (already updated by ticker goroutine)
+		// This message just triggers a re-render
+		if m.loopStarted && !m.loopDone {
+			return m, nil
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -199,12 +236,42 @@ func (m *TUIModel) View() string {
 	b.WriteString("\n")
 
 	// Status bar
-	statusLine := m.styles.Status.Render(m.status)
-	if m.summary.Iterations > 0 {
-		stats := fmt.Sprintf(" | %d done, %d failed",
-			m.summary.Succeeded, m.summary.Failed)
-		statusLine += m.styles.Muted.Render(stats)
+	var statusParts []string
+	
+	// Show running/completed status
+	if m.loopDone {
+		statusParts = append(statusParts, m.styles.Success.Render("✓ Completed"))
+	} else if m.loopStarted {
+		statusParts = append(statusParts, m.styles.Status.Render("● Running"))
+	} else {
+		statusParts = append(statusParts, m.styles.Muted.Render("Waiting..."))
 	}
+	
+	// Show iteration count if loop has started
+	if m.loopStarted && m.maxIter > 0 {
+		iterInfo := fmt.Sprintf("[%d/%d]", m.currentIter, m.maxIter)
+		statusParts = append(statusParts, m.styles.Muted.Render(iterInfo))
+	}
+	
+	// Show current status message
+	if m.status != "" {
+		statusParts = append(statusParts, m.styles.Status.Render(m.status))
+	}
+	
+	// Show summary stats if we have iterations
+	if m.summary.Iterations > 0 {
+		stats := fmt.Sprintf("%d done, %d failed",
+			m.summary.Succeeded, m.summary.Failed)
+		statusParts = append(statusParts, m.styles.Muted.Render(stats))
+	}
+	
+	// Show duration if loop is running or done
+	if m.loopStarted && m.summary.Duration > 0 {
+		durationStr := formatDuration(m.summary.Duration)
+		statusParts = append(statusParts, m.styles.Muted.Render(durationStr))
+	}
+	
+	statusLine := strings.Join(statusParts, " | ")
 	b.WriteString(statusLine)
 
 	// Quit hint
@@ -220,7 +287,12 @@ func (m *TUIModel) View() string {
 // runLoopWithMessages executes the loop and sends messages via program.Send()
 func (m *TUIModel) runLoopWithMessages() {
 	cfg := m.config
-	ctx := context.Background()
+	
+	// Use provided context or create a new one
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	// Apply wall-clock timeout
 	wallTimeout := cfg.Timeout
@@ -229,6 +301,24 @@ func (m *TUIModel) runLoopWithMessages() {
 	}
 	ctx, cancel := context.WithTimeout(ctx, wallTimeout)
 	defer cancel()
+	
+	// Start a ticker to update duration in real-time
+	durationTicker := time.NewTicker(1 * time.Second)
+	defer durationTicker.Stop()
+	
+	go func() {
+		for {
+			select {
+			case <-durationTicker.C:
+				if m.loopStarted && !m.loopDone && m.program != nil {
+					m.summary.Duration = time.Since(m.loopStartTime)
+					m.program.Send(DurationTickMsg{})
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Start loop trace
 	emitter := m.traceEmitter
@@ -269,6 +359,12 @@ func (m *TUIModel) runLoopWithMessages() {
 		}
 		if bead == nil {
 			summary.StopReason = StopNormal
+			if m.program != nil {
+				m.program.Send(LoopEndMsg{
+					Summary:    summary,
+					StopReason: StopNormal,
+				})
+			}
 			break
 		}
 
