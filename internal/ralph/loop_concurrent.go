@@ -159,7 +159,7 @@ func pickAndValidateBead(setup *concurrentLoopSetup, cfg LoopConfig) (*beads.Bea
 }
 
 // executeAgentInWorktree creates worktree, fetches prompt, renders it, and executes agent.
-func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurrentLoopSetup, workerID int, bead *beads.Bead, worktreePath, branchName string) (*AgentResult, error) {
+func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurrentLoopSetup, workerID int, bead *beads.Bead, worktreePath string) (*AgentResult, error) {
 	// Fetch prompt data (beads state is shared, so use original workdir)
 	promptData, fetchErr := setup.fetchPrompt(bead.ID)
 	if fetchErr != nil {
@@ -271,7 +271,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			}
 
 			// Create worktree for this bead
-			worktreePath, branchName, createErr := setup.wtMgr.CreateWorktree(bead.ID)
+			worktreePath, _, createErr := setup.wtMgr.CreateWorktree(bead.ID)
 			if createErr != nil {
 				setup.mu.Lock()
 				writef(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, createErr)
@@ -279,7 +279,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 				continue
 			}
 			defer func() {
-				if removeErr := setup.wtMgr.RemoveWorktree(worktreePath, branchName); removeErr != nil {
+				if removeErr := setup.wtMgr.RemoveWorktree(worktreePath); removeErr != nil {
 					setup.mu.Lock()
 					writef(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, removeErr)
 					setup.mu.Unlock()
@@ -287,7 +287,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			}()
 
 			// Execute agent in worktree
-			result, executeErr := executeAgentInWorktree(ctx, cfg, setup, workerID, bead, worktreePath, branchName)
+			result, executeErr := executeAgentInWorktree(ctx, cfg, setup, workerID, bead, worktreePath)
 			if executeErr != nil {
 				continue
 			}

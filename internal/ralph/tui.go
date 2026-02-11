@@ -540,7 +540,7 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 			}
 
 			// Create worktree for this bead
-			worktreePath, branchName, err := wtMgr.CreateWorktree(bead.ID)
+			worktreePath, _, err := wtMgr.CreateWorktree(bead.ID)
 			if err != nil {
 				summaryMu.Lock()
 				summary.Failed++
@@ -549,7 +549,7 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 				return
 			}
 			defer func() {
-				if err := wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
+				if err := wtMgr.RemoveWorktree(worktreePath); err != nil {
 					// Best effort cleanup, don't fail on error
 				}
 			}()

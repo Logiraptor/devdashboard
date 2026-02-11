@@ -146,7 +146,7 @@ func (w *WaveOrchestrator) fetchReadyBeads() ([]beads.Bead, error) {
 // executeBead executes a single bead in its own worktree.
 func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	// Create worktree for this bead
-	worktreePath, branchName, err := w.setup.wtMgr.CreateWorktree(bead.ID)
+	worktreePath, _, err := w.setup.wtMgr.CreateWorktree(bead.ID)
 	if err != nil {
 		w.setup.mu.Lock()
 		writef(w.setup.out, "[wave] failed to create worktree for %s: %v\n", bead.ID, err)
@@ -154,7 +154,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		return
 	}
 	defer func() {
-		if err := w.setup.wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
+		if err := w.setup.wtMgr.RemoveWorktree(worktreePath); err != nil {
 			w.setup.mu.Lock()
 			writef(w.setup.out, "[wave] warning: failed to remove worktree %s: %v\n", worktreePath, err)
 			w.setup.mu.Unlock()
