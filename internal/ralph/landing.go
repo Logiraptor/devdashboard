@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"devdeploy/internal/beads"
 )
 
 // LandingStatus represents the landing state after an agent iteration.
@@ -43,11 +45,38 @@ func CheckLanding(workDir string, beadID string, beforeCommitHash string) (*Land
 	status.CommitHashAfter = strings.TrimSpace(string(out))
 	status.HasNewCommit = status.CommitHashAfter != "" && status.CommitHashAfter != beforeCommitHash
 
-	// Check if bead is closed (reuse Assess logic)
-	assessOutcome, _ := Assess(workDir, beadID, &AgentResult{ExitCode: 0}, nil)
-	status.BeadClosed = assessOutcome == OutcomeSuccess
+	// Check if bead is closed
+	closed, err := IsBeadClosed(workDir, beadID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("checking bead status: %w", err)
+	}
+	status.BeadClosed = closed
 
 	return status, nil
+}
+
+// IsBeadClosed checks if a bead is closed by querying bd.
+// If bdShow is nil, the real bd command is used.
+func IsBeadClosed(workDir, beadID string, bdShow BDShowFunc) (bool, error) {
+	if bdShow == nil {
+		bdShow = func(dir, id string) ([]byte, error) {
+			cmd := exec.Command("bd", "show", id, "--json")
+			cmd.Dir = dir
+			return cmd.Output()
+		}
+	}
+
+	out, err := bdShow(workDir, beadID)
+	if err != nil {
+		return false, err
+	}
+
+	entry, err := parseBDShow(out)
+	if err != nil {
+		return false, err
+	}
+
+	return entry.Status == beads.StatusClosed, nil
 }
 
 // FormatLandingStatus returns a human-readable summary of landing status.
