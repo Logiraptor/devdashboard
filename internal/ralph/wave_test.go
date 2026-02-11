@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -381,28 +383,27 @@ func TestWaveOrchestrator_Run(t *testing.T) {
 			// For testing Run, we need to mock the bd commands at a lower level
 			// Since we can't override fetchReadyBeads, we'll test with real bd or skip
 			// In a real scenario, we'd inject a mock BDRunner, but that requires
-			// refactoring the code to accept it. For now, we test the logic that doesn't
-			// require bd (dry-run, empty beads, etc.)
-			if tt.name == "dry run" || tt.name == "empty ready beads" {
-				// These don't require actual bd execution
-				ctx := context.Background()
-				summary, err := wo.Run(ctx)
+			// refactoring the code to accept it.
+			ctx := context.Background()
+			summary, err := wo.Run(ctx)
 
-				if (err != nil) != tt.wantErr {
-					t.Errorf("Run() error = %v, wantErr %v", err, tt.wantErr)
-					return
+			// All Run tests require bd because fetchReadyBeads() always runs
+			if err != nil && strings.Contains(err.Error(), "bd ready") {
+				t.Skip("bd command not available, skipping WaveOrchestrator.Run() test")
+				return
+			}
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Run() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if summary != nil {
+				if summary.Iterations != tt.wantIterations {
+					t.Errorf("Run() summary.Iterations = %d, want %d", summary.Iterations, tt.wantIterations)
 				}
-				if summary != nil {
-					if summary.Iterations != tt.wantIterations {
-						t.Errorf("Run() summary.Iterations = %d, want %d", summary.Iterations, tt.wantIterations)
-					}
-					if summary.Succeeded != tt.wantSucceeded {
-						t.Errorf("Run() summary.Succeeded = %d, want %d", summary.Succeeded, tt.wantSucceeded)
-					}
+				if summary.Succeeded != tt.wantSucceeded {
+					t.Errorf("Run() summary.Succeeded = %d, want %d", summary.Succeeded, tt.wantSucceeded)
 				}
-			} else {
-				// For tests that require bd, skip if not available
-				t.Skip("Test requires bd command or refactored code to inject mocks")
 			}
 		})
 	}
@@ -553,6 +554,10 @@ func TestWaveOrchestrator_executeBead(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewWaveOrchestrator() error = %v", err)
 			}
+
+			// Clean up any leftover worktree directory from previous test runs
+			worktreePath := filepath.Join(os.TempDir(), fmt.Sprintf("ralph-%s", tt.bead.ID))
+			os.RemoveAll(worktreePath)
 
 			ctx := context.Background()
 			wo.executeBead(ctx, tt.bead)

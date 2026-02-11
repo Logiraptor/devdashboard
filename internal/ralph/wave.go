@@ -180,15 +180,18 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	}
 
 	// Execute agent in worktree
-	agentExecute := func(ctx context.Context, prompt string) (*AgentResult, error) {
+	// If cfg.Execute is provided (typically for testing), use it directly
+	// Otherwise, run the agent in the worktree path
+	var result *AgentResult
+	if w.cfg.Execute != nil {
+		result, err = w.cfg.Execute(ctx, prompt)
+	} else {
 		var opts []Option
 		if w.cfg.AgentTimeout > 0 {
 			opts = append(opts, WithTimeout(w.cfg.AgentTimeout))
 		}
-		return RunAgent(ctx, worktreePath, prompt, opts...)
+		result, err = RunAgent(ctx, worktreePath, prompt, opts...)
 	}
-
-	result, err := agentExecute(ctx, prompt)
 	if err != nil {
 		w.setup.mu.Lock()
 		writef(w.setup.out, "[wave] failed to run agent for %s: %v\n", bead.ID, err)

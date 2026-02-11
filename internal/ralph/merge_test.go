@@ -464,18 +464,29 @@ func TestCreateQuestionBeadForMergeConflict(t *testing.T) {
 			t.Fatalf("checkout main failed: %v", err)
 		}
 
-		// Attempt merge
-		mergeCmd := exec.Command("git", "-C", repoPath, "merge", "feature1", "--no-edit")
-		mergeCmd.Run() // Expect conflicts
+		// First merge feature1 into main - this should succeed
+		firstMergeCmd := exec.Command("git", "-C", repoPath, "merge", "feature1", "--no-edit")
+		if err := firstMergeCmd.Run(); err != nil {
+			t.Fatalf("first merge (feature1 into main) should succeed: %v", err)
+		}
+
+		// Now attempt to merge feature2 - this should conflict since both feature1
+		// and feature2 modified test.txt differently
+		secondMergeCmd := exec.Command("git", "-C", repoPath, "merge", "feature2", "--no-edit")
+		secondMergeCmd.Run() // Expect conflicts, ignore error
 
 		// Verify conflicts exist
 		if !hasMergeConflicts(repoPath) {
 			t.Fatal("expected conflicts but hasMergeConflicts() returned false")
 		}
 
+		// Abort the merge to clean up
+		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		abortCmd.Run() // Best effort
+
 		// Test that MergeBranches detects conflicts and would create question bead
 		// (we can't easily test the actual bead creation without mocking bd)
-		err := MergeBranches(repoPath, "main", "feature1", false, "test-bead-1")
+		err := MergeBranches(repoPath, "main", "feature2", false, "test-bead-1")
 		if err == nil {
 			t.Error("MergeBranches() expected error for conflicts, got nil")
 		}
