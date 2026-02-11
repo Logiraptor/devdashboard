@@ -115,11 +115,6 @@ func run(cfg config) (ralph.StopReason, error) {
 		maxIterations = 1
 	}
 
-	// Epic mode requires sequential processing (maxParallel=1)
-	if cfg.epic != "" && cfg.maxParallel > 1 {
-		return ralph.StopNormal, fmt.Errorf("--epic requires --max-parallel=1 or --sequential (epic mode processes tasks sequentially)")
-	}
-
 	loopCfg := ralph.LoopConfig{
 		WorkDir:                 cfg.workdir,
 		Epic:                    cfg.epic,

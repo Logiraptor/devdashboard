@@ -496,9 +496,19 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
 	selectedBead := a.Detail.SelectedBead()
 	cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
+	
+	// Determine if we're in epic mode (epics benefit from parallel processing)
+	isEpicMode := selectedBead != nil && selectedBead.IssueType == "epic"
+	
+	// Add --max-parallel for concurrency on epics (default 3)
+	// Single beads run sequentially (default maxParallel=1) to avoid conflicts
+	if isEpicMode {
+		cmd += " --max-parallel 3"
+	}
+	
 	if selectedBead != nil {
 		escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
-		// If selected bead is an epic, use --epic flag for sequential leaf processing
+		// If selected bead is an epic, use --epic flag for parallel leaf processing
 		if selectedBead.IssueType == "epic" {
 			cmd += fmt.Sprintf(" --epic '%s'", escapedBead)
 		} else {
