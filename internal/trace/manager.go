@@ -56,8 +56,8 @@ func NewManager(maxTraces int) *Manager {
 }
 
 // HandleEvent processes an incoming trace event
-// - For *_start events: stores in pendingSpans
-// - For *_end events: finds matching start, computes duration, creates Span
+// - For *_start events: creates span immediately with Duration=0 (in-progress)
+// - For *_end events: finds matching span and updates Duration
 // Returns the affected Trace (for UI updates)
 func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 	m.mu.Lock()
@@ -66,32 +66,91 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 	traceID := event.TraceID
 	trace, exists := m.traces[traceID]
 
-	// Handle start events
+	// Handle start events - create span immediately for live viewing
 	if event.Type == EventLoopStart || event.Type == EventIterationStart || event.Type == EventToolStart {
-		// Store start event in pendingSpans
+		// Store start event in pendingSpans (for duration calculation later)
 		m.pendingSpans[event.SpanID] = &event
 
-		// If loop_start, create new trace
+		// Create span immediately with Duration=0 (indicates in-progress)
+		span := &Span{
+			TraceID:    event.TraceID,
+			SpanID:     event.SpanID,
+			ParentID:   event.ParentID,
+			Name:       event.Name,
+			StartTime:  event.Timestamp,
+			Duration:   0, // In-progress
+			Attributes: make(map[string]string),
+			Children:   make([]*Span, 0),
+		}
+		if event.Attributes != nil {
+			for k, v := range event.Attributes {
+				span.Attributes[k] = v
+			}
+		}
+
+		// If loop_start, create/update trace and set as RootSpan
 		if event.Type == EventLoopStart {
 			if exists {
 				// Trace already exists, update it
 				trace.StartTime = event.Timestamp
 				trace.Status = "running"
+				trace.RootSpan = span
 			} else {
-				// Create new trace
+				// Create new trace with RootSpan
 				trace = &Trace{
 					ID:        traceID,
 					StartTime: event.Timestamp,
 					Status:    "running",
+					RootSpan:  span,
 				}
 				m.traces[traceID] = trace
 				m.addToRecentIDs(traceID)
 			}
+			// Attach any orphaned children waiting for the loop span
+			m.attachOrphanedChildren(span)
+			m.callOnChange()
+			return trace
 		}
+
+		// For iteration/tool start, attach to parent
+		if trace == nil {
+			// Trace doesn't exist yet, create it
+			trace = &Trace{
+				ID:        traceID,
+				StartTime: event.Timestamp,
+				Status:    "running",
+			}
+			m.traces[traceID] = trace
+			m.addToRecentIDs(traceID)
+		}
+
+		// Find parent and attach
+		if event.ParentID != "" {
+			if trace.RootSpan != nil {
+				parent := m.findSpanByID(trace.RootSpan, event.ParentID)
+				if parent != nil {
+					parent.Children = append(parent.Children, span)
+				} else {
+					// Parent not found yet, store as orphaned
+					m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
+				}
+			} else {
+				// RootSpan doesn't exist yet, store as orphaned
+				m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
+			}
+		} else {
+			// No ParentID - this is a root-level span
+			if trace.RootSpan == nil {
+				trace.RootSpan = span
+				m.attachOrphanedChildren(span)
+			}
+		}
+
+		m.callOnChange()
 		return trace
 	}
 
-	// Handle end events
+	// Handle end events - find existing span and update Duration
 	if event.Type == EventLoopEnd || event.Type == EventIterationEnd || event.Type == EventToolEnd {
 		// Find matching start event
 		startEvent, found := m.pendingSpans[event.SpanID]
@@ -103,42 +162,34 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 		// Compute duration
 		duration := event.Timestamp.Sub(startEvent.Timestamp)
 
-		// Create span
-		span := &Span{
-			TraceID:    event.TraceID,
-			SpanID:     event.SpanID,
-			ParentID:   event.ParentID,
-			Name:       event.Name,
-			StartTime:  startEvent.Timestamp,
-			Duration:   duration,
-			Attributes: make(map[string]string),
-			Children:   make([]*Span, 0),
-		}
-
-		// Copy attributes from both start and end events
-		if startEvent.Attributes != nil {
-			for k, v := range startEvent.Attributes {
-				span.Attributes[k] = v
-			}
-		}
-		if event.Attributes != nil {
-			for k, v := range event.Attributes {
-				span.Attributes[k] = v
-			}
-		}
-
 		// Remove from pending
 		delete(m.pendingSpans, event.SpanID)
+
+		// Find the existing span in the tree and update it
+		if trace != nil && trace.RootSpan != nil {
+			var span *Span
+			if trace.RootSpan.SpanID == event.SpanID {
+				span = trace.RootSpan
+			} else {
+				span = m.findSpanByID(trace.RootSpan, event.SpanID)
+			}
+
+			if span != nil {
+				// Update span with duration and end event attributes
+				span.Duration = duration
+				if event.Attributes != nil {
+					for k, v := range event.Attributes {
+						span.Attributes[k] = v
+					}
+				}
+			}
+		}
 
 		// Handle loop_end
 		if event.Type == EventLoopEnd {
 			if trace != nil {
 				trace.EndTime = event.Timestamp
 				trace.Status = "completed"
-				// Root span is the loop span
-				trace.RootSpan = span
-				// Attach any orphaned children waiting for this loop span
-				m.attachOrphanedChildren(span)
 				// Export to OTLP if exporter is configured
 				if m.exporter != nil {
 					go m.exporter.ExportTrace(context.Background(), trace)
@@ -146,39 +197,6 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 			}
 			m.callOnChange()
 			return trace
-		}
-
-		// Attach to parent span's Children slice
-		if trace == nil {
-			// Trace doesn't exist yet, create it
-			trace = &Trace{
-				ID:        traceID,
-				StartTime: startEvent.Timestamp,
-				Status:    "running",
-			}
-			m.traces[traceID] = trace
-			m.addToRecentIDs(traceID)
-		}
-
-		// Find parent span and attach this span as a child
-		if event.ParentID == "" {
-			// This is a root-level span (should only happen for loop_start/loop_end)
-			if trace.RootSpan == nil {
-				trace.RootSpan = span
-				// Attach any orphaned children waiting for this root span
-				m.attachOrphanedChildren(span)
-			}
-		} else {
-			// Find parent in the trace tree
-			parent := m.findSpanByID(trace.RootSpan, event.ParentID)
-			if parent != nil {
-				parent.Children = append(parent.Children, span)
-				// Attach any orphaned children waiting for this parent
-				m.attachOrphanedChildren(span)
-			} else {
-				// Parent not found yet (might be pending), store as orphaned
-				m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
-			}
 		}
 
 		m.callOnChange()

@@ -12,11 +12,12 @@ import (
 // LocalTraceEmitter emits trace events as Bubble Tea messages
 // instead of HTTP requests. It maintains local trace state.
 type LocalTraceEmitter struct {
-	manager  *trace.Manager
-	program  *tea.Program // Set after TUI starts
-	mu       sync.Mutex
-	traceID  string
-	parentID string // Current parent span ID for nesting
+	manager    *trace.Manager
+	program    *tea.Program // Set after TUI starts
+	mu         sync.Mutex
+	traceID    string
+	loopSpanID string // SpanID of the loop span (for EndLoop and iteration ParentID)
+	parentID   string // Current parent span ID for nesting (iteration spanID for tools)
 }
 
 // NewLocalTraceEmitter creates a new local trace emitter
@@ -50,12 +51,14 @@ func (e *LocalTraceEmitter) StartLoop(model, epic, workdir string, maxIterations
 	defer e.mu.Unlock()
 
 	traceID := trace.NewTraceID()
+	loopSpanID := trace.NewSpanID()
 	e.traceID = traceID
+	e.loopSpanID = loopSpanID
 	e.parentID = ""
 
 	event := trace.TraceEvent{
 		TraceID:   traceID,
-		SpanID:    trace.NewSpanID(),
+		SpanID:    loopSpanID,
 		Type:      trace.EventLoopStart,
 		Name:      "ralph-loop",
 		Timestamp: time.Now(),
@@ -77,15 +80,15 @@ func (e *LocalTraceEmitter) EndLoop(stopReason string, iterations, succeeded, fa
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.traceID == "" {
+	if e.traceID == "" || e.loopSpanID == "" {
 		return
 	}
 
 	event := trace.TraceEvent{
 		TraceID:   e.traceID,
-		SpanID:    trace.NewSpanID(),
+		SpanID:    e.loopSpanID, // Use the same SpanID from StartLoop
 		Type:      trace.EventLoopEnd,
-		Name:      "ralph-loop-end",
+		Name:      "ralph-loop",
 		Timestamp: time.Now(),
 		Attributes: map[string]string{
 			"stop_reason": stopReason,
@@ -98,6 +101,7 @@ func (e *LocalTraceEmitter) EndLoop(stopReason string, iterations, succeeded, fa
 	e.manager.HandleEvent(event)
 	e.sendUpdate()
 	e.traceID = ""
+	e.loopSpanID = ""
 }
 
 // StartIteration begins an iteration span
@@ -115,6 +119,7 @@ func (e *LocalTraceEmitter) StartIteration(beadID, beadTitle string, iterNum int
 	event := trace.TraceEvent{
 		TraceID:   e.traceID,
 		SpanID:    spanID,
+		ParentID:  e.loopSpanID, // Iterations are children of the loop span
 		Type:      trace.EventIterationStart,
 		Name:      fmt.Sprintf("iteration-%d", iterNum),
 		Timestamp: time.Now(),
@@ -142,6 +147,7 @@ func (e *LocalTraceEmitter) EndIteration(spanID string, outcome string, duration
 	event := trace.TraceEvent{
 		TraceID:   e.traceID,
 		SpanID:    spanID,
+		ParentID:  e.loopSpanID, // Iterations are children of the loop span
 		Type:      trace.EventIterationEnd,
 		Name:      "iteration-end",
 		Timestamp: time.Now(),
