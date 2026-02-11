@@ -3,11 +3,11 @@ package ralph
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"sync"
 	"time"
 
+	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
 )
 
@@ -23,14 +23,7 @@ type bdReadyEntry struct {
 
 // BDRunner is the function signature for executing bd commands.
 // Accepts a working directory and arguments, returns raw output.
-type BDRunner func(dir string, args ...string) ([]byte, error)
-
-// runBDReal executes a real bd command.
-func runBDReal(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = dir
-	return cmd.Output()
-}
+type BDRunner = bd.Runner
 
 // BeadScorer is a function that sorts beads by their score.
 // Lower scores indicate higher priority (beads are sorted ascending).
@@ -44,7 +37,7 @@ type BeadPicker struct {
 	Epic    string
 
 	// RunBD is the function used to execute bd commands.
-	// Defaults to runBDReal. Override in tests for deterministic output.
+	// Defaults to bd.Run. Override in tests for deterministic output.
 	RunBD BDRunner
 
 	// Scorer is the function used to sort beads by priority.
@@ -66,7 +59,7 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 
 	runner := p.RunBD
 	if runner == nil {
-		runner = runBDReal
+		runner = bd.Run
 	}
 
 	args := []string{"ready", "--json"}
@@ -109,7 +102,7 @@ func (p *BeadPicker) Count() (int, error) {
 
 	runner := p.RunBD
 	if runner == nil {
-		runner = runBDReal
+		runner = bd.Run
 	}
 
 	args := []string{"ready", "--json"}
@@ -207,7 +200,7 @@ func ComplexityScorer(beads []beads.Bead) {
 // Returns the children sorted by priority (ascending) then creation date (oldest first).
 func FetchEpicChildren(runBD BDRunner, workDir string, epicID string) ([]beads.Bead, error) {
 	if runBD == nil {
-		runBD = runBDReal
+		runBD = bd.Run
 	}
 
 	args := []string{"ready", "--json", "--parent", epicID}
@@ -243,7 +236,7 @@ type bdListEntry struct {
 // Returns the children sorted by priority (ascending) then creation date (oldest first).
 func FetchAllEpicChildren(runBD BDRunner, workDir string, epicID string) ([]beads.Bead, error) {
 	if runBD == nil {
-		runBD = runBDReal
+		runBD = bd.Run
 	}
 
 	args := []string{"list", "--json", "--parent", epicID, "--limit", "0"}

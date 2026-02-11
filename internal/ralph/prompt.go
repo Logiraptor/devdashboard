@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"text/template"
+
+	"devdeploy/internal/bd"
 )
 
 // PromptData holds the variables injected into the agent prompt template.
@@ -26,7 +28,7 @@ type bdShowFull struct {
 // for prompt rendering. runBD is the command runner (pass nil for real bd).
 func FetchPromptData(runBD BDRunner, workDir string, beadID string) (*PromptData, error) {
 	if runBD == nil {
-		runBD = runBDReal
+		runBD = bd.Run
 	}
 
 	out, err := runBD(workDir, "show", beadID, "--json")

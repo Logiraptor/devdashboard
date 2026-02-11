@@ -3,8 +3,9 @@ package ralph
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"devdeploy/internal/bd"
 )
 
 // Outcome represents the result of an agent iteration.
@@ -52,12 +53,8 @@ type bdShowDep struct {
 
 // runBDShow is the function used to execute `bd show <id> --json`.
 // Replaced in tests for deterministic output.
-var runBDShow = runBDShowReal
-
-func runBDShowReal(workDir string, beadID string) ([]byte, error) {
-	cmd := exec.Command("bd", "show", beadID, "--json")
-	cmd.Dir = workDir
-	return cmd.Output()
+var runBDShow = func(workDir string, beadID string) ([]byte, error) {
+	return bd.Run(workDir, "show", beadID, "--json")
 }
 
 // Assess evaluates what happened after an agent run. It checks the bead's

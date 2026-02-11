@@ -3,10 +3,11 @@ package beads
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
+
+	"devdeploy/internal/bd"
 )
 
 // Bead represents a bd issue associated with a project resource.
@@ -42,13 +43,7 @@ type bdListEntry struct {
 
 // runBD is the function used to execute bd commands.
 // Replaced in tests for deterministic output.
-var runBD = runBDReal
-
-func runBDReal(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = dir
-	return cmd.Output()
-}
+var runBD = bd.Run
 
 // ListForRepo runs `bd list --json` in the given worktree directory.
 // Returns all beads in the repo, excluding any with a pr:<n> label
