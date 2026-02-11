@@ -22,7 +22,9 @@ type config struct {
 	agentTimeout            time.Duration
 	consecutiveFailureLimit int
 	timeout                 time.Duration
-	concurrency             int
+	concurrency             int // deprecated: use maxParallel instead
+	maxParallel             int
+	sequential              bool
 	dryRun                  bool
 	verbose                 bool
 	strictLanding           bool
@@ -38,7 +40,9 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
 	flag.IntVar(&cfg.consecutiveFailureLimit, "consecutive-failures", 3, "stop after N consecutive agent failures")
 	flag.DurationVar(&cfg.timeout, "timeout", 2*time.Hour, "total wall-clock timeout for the entire session")
-	flag.IntVar(&cfg.concurrency, "concurrency", 1, "number of concurrent agents to run (each uses its own git worktree)")
+	flag.IntVar(&cfg.concurrency, "concurrency", 0, "DEPRECATED: use --max-parallel instead. number of concurrent agents to run (each uses its own git worktree)")
+	flag.IntVar(&cfg.maxParallel, "max-parallel", 1, "maximum number of parallel agents to run (each uses its own git worktree). default is 1 (sequential)")
+	flag.BoolVar(&cfg.sequential, "sequential", false, "run agents sequentially (equivalent to --max-parallel=1)")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "print what would be done without executing agents")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "enable detailed logging")
 	flag.BoolVar(&cfg.strictLanding, "strict-landing", true, "treat incomplete landing (uncommitted changes or unclosed bead) as failure")
@@ -67,6 +71,27 @@ func parseFlags() config {
 		os.Exit(1)
 	}
 
+	// Handle deprecated --concurrency flag
+	if cfg.concurrency > 0 {
+		fmt.Fprintln(os.Stderr, "warning: --concurrency is deprecated, use --max-parallel instead")
+		if cfg.maxParallel != 1 || cfg.sequential {
+			fmt.Fprintln(os.Stderr, "error: cannot use --concurrency together with --max-parallel or --sequential")
+			flag.Usage()
+			os.Exit(1)
+		}
+		cfg.maxParallel = cfg.concurrency
+	}
+
+	// Handle --sequential flag
+	if cfg.sequential {
+		if cfg.maxParallel != 1 {
+			fmt.Fprintln(os.Stderr, "error: cannot use --sequential together with --max-parallel")
+			flag.Usage()
+			os.Exit(1)
+		}
+		cfg.maxParallel = 1
+	}
+
 	return cfg
 }
 
@@ -90,9 +115,9 @@ func run(cfg config) (ralph.StopReason, error) {
 		maxIterations = 1
 	}
 
-	// Epic mode requires sequential processing (concurrency=1)
-	if cfg.epic != "" && cfg.concurrency > 1 {
-		return ralph.StopNormal, fmt.Errorf("--epic requires --concurrency=1 (epic mode processes tasks sequentially)")
+	// Epic mode requires sequential processing (maxParallel=1)
+	if cfg.epic != "" && cfg.maxParallel > 1 {
+		return ralph.StopNormal, fmt.Errorf("--epic requires --max-parallel=1 or --sequential (epic mode processes tasks sequentially)")
 	}
 
 	loopCfg := ralph.LoopConfig{
@@ -103,7 +128,7 @@ func run(cfg config) (ralph.StopReason, error) {
 		AgentTimeout:            cfg.agentTimeout,
 		ConsecutiveFailureLimit: cfg.consecutiveFailureLimit,
 		Timeout:                 cfg.timeout,
-		Concurrency:             cfg.concurrency,
+		Concurrency:             cfg.maxParallel,
 		DryRun:                  cfg.dryRun,
 		Verbose:                 cfg.verbose,
 		StrictLanding:           cfg.strictLanding,
