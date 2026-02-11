@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -35,6 +36,7 @@ type Manager struct {
 	recentIDs    []string               // Ring buffer of recent trace IDs
 	maxTraces    int                    // Max traces to keep (default 10)
 	onChange     func()                 // Callback when trace state changes
+	exporter     *OTLPExporter           // OTLP exporter for completed traces
 }
 
 // NewManager creates a new trace manager
@@ -42,12 +44,14 @@ func NewManager(maxTraces int) *Manager {
 	if maxTraces <= 0 {
 		maxTraces = 10
 	}
+	exporter, _ := NewOTLPExporter(context.Background())
 	return &Manager{
 		traces:        make(map[string]*Trace),
 		pendingSpans:  make(map[string]*TraceEvent),
 		orphanedSpans: make(map[string][]*Span),
 		recentIDs:     make([]string, 0, maxTraces),
 		maxTraces:     maxTraces,
+		exporter:      exporter,
 	}
 }
 
@@ -135,6 +139,10 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 				trace.RootSpan = span
 				// Attach any orphaned children waiting for this loop span
 				m.attachOrphanedChildren(span)
+				// Export to OTLP if exporter is configured
+				if m.exporter != nil {
+					go m.exporter.ExportTrace(context.Background(), trace)
+				}
 			}
 			m.callOnChange()
 			return trace
