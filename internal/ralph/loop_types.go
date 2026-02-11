@@ -62,11 +62,14 @@ func (r StopReason) ExitCode() int {
 	}
 }
 
-// DefaultConsecutiveFailureLimit is the default number of consecutive failures
-// before the loop stops.
+// DefaultConsecutiveFailureLimit is the number of consecutive failures before
+// the loop stops. Set to 3 to allow for transient failures (e.g., network issues,
+// flaky tests) while still catching persistent problems quickly.
 const DefaultConsecutiveFailureLimit = 3
 
-// DefaultWallClockTimeout is the default total wall-clock timeout for a ralph session.
+// DefaultWallClockTimeout is the maximum total duration for a ralph session.
+// Set to 2 hours to allow for substantial work while preventing runaway sessions.
+// Individual agent timeouts are controlled separately via LoopConfig.AgentTimeout.
 const DefaultWallClockTimeout = 2 * time.Hour
 
 // LoopConfig configures the ralph autonomous work loop.

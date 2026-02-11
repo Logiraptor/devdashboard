@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-// DefaultTimeout is the default per-iteration agent timeout.
+// DefaultTimeout is the per-agent execution timeout.
+// Set to 10 minutes to allow complex tasks while preventing hung agents.
+// Most agent runs complete in 1-5 minutes.
 const DefaultTimeout = 10 * time.Minute
 
 // AgentResult holds the outcome of a single agent invocation.
