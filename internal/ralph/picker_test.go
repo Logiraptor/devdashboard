@@ -9,16 +9,16 @@ import (
 	"devdeploy/internal/beads"
 )
 
-// mockBDReady returns a RunBDFunc that serves canned JSON responses.
-func mockBDReady(entries []bdReadyEntry) RunBDFunc {
+// mockBDReady returns a BDRunner that serves canned JSON responses.
+func mockBDReady(entries []bdReadyEntry) BDRunner {
 	return func(dir string, args ...string) ([]byte, error) {
 		data, err := json.Marshal(entries)
 		return data, err
 	}
 }
 
-// mockBDError returns a RunBDFunc that always returns an error.
-func mockBDError(msg string) RunBDFunc {
+// mockBDError returns a BDRunner that always returns an error.
+func mockBDError(msg string) BDRunner {
 	return func(dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%s", msg)
 	}

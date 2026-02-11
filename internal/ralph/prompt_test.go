@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// mockBDShowFull returns a RunBDFunc that serves canned bd show --json output.
-func mockBDShowFull(entry *bdShowFull) RunBDFunc {
+// mockBDShowFull returns a BDRunner that serves canned bd show --json output.
+func mockBDShowFull(entry *bdShowFull) BDRunner {
 	return func(dir string, args ...string) ([]byte, error) {
 		if entry == nil {
 			return nil, errBDNotFound

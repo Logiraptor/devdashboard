@@ -24,7 +24,7 @@ type bdShowFull struct {
 
 // FetchPromptData runs `bd show <id> --json` and extracts the fields needed
 // for prompt rendering. runBD is the command runner (pass nil for real bd).
-func FetchPromptData(runBD RunBDFunc, workDir string, beadID string) (*PromptData, error) {
+func FetchPromptData(runBD BDRunner, workDir string, beadID string) (*PromptData, error) {
 	if runBD == nil {
 		runBD = runBDReal
 	}

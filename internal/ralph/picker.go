@@ -21,9 +21,9 @@ type bdReadyEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// RunBDFunc is the function signature for executing bd commands.
+// BDRunner is the function signature for executing bd commands.
 // Accepts a working directory and arguments, returns raw output.
-type RunBDFunc func(dir string, args ...string) ([]byte, error)
+type BDRunner func(dir string, args ...string) ([]byte, error)
 
 // runBDReal executes a real bd command.
 func runBDReal(dir string, args ...string) ([]byte, error) {
@@ -45,7 +45,7 @@ type BeadPicker struct {
 
 	// RunBD is the function used to execute bd commands.
 	// Defaults to runBDReal. Override in tests for deterministic output.
-	RunBD RunBDFunc
+	RunBD BDRunner
 
 	// Scorer is the function used to sort beads by priority.
 	// Defaults to DefaultScorer (priority + creation date).
@@ -205,7 +205,7 @@ func ComplexityScorer(beads []beads.Bead) {
 
 // FetchEpicChildren fetches all ready children of an epic using bd ready --parent.
 // Returns the children sorted by priority (ascending) then creation date (oldest first).
-func FetchEpicChildren(runBD RunBDFunc, workDir string, epicID string) ([]beads.Bead, error) {
+func FetchEpicChildren(runBD BDRunner, workDir string, epicID string) ([]beads.Bead, error) {
 	if runBD == nil {
 		runBD = runBDReal
 	}
@@ -241,7 +241,7 @@ type bdListEntry struct {
 
 // FetchAllEpicChildren fetches all children of an epic (including closed) using bd list --parent.
 // Returns the children sorted by priority (ascending) then creation date (oldest first).
-func FetchAllEpicChildren(runBD RunBDFunc, workDir string, epicID string) ([]beads.Bead, error) {
+func FetchAllEpicChildren(runBD BDRunner, workDir string, epicID string) ([]beads.Bead, error) {
 	if runBD == nil {
 		runBD = runBDReal
 	}

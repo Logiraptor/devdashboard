@@ -41,7 +41,7 @@ func mockBeadsJSON(beads []beads.Bead) []byte {
 	return data
 }
 
-// mockRunBD returns a RunBDFunc that simulates bd commands.
+// mockRunBD returns a BDRunner that simulates bd commands.
 func mockRunBD(readyBeads []beads.Bead, epicChildren map[string][]beads.Bead) func(string, ...string) ([]byte, error) {
 	return func(dir string, args ...string) ([]byte, error) {
 		cmd := strings.Join(args, " ")
@@ -380,7 +380,7 @@ func TestWaveOrchestrator_Run(t *testing.T) {
 
 			// For testing Run, we need to mock the bd commands at a lower level
 			// Since we can't override fetchReadyBeads, we'll test with real bd or skip
-			// In a real scenario, we'd inject a mock RunBDFunc, but that requires
+			// In a real scenario, we'd inject a mock BDRunner, but that requires
 			// refactoring the code to accept it. For now, we test the logic that doesn't
 			// require bd (dry-run, empty beads, etc.)
 			if tt.name == "dry run" || tt.name == "empty ready beads" {
