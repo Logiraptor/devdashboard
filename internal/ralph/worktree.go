@@ -123,7 +123,8 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 }
 
 // RemoveWorktree removes a worktree created by CreateWorktree.
-// branchName is the branch name returned by CreateWorktree.
+// The branch associated with the worktree is preserved after removal.
+// branchName is the branch name returned by CreateWorktree (used for reference only).
 func (w *WorktreeManager) RemoveWorktree(worktreePath, branchName string) error {
 	// Remove the worktree
 	cmd := exec.Command("git", "-C", w.srcRepo, "worktree", "remove", worktreePath, "--force")
@@ -141,11 +142,7 @@ func (w *WorktreeManager) RemoveWorktree(worktreePath, branchName string) error 
 		return fmt.Errorf("git worktree remove: %s", msg)
 	}
 
-	// Also try to remove the branch if it exists
-	// Best-effort branch deletion (may fail if branch is checked out elsewhere)
-	if branchName != "" {
-		_ = exec.Command("git", "-C", w.srcRepo, "branch", "-D", branchName).Run()
-	}
+	// Branch is preserved after worktree removal
 
 	return nil
 }
