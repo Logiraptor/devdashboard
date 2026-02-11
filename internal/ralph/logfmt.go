@@ -13,6 +13,8 @@ import (
 
 // LogFormatter wraps an io.Writer and formats agent stream-json output
 // into human-readable log lines.
+//
+// LogFormatter must be created with NewLogFormatter; the zero value is not usable.
 type LogFormatter struct {
 	w       io.Writer
 	verbose bool
@@ -68,6 +70,9 @@ func NewLogFormatter(w io.Writer, verbose bool) *LogFormatter {
 
 // Write implements io.Writer. It reads JSON lines, formats them, and writes to the underlying writer.
 func (f *LogFormatter) Write(p []byte) (int, error) {
+	if f.w == nil {
+		return 0, fmt.Errorf("LogFormatter not initialized: use NewLogFormatter")
+	}
 	// In verbose mode, pass through everything
 	if f.verbose {
 		return f.w.Write(p)

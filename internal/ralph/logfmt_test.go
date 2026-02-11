@@ -411,3 +411,14 @@ func TestLogFormatter_ToolCallSubtype(t *testing.T) {
 		t.Errorf("should not count completed events, got summary: %q", summary)
 	}
 }
+
+func TestLogFormatter_ZeroValue_NotUsable(t *testing.T) {
+	var f LogFormatter
+	_, err := f.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected error when using zero value LogFormatter")
+	}
+	if !strings.Contains(err.Error(), "not initialized") {
+		t.Errorf("expected error message about initialization, got: %v", err)
+	}
+}
