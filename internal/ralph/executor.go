@@ -35,17 +35,15 @@ func defaultCommandFactory(ctx context.Context, workDir string, args ...string) 
 	return cmd
 }
 
-// RunAgent spawns an agent process with the given prompt and captures its
-// output. It uses "agent --model composer-1 --print --force --output-format stream-json" as the
-// command line. The process is killed if ctx expires or the timeout elapses.
-//
-// stdout is tee'd to os.Stdout in real time for observability while also being
-// captured in the returned AgentResult.
-func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
+// runAgentInternal is the shared implementation for running an agent process.
+// It applies options, creates a timeout context, builds command arguments,
+// captures stdout/stderr, runs the command, and returns the result.
+func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string, opts ...Option) (*AgentResult, error) {
 	cfg := options{
 		timeout:        DefaultTimeout,
 		commandFactory: defaultCommandFactory,
 		stdoutWriter:   os.Stdout,
+		model:          defaultModel,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -57,7 +55,7 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 
 	model := cfg.model
 	if model == "" {
-		model = "composer-1"
+		model = defaultModel
 	}
 	args := []string{"--model", model, "--print", "--force", "--output-format", "stream-json", prompt}
 	cmd := cfg.commandFactory(ctx, workDir, args...)
@@ -96,6 +94,16 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 	}, nil
 }
 
+// RunAgent spawns an agent process with the given prompt and captures its
+// output. It uses "agent --model composer-1 --print --force --output-format stream-json" as the
+// command line. The process is killed if ctx expires or the timeout elapses.
+//
+// stdout is tee'd to os.Stdout in real time for observability while also being
+// captured in the returned AgentResult.
+func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
+	return runAgentInternal(ctx, workDir, prompt, "composer-1", opts...)
+}
+
 // options holds optional configuration for RunAgent.
 type options struct {
 	timeout        time.Duration
@@ -131,53 +139,5 @@ func WithModel(model string) Option {
 // RunAgentOpus runs an opus model agent for verification passes.
 // Uses "agent --model claude-4.5-opus-high-thinking --print --force --output-format stream-json".
 func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
-	cfg := options{
-		timeout:        DefaultTimeout,
-		commandFactory: defaultCommandFactory,
-		stdoutWriter:   os.Stdout,
-		model:          "claude-4.5-opus-high-thinking",
-	}
-	for _, o := range opts {
-		o(&cfg)
-	}
-
-	// Derive a timeout context so the process is killed on expiry.
-	ctx, cancel := context.WithTimeout(ctx, cfg.timeout)
-	defer cancel()
-
-	args := []string{"--model", cfg.model, "--print", "--force", "--output-format", "stream-json", prompt}
-	cmd := cfg.commandFactory(ctx, workDir, args...)
-
-	// Capture stdout: tee to live writer + buffer.
-	var stdoutBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
-
-	// Capture stderr into a buffer.
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	start := time.Now()
-	err := cmd.Run()
-	duration := time.Since(start)
-
-	// Detect whether the process was killed due to context timeout.
-	timedOut := ctx.Err() == context.DeadlineExceeded
-
-	exitCode := 0
-	if err != nil {
-		// Extract exit code from ExitError; otherwise treat as launch failure.
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return nil, fmt.Errorf("failed to run agent: %w", err)
-		}
-	}
-
-	return &AgentResult{
-		ExitCode: exitCode,
-		Stdout:   stdoutBuf.String(),
-		Stderr:   stderrBuf.String(),
-		Duration: duration,
-		TimedOut: timedOut,
-	}, nil
+	return runAgentInternal(ctx, workDir, prompt, "claude-4.5-opus-high-thinking", opts...)
 }
