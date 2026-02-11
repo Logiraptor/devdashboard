@@ -94,7 +94,7 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 
 	// Query for ready leaf tasks
 	if iteration == 0 {
-		_, _ = fmt.Fprintf(setup.out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
+		writef(setup.out, "Epic orchestrator: querying 'bd ready --parent %s' for leaf tasks\n", cfg.Epic)
 	}
 	children, err := setup.fetchChildren()
 	if err != nil {
@@ -112,16 +112,16 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 
 	if len(readyChildren) == 0 {
 		if iteration == 0 {
-			_, _ = fmt.Fprintf(setup.out, "No ready children found for epic %s\n", cfg.Epic)
+			writef(setup.out, "No ready children found for epic %s\n", cfg.Epic)
 		} else {
-			_, _ = fmt.Fprintf(setup.out, "No more ready children for epic %s\n", cfg.Epic)
+			writef(setup.out, "No more ready children for epic %s\n", cfg.Epic)
 		}
 		setup.summary.StopReason = StopNormal
 		return false, nil
 	}
 
 	if iteration == 0 {
-		_, _ = fmt.Fprintf(setup.out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
+		writef(setup.out, "Found %d ready leaf task(s) for epic %s\n", len(readyChildren), cfg.Epic)
 	}
 
 	// Process the first ready leaf (sorted by priority)
@@ -167,9 +167,9 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	// Print summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		// Clear progress line before printing summary
-		_, _ = fmt.Fprintf(setup.out, "\n")
+		writef(setup.out, "\n")
 		if summaryStr := setup.currentFormatter.Summary(); summaryStr != "" {
-			_, _ = fmt.Fprintf(setup.out, "%s\n", summaryStr)
+			writef(setup.out, "%s\n", summaryStr)
 		}
 		setup.currentFormatter = nil // Reset for next iteration
 	}
@@ -182,7 +182,7 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	if landingErr == nil {
 		landingMsg := FormatLandingStatus(landingStatus)
 		if landingMsg != "landed successfully" {
-			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			writef(setup.out, "  Landing: %s\n", landingMsg)
 			if cfg.StrictLanding && outcome == OutcomeSuccess {
 				if landingStatus.HasUncommittedChanges || !landingStatus.BeadClosed {
 					outcome = OutcomeFailure
@@ -190,16 +190,16 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 				}
 			}
 		} else {
-			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			writef(setup.out, "  Landing: %s\n", landingMsg)
 		}
 	}
 
 	// Print structured per-iteration log line
-	_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
+	writef(setup.out, "%s\n", formatIterationLog(iterNum, 0, child.ID, child.Title, outcome, result.Duration, outcomeSummary))
 	// Print bead summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		if summary := setup.currentFormatter.BeadSummary(); summary != "" {
-			_, _ = fmt.Fprintf(setup.out, "%s\n", summary)
+			writef(setup.out, "%s\n", summary)
 		}
 	}
 
@@ -227,7 +227,7 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	// Sync beads state after each completion
 	if err := setup.syncFn(); err != nil {
 		if cfg.Verbose {
-			_, _ = fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+			writef(setup.out, "  bd sync warning: %v\n", err)
 		}
 	}
 
@@ -237,12 +237,12 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 // runOpusVerification runs opus verification after all epic children complete.
 func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchestratorSetup) {
 	if setup.summary.Failed == 0 && setup.summary.TimedOut == 0 && setup.summary.Iterations > 0 {
-		_, _ = fmt.Fprintf(setup.out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", setup.summary.Iterations)
+		writef(setup.out, "\nAll %d leaf task(s) completed successfully. Running opus verification...\n", setup.summary.Iterations)
 
 		// Fetch all epic children (including closed) for review
 		allChildren, err := FetchAllEpicChildren(nil, cfg.WorkDir, cfg.Epic)
 		if err != nil {
-			_, _ = fmt.Fprintf(setup.out, "Warning: failed to fetch all epic children for verification: %v\n", err)
+			writef(setup.out, "Warning: failed to fetch all epic children for verification: %v\n", err)
 			allChildren = nil
 		}
 
@@ -357,15 +357,15 @@ func runOpusVerification(ctx context.Context, cfg LoopConfig, setup *epicOrchest
 
 		opusResult, err := RunAgentOpus(ctx, cfg.WorkDir, verificationPrompt, opts...)
 		if err != nil {
-			_, _ = fmt.Fprintf(setup.out, "Opus verification failed to run: %v\n", err)
+			writef(setup.out, "Opus verification failed to run: %v\n", err)
 		} else {
 			// Print summary if formatter was used
 			if verificationFormatter != nil && !cfg.Verbose {
 				if summaryStr := verificationFormatter.Summary(); summaryStr != "" {
-					_, _ = fmt.Fprintf(setup.out, "%s\n", summaryStr)
+					writef(setup.out, "%s\n", summaryStr)
 				}
 			}
-			_, _ = fmt.Fprintf(setup.out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
+			writef(setup.out, "\nOpus verification completed (exit code %d, duration %s)\n", opusResult.ExitCode, formatDuration(opusResult.Duration))
 		}
 	}
 }
@@ -388,7 +388,7 @@ func writeFinalEpicStatus(cfg LoopConfig, setup *epicOrchestratorSetup, loopStar
 	}
 
 	// Print final summary
-	_, _ = fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
+	writef(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 }
 
 // runEpicOrchestrator orchestrates epic leaf tasks sequentially, then runs opus verification.

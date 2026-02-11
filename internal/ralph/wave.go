@@ -149,14 +149,14 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	worktreePath, branchName, err := w.setup.wtMgr.CreateWorktree(bead.ID)
 	if err != nil {
 		w.setup.mu.Lock()
-		_, _ = fmt.Fprintf(w.setup.out, "[wave] failed to create worktree for %s: %v\n", bead.ID, err)
+		writef(w.setup.out, "[wave] failed to create worktree for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
 		return
 	}
 	defer func() {
 		if err := w.setup.wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
 			w.setup.mu.Lock()
-			_, _ = fmt.Fprintf(w.setup.out, "[wave] warning: failed to remove worktree %s: %v\n", worktreePath, err)
+			writef(w.setup.out, "[wave] warning: failed to remove worktree %s: %v\n", worktreePath, err)
 			w.setup.mu.Unlock()
 		}
 	}()
@@ -165,7 +165,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	promptData, err := w.setup.fetchPrompt(bead.ID)
 	if err != nil {
 		w.setup.mu.Lock()
-		_, _ = fmt.Fprintf(w.setup.out, "[wave] failed to fetch prompt for %s: %v\n", bead.ID, err)
+		writef(w.setup.out, "[wave] failed to fetch prompt for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
 		return
 	}
@@ -174,7 +174,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	prompt, err := w.setup.render(promptData)
 	if err != nil {
 		w.setup.mu.Lock()
-		_, _ = fmt.Fprintf(w.setup.out, "[wave] failed to render prompt for %s: %v\n", bead.ID, err)
+		writef(w.setup.out, "[wave] failed to render prompt for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
 		return
 	}
@@ -191,7 +191,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	result, err := agentExecute(ctx, prompt)
 	if err != nil {
 		w.setup.mu.Lock()
-		_, _ = fmt.Fprintf(w.setup.out, "[wave] failed to run agent for %s: %v\n", bead.ID, err)
+		writef(w.setup.out, "[wave] failed to run agent for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
 		return
 	}
@@ -214,7 +214,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	}
 
 	// Log iteration
-	_, _ = fmt.Fprintf(w.setup.out, "%s\n", formatIterationLog(
+	writef(w.setup.out, "%s\n", formatIterationLog(
 		w.setup.summary.Iterations,
 		w.cfg.MaxIterations,
 		bead.ID,
@@ -235,7 +235,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	if err := w.setup.syncFn(); err != nil {
 		w.setup.mu.Lock()
 		if w.cfg.Verbose {
-			_, _ = fmt.Fprintf(w.setup.out, "  bd sync warning: %v\n", err)
+			writef(w.setup.out, "  bd sync warning: %v\n", err)
 		}
 		w.setup.mu.Unlock()
 	}
@@ -262,14 +262,14 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 	if len(readyBeads) == 0 {
 		w.setup.summary.StopReason = StopNormal
 		w.setup.summary.Duration = time.Since(waveStart)
-		_, _ = fmt.Fprintf(w.setup.out, "No ready beads found\n")
+		writef(w.setup.out, "No ready beads found\n")
 		return w.setup.summary, nil
 	}
 
 	// Dry-run: print what would be done without executing
 	if w.cfg.DryRun {
 		for i, bead := range readyBeads {
-			_, _ = fmt.Fprintf(w.setup.out, "%s\n", formatIterationLog(
+			writef(w.setup.out, "%s\n", formatIterationLog(
 				i+1,
 				len(readyBeads),
 				bead.ID,
@@ -285,7 +285,7 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 		return w.setup.summary, nil
 	}
 
-	_, _ = fmt.Fprintf(w.setup.out, "Wave orchestrator: dispatching %d ready bead(s) in parallel\n", len(readyBeads))
+	writef(w.setup.out, "Wave orchestrator: dispatching %d ready bead(s) in parallel\n", len(readyBeads))
 
 	// Dispatch all beads in parallel
 	var wg sync.WaitGroup
@@ -308,7 +308,7 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 	remainingBeads := countRemainingBeads(w.cfg)
 
 	// Print final summary
-	_, _ = fmt.Fprintf(w.setup.out, "\n%s\n", formatSummary(w.setup.summary, remainingBeads))
+	writef(w.setup.out, "\n%s\n", formatSummary(w.setup.summary, remainingBeads))
 
 	return w.setup.summary, nil
 }

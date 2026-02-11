@@ -164,7 +164,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 	promptData, err := setup.fetchPrompt(bead.ID)
 	if err != nil {
 		setup.mu.Lock()
-		_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
+		writef(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
 		setup.mu.Unlock()
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 	prompt, err := setup.render(promptData)
 	if err != nil {
 		setup.mu.Lock()
-		_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
+		writef(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
 		setup.mu.Unlock()
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 	result, err := agentExecute(ctx, prompt)
 	if err != nil {
 		setup.mu.Lock()
-		_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
+		writef(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
 		setup.mu.Unlock()
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 // logWorkerIteration logs iteration results and verbose output.
 func logWorkerIteration(setup *concurrentLoopSetup, cfg LoopConfig, iterNum int, bead *beads.Bead, outcome Outcome, result *AgentResult, outcomeSummary string) {
 	// Print structured per-iteration log line
-	_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+	writef(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
 	// Note: Bead summary not printed in concurrent mode (no formatter tracking per worker)
 
 	// Verbose mode output
@@ -263,7 +263,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			if cfg.DryRun {
 				setup.mu.Lock()
 				iterNum := int(atomic.AddInt32(&setup.iterations, 1))
-				_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+				writef(setup.out, "%s\n", formatIterationLog(iterNum, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 				setup.summary.Iterations++
 				atomic.StoreInt32(&setup.shouldStop, 1)
 				setup.mu.Unlock()
@@ -274,14 +274,14 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			worktreePath, branchName, err := setup.wtMgr.CreateWorktree(bead.ID)
 			if err != nil {
 				setup.mu.Lock()
-				_, _ = fmt.Fprintf(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
+				writef(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
 				setup.mu.Unlock()
 				continue
 			}
 			defer func() {
 				if err := setup.wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
 					setup.mu.Lock()
-					_, _ = fmt.Fprintf(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
+					writef(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
 					setup.mu.Unlock()
 				}
 			}()
@@ -311,7 +311,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			if err := setup.syncFn(); err != nil {
 				setup.mu.Lock()
 				if cfg.Verbose {
-					_, _ = fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+					writef(setup.out, "  bd sync warning: %v\n", err)
 				}
 				setup.mu.Unlock()
 			}
@@ -353,7 +353,7 @@ func runConcurrent(ctx context.Context, cfg LoopConfig, concurrency int) (*RunSu
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary
-	_, _ = fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
+	writef(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 
 	return setup.summary, nil
 }

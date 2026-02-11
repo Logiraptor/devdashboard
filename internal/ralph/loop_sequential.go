@@ -196,9 +196,9 @@ func executeAgentForBead(ctx context.Context, cfg LoopConfig, setup *sequentialL
 	// Print summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		// Clear progress line before printing summary
-		_, _ = fmt.Fprintf(setup.out, "\n")
+		writef(setup.out, "\n")
 		if summaryStr := setup.currentFormatter.Summary(); summaryStr != "" {
-			_, _ = fmt.Fprintf(setup.out, "%s\n", summaryStr)
+			writef(setup.out, "%s\n", summaryStr)
 		}
 		setup.currentFormatter = nil // Reset for next iteration
 	}
@@ -213,7 +213,7 @@ func handleLandingAndLogging(cfg LoopConfig, setup *sequentialLoopSetup, bead *b
 	if landingErr == nil {
 		landingMsg := FormatLandingStatus(landingStatus)
 		if landingMsg != "landed successfully" {
-			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			writef(setup.out, "  Landing: %s\n", landingMsg)
 			// If strict landing is enabled and landing is incomplete, treat as failure
 			if cfg.StrictLanding && outcome == OutcomeSuccess {
 				// Override success if landing is incomplete
@@ -223,16 +223,16 @@ func handleLandingAndLogging(cfg LoopConfig, setup *sequentialLoopSetup, bead *b
 				}
 			}
 		} else {
-			_, _ = fmt.Fprintf(setup.out, "  Landing: %s\n", landingMsg)
+			writef(setup.out, "  Landing: %s\n", landingMsg)
 		}
 	}
 
 	// Print structured per-iteration log line.
-	_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
+	writef(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, outcome, result.Duration, outcomeSummary))
 	// Print bead summary if formatter was used
 	if setup.currentFormatter != nil && !cfg.Verbose {
 		if summary := setup.currentFormatter.BeadSummary(); summary != "" {
-			_, _ = fmt.Fprintf(setup.out, "%s\n", summary)
+			writef(setup.out, "%s\n", summary)
 		}
 	}
 
@@ -245,15 +245,15 @@ func printVerboseOutput(out io.Writer, result *AgentResult) {
 		lines := strings.Split(result.Stdout, "\n")
 		maxLines := 10
 		if len(lines) > maxLines {
-			_, _ = fmt.Fprintf(out, "  stdout (showing last %d lines):\n", maxLines)
+			writef(out, "  stdout (showing last %d lines):\n", maxLines)
 			for _, line := range lines[len(lines)-maxLines:] {
-				_, _ = fmt.Fprintf(out, "    %s\n", line)
+				writef(out, "    %s\n", line)
 			}
 		} else {
-			_, _ = fmt.Fprintf(out, "  stdout:\n")
+			writef(out, "  stdout:\n")
 			for _, line := range lines {
 				if line != "" {
-					_, _ = fmt.Fprintf(out, "    %s\n", line)
+					writef(out, "    %s\n", line)
 				}
 			}
 		}
@@ -262,15 +262,15 @@ func printVerboseOutput(out io.Writer, result *AgentResult) {
 		lines := strings.Split(result.Stderr, "\n")
 		maxLines := 10
 		if len(lines) > maxLines {
-			_, _ = fmt.Fprintf(out, "  stderr (showing last %d lines):\n", maxLines)
+			writef(out, "  stderr (showing last %d lines):\n", maxLines)
 			for _, line := range lines[len(lines)-maxLines:] {
-				_, _ = fmt.Fprintf(out, "    %s\n", line)
+				writef(out, "    %s\n", line)
 			}
 		} else {
-			_, _ = fmt.Fprintf(out, "  stderr:\n")
+			writef(out, "  stderr:\n")
 			for _, line := range lines {
 				if line != "" {
-					_, _ = fmt.Fprintf(out, "    %s\n", line)
+					writef(out, "    %s\n", line)
 				}
 			}
 		}
@@ -334,7 +334,7 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 
 	// Dry-run: print what would be done without executing.
 	if cfg.DryRun {
-		_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
+		writef(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 		setup.summary.Iterations++
 		return false, nil
 	}
@@ -368,7 +368,7 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	// 6. Sync beads state.
 	if err := setup.syncFn(); err != nil {
 		if cfg.Verbose {
-			_, _ = fmt.Fprintf(setup.out, "  bd sync warning: %v\n", err)
+			writef(setup.out, "  bd sync warning: %v\n", err)
 		}
 	}
 
@@ -389,7 +389,7 @@ func writeFinalSequentialStatus(cfg LoopConfig, setup *sequentialLoopSetup, loop
 	remainingBeads := countRemainingBeads(cfg)
 
 	// Print final summary (always printed, even on early termination).
-	_, _ = fmt.Fprintf(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
+	writef(setup.out, "\n%s\n", formatSummary(setup.summary, remainingBeads))
 }
 
 // runSequential executes the sequential loop (original implementation).

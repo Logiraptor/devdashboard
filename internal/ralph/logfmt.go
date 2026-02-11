@@ -643,20 +643,20 @@ func (f *LogFormatter) updateDisplay() {
 	// Move cursor up and clear lines if we've displayed before
 	if f.lastNumLines > 0 {
 		// Move up to the first line of the previous display
-		_, _ = fmt.Fprintf(f.w, "\033[%dA", f.lastNumLines)
+		writef(f.w, "\033[%dA", f.lastNumLines)
 		// Clear each line from top to bottom
 		for i := 0; i < f.lastNumLines; i++ {
-			_, _ = fmt.Fprintf(f.w, "\033[K") // Clear to end of line
+			writef(f.w, "\033[K") // Clear to end of line
 			if i < f.lastNumLines-1 {
-				_, _ = fmt.Fprintf(f.w, "\n") // Move to next line (except last)
+				writef(f.w, "\n") // Move to next line (except last)
 			}
 		}
 		// Move back up to the start position
-		_, _ = fmt.Fprintf(f.w, "\033[%dA", f.lastNumLines)
+		writef(f.w, "\033[%dA", f.lastNumLines)
 	}
 
 	// Write the new display
-	_, _ = fmt.Fprintf(f.w, "%s", display)
+	writef(f.w, "%s", display)
 	f.lastNumLines = numLines
 	f.lastLine = display // Update lastLine for comparison
 }
