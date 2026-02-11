@@ -1,10 +1,12 @@
 package ralph
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
+	"devdeploy/internal/beads"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -21,6 +23,8 @@ type TUIModel struct {
 	loopDone     bool
 	width        int
 	height       int
+	program      *tea.Program // Set after tea.NewProgram() for sending messages
+	loopStartedFlag bool // Track if loop has been started
 }
 
 // Message types for loop communication
@@ -78,10 +82,25 @@ func (m *TUIModel) GetTraceEmitter() *LocalTraceEmitter {
 	return m.traceEmitter
 }
 
+// SetProgram sets the tea.Program for sending messages
+// Must be called after tea.NewProgram(). This will start the loop.
+func (m *TUIModel) SetProgram(p *tea.Program) {
+	m.program = p
+	m.traceEmitter.SetProgram(p)
+	// Start the loop now that we have the program reference
+	if !m.loopStartedFlag {
+		m.loopStartedFlag = true
+		go func() {
+			m.runLoopWithMessages()
+		}()
+	}
+}
+
 // Init implements tea.Model
 func (m *TUIModel) Init() tea.Cmd {
-	// Return command to start the loop in background
-	return m.startLoopCmd()
+	// Don't start loop here - wait for SetProgram to be called
+	// The loop will start when SetProgram is called
+	return nil
 }
 
 // Update implements tea.Model
@@ -115,6 +134,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LoopStartedMsg:
 		m.loopStarted = true
 		m.status = fmt.Sprintf("Loop started: %s", msg.Epic)
+		// Start listening for subsequent messages
+		// Note: We'll need to store the channel reference, but for now
+		// the loop will send messages directly via program.Send
 
 	case IterationStartMsg:
 		m.status = fmt.Sprintf("Working on %s: %s", msg.BeadID, msg.BeadTitle)
@@ -184,11 +206,147 @@ func (m *TUIModel) View() string {
 	return b.String()
 }
 
-// startLoopCmd returns a command that runs the loop in background
-func (m *TUIModel) startLoopCmd() tea.Cmd {
-	return func() tea.Msg {
-		// This will be implemented to run the actual loop
-		// and send messages back via a channel
-		return LoopStartedMsg{Epic: m.config.Epic}
+
+// runLoopWithMessages executes the loop and sends messages via program.Send()
+func (m *TUIModel) runLoopWithMessages() {
+	cfg := m.config
+	ctx := context.Background()
+
+	// Apply wall-clock timeout
+	wallTimeout := cfg.Timeout
+	if wallTimeout <= 0 {
+		wallTimeout = DefaultWallClockTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, wallTimeout)
+	defer cancel()
+
+	// Start loop trace
+	emitter := m.traceEmitter
+	epic := cfg.Epic
+	if epic == "" {
+		epic = "default"
+	}
+	traceID := emitter.StartLoop("composer-1", epic, cfg.WorkDir, cfg.MaxIterations)
+
+	if m.program != nil {
+		m.program.Send(LoopStartedMsg{TraceID: traceID, Epic: epic})
+	}
+
+	// Set up picker
+	picker := &BeadPicker{WorkDir: cfg.WorkDir, Epic: cfg.Epic}
+
+	summary := &RunSummary{}
+	loopStart := time.Now()
+
+	for i := 0; i < cfg.MaxIterations; i++ {
+		// Check context
+		if ctx.Err() != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				summary.StopReason = StopWallClock
+			} else {
+				summary.StopReason = StopContextCancelled
+			}
+			break
+		}
+
+		// Pick next bead
+		bead, err := picker.Next()
+		if err != nil {
+			if m.program != nil {
+				m.program.Send(LoopErrorMsg{Err: err})
+			}
+			return
+		}
+		if bead == nil {
+			summary.StopReason = StopNormal
+			break
+		}
+
+		// Start iteration
+		iterStart := time.Now()
+		spanID := emitter.StartIteration(bead.ID, bead.Title, i+1)
+		emitter.SetParent(spanID)
+
+		if m.program != nil {
+			m.program.Send(IterationStartMsg{
+				BeadID:    bead.ID,
+				BeadTitle: bead.Title,
+				IterNum:   i + 1,
+			})
+		}
+
+		// Execute agent (using existing executor)
+		// Pass trace emitter for tool call tracking
+		result, err := m.executeAgent(ctx, bead, emitter)
+		if err != nil {
+			if m.program != nil {
+				m.program.Send(LoopErrorMsg{Err: err})
+			}
+			return
+		}
+
+		// Assess outcome
+		outcome, _ := Assess(cfg.WorkDir, bead.ID, result)
+
+		// Update summary
+		summary.Iterations++
+		switch outcome {
+		case OutcomeSuccess:
+			summary.Succeeded++
+		case OutcomeFailure:
+			summary.Failed++
+		case OutcomeTimeout:
+			summary.TimedOut++
+		case OutcomeQuestion:
+			summary.Questions++
+		}
+
+		// End iteration
+		durationMs := time.Since(iterStart).Milliseconds()
+		emitter.EndIteration(spanID, outcome.String(), durationMs)
+
+		if m.program != nil {
+			m.program.Send(IterationEndMsg{
+				BeadID:   bead.ID,
+				Outcome:  outcome,
+				Duration: time.Since(iterStart),
+			})
+		}
+	}
+
+	// End loop
+	summary.Duration = time.Since(loopStart)
+	emitter.EndLoop(summary.StopReason.String(), summary.Iterations, summary.Succeeded, summary.Failed)
+
+	if m.program != nil {
+		m.program.Send(LoopEndMsg{Summary: summary, StopReason: summary.StopReason})
+	}
+}
+
+// executeAgent runs the agent and tracks tool calls via trace emitter
+func (m *TUIModel) executeAgent(ctx context.Context, bead *beads.Bead, emitter *LocalTraceEmitter) (*AgentResult, error) {
+	cfg := m.config
+
+	// Fetch prompt
+	promptData, err := FetchPromptData(nil, cfg.WorkDir, bead.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	prompt, err := RenderPrompt(promptData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create trace writer that uses local emitter
+	traceWriter := NewLocalTraceWriter(emitter)
+
+	// Run agent with trace writer
+	var opts []Option
+	if cfg.AgentTimeout > 0 {
+		opts = append(opts, WithTimeout(cfg.AgentTimeout))
+	}
+	opts = append(opts, WithStdoutWriter(traceWriter))
+
+	return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 }
