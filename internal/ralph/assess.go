@@ -131,14 +131,22 @@ func needsHumanDeps(entry *bdShowEntry) []string {
 	// Question beads created by the agent will appear as dependencies
 	// that block this bead (dependency_type "blocks").
 	for _, dep := range entry.Dependencies {
-		if dep.Status != "closed" && hasLabel(dep.Labels, "needs-human") {
-			ids = append(ids, dep.ID)
+		if dep.Status == "closed" {
+			continue
 		}
+		if !hasLabel(dep.Labels, "needs-human") {
+			continue
+		}
+		ids = append(ids, dep.ID)
 	}
 	for _, dep := range entry.Dependents {
-		if dep.Status != "closed" && hasLabel(dep.Labels, "needs-human") {
-			ids = append(ids, dep.ID)
+		if dep.Status == "closed" {
+			continue
 		}
+		if !hasLabel(dep.Labels, "needs-human") {
+			continue
+		}
+		ids = append(ids, dep.ID)
 	}
 	return ids
 }
