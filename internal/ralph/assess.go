@@ -34,6 +34,32 @@ func (o Outcome) String() string {
 	}
 }
 
+// MarshalJSON implements json.Marshaler.
+func (o Outcome) MarshalJSON() ([]byte, error) {
+	return json.Marshal(o.String())
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (o *Outcome) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "success":
+		*o = OutcomeSuccess
+	case "question":
+		*o = OutcomeQuestion
+	case "failure":
+		*o = OutcomeFailure
+	case "timeout":
+		*o = OutcomeTimeout
+	default:
+		return fmt.Errorf("unknown Outcome: %s", s)
+	}
+	return nil
+}
+
 // bdShowEntry mirrors the JSON shape emitted by `bd show <id> --json`.
 // Only the fields we need for assessment are included.
 type bdShowEntry struct {

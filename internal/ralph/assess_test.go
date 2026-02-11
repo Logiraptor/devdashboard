@@ -282,3 +282,88 @@ func TestOutcome_String(t *testing.T) {
 		}
 	}
 }
+
+func TestMarshalOutcome(t *testing.T) {
+	tests := []struct {
+		outcome Outcome
+		want    string
+	}{
+		{OutcomeSuccess, `"success"`},
+		{OutcomeQuestion, `"question"`},
+		{OutcomeFailure, `"failure"`},
+		{OutcomeTimeout, `"timeout"`},
+	}
+	for _, tt := range tests {
+		got, err := json.Marshal(tt.outcome)
+		if err != nil {
+			t.Errorf("json.Marshal(Outcome(%d)) error = %v", tt.outcome, err)
+			continue
+		}
+		if string(got) != tt.want {
+			t.Errorf("json.Marshal(Outcome(%d)) = %q, want %q", tt.outcome, string(got), tt.want)
+		}
+	}
+}
+
+func TestUnmarshalOutcome(t *testing.T) {
+	tests := []struct {
+		json string
+		want Outcome
+	}{
+		{`"success"`, OutcomeSuccess},
+		{`"question"`, OutcomeQuestion},
+		{`"failure"`, OutcomeFailure},
+		{`"timeout"`, OutcomeTimeout},
+	}
+	for _, tt := range tests {
+		var got Outcome
+		err := json.Unmarshal([]byte(tt.json), &got)
+		if err != nil {
+			t.Errorf("json.Unmarshal(%q, &Outcome) error = %v", tt.json, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("json.Unmarshal(%q, &Outcome) = %v, want %v", tt.json, got, tt.want)
+		}
+	}
+}
+
+func TestUnmarshalOutcome_Invalid(t *testing.T) {
+	tests := []string{
+		`"invalid"`,
+		`"unknown"`,
+		`123`,
+		`null`,
+	}
+	for _, tt := range tests {
+		var got Outcome
+		err := json.Unmarshal([]byte(tt), &got)
+		if err == nil {
+			t.Errorf("json.Unmarshal(%q, &Outcome) expected error, got nil", tt)
+		}
+	}
+}
+
+func TestMarshalUnmarshalOutcome_RoundTrip(t *testing.T) {
+	tests := []Outcome{
+		OutcomeSuccess,
+		OutcomeQuestion,
+		OutcomeFailure,
+		OutcomeTimeout,
+	}
+	for _, want := range tests {
+		data, err := json.Marshal(want)
+		if err != nil {
+			t.Errorf("json.Marshal(%v) error = %v", want, err)
+			continue
+		}
+		var got Outcome
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Errorf("json.Unmarshal(%q, &Outcome) error = %v", string(data), err)
+			continue
+		}
+		if got != want {
+			t.Errorf("round-trip: got %v, want %v", got, want)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package ralph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -60,6 +61,36 @@ func (r StopReason) ExitCode() int {
 	default:
 		return 1
 	}
+}
+
+// MarshalJSON implements json.Marshaler.
+func (r StopReason) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.String())
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (r *StopReason) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "normal":
+		*r = StopNormal
+	case "max-iterations":
+		*r = StopMaxIterations
+	case "consecutive-failures":
+		*r = StopConsecutiveFails
+	case "wall-clock-timeout":
+		*r = StopWallClock
+	case "context-cancelled":
+		*r = StopContextCancelled
+	case "all-beads-skipped":
+		*r = StopAllBeadsSkipped
+	default:
+		return fmt.Errorf("unknown StopReason: %s", s)
+	}
+	return nil
 }
 
 // DefaultConsecutiveFailureLimit is the number of consecutive failures before
