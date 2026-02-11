@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"devdeploy/internal/ralph"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // config holds the parsed CLI configuration for a ralph run.
@@ -107,11 +109,41 @@ func run(cfg config) (ralph.StopReason, error) {
 		StrictLanding:           cfg.strictLanding,
 	}
 
-	summary, err := ralph.Run(ctx, loopCfg)
-	if err != nil {
-		return ralph.StopNormal, err
+	// Verbose mode: use original non-TUI runner for debugging/compatibility
+	if cfg.verbose {
+		summary, err := ralph.Run(ctx, loopCfg)
+		if err != nil {
+			return ralph.StopNormal, err
+		}
+		return summary.StopReason, nil
 	}
-	return summary.StopReason, nil
+
+	// Normal mode: use TUI
+	model := ralph.NewTUIModel(loopCfg)
+
+	// Create program
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Set program reference for trace updates and start the loop
+	model.SetProgram(p)
+
+	// Run TUI
+	finalModel, err := p.Run()
+	if err != nil {
+		return ralph.StopNormal, fmt.Errorf("TUI error: %w", err)
+	}
+
+	// Extract stop reason from final model
+	if m, ok := finalModel.(*ralph.TUIModel); ok {
+		if m.GetError() != nil {
+			return ralph.StopNormal, m.GetError()
+		}
+		if summary := m.GetSummary(); summary != nil {
+			return summary.StopReason, nil
+		}
+	}
+
+	return ralph.StopNormal, nil
 }
 
 func main() {

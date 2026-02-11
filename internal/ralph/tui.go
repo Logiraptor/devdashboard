@@ -82,6 +82,16 @@ func (m *TUIModel) GetTraceEmitter() *LocalTraceEmitter {
 	return m.traceEmitter
 }
 
+// GetError returns any error that occurred during the loop
+func (m *TUIModel) GetError() error {
+	return m.err
+}
+
+// GetSummary returns the run summary
+func (m *TUIModel) GetSummary() *RunSummary {
+	return m.summary
+}
+
 // SetProgram sets the tea.Program for sending messages
 // Must be called after tea.NewProgram(). This will start the loop.
 func (m *TUIModel) SetProgram(p *tea.Program) {
