@@ -296,44 +296,32 @@ func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	return orchestrator.Run(ctx)
 }
 
-// epicOrchestratorSetup holds setup state for epic orchestrator.
-type epicOrchestratorSetup struct {
+// resolvedConfig holds resolved configuration values common to all loop types.
+type resolvedConfig struct {
 	out              io.Writer
-	summary          *RunSummary
-	epicPromptData   *PromptData
+	consecutiveLimit int
+	wallTimeout      time.Duration
 	fetchPrompt      func(beadID string) (*PromptData, error)
 	render           func(data *PromptData) (string, error)
-	execute          func(ctx context.Context, prompt string) (*AgentResult, error)
 	assessFn         func(beadID string, result *AgentResult) (Outcome, string)
 	syncFn           func() error
-	currentFormatter *LogFormatter
-	processedBeads   map[string]bool
-	fetchChildren    func() ([]beads.Bead, error)
 }
 
-// setupEpicOrchestrator initializes the epic orchestrator setup.
-func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context, *epicOrchestratorSetup, func(), error) {
+// resolveConfig resolves common configuration defaults and hooks.
+func resolveConfig(cfg LoopConfig) resolvedConfig {
 	out := cfg.Output
 	if out == nil {
 		out = os.Stdout
 	}
 
-	// Resolve defaults.
+	consecutiveLimit := cfg.ConsecutiveFailureLimit
+	if consecutiveLimit <= 0 {
+		consecutiveLimit = DefaultConsecutiveFailureLimit
+	}
+
 	wallTimeout := cfg.Timeout
 	if wallTimeout <= 0 {
 		wallTimeout = DefaultWallClockTimeout
-	}
-
-	// Apply wall-clock timeout to context.
-	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
-
-	summary := &RunSummary{}
-
-	// Fetch epic info for verification prompt
-	epicPromptData, err := FetchPromptData(nil, cfg.WorkDir, cfg.Epic)
-	if err != nil {
-		cancelWall()
-		return nil, nil, nil, fmt.Errorf("fetching epic prompt data: %w", err)
 	}
 
 	fetchPrompt := cfg.FetchPrompt
@@ -346,26 +334,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 	render := cfg.Render
 	if render == nil {
 		render = RenderPrompt
-	}
-
-	// Track formatter for summary output
-	var currentFormatter *LogFormatter
-
-	execute := cfg.Execute
-	if execute == nil {
-		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
-			var opts []Option
-			if cfg.AgentTimeout > 0 {
-				opts = append(opts, WithTimeout(cfg.AgentTimeout))
-			}
-			if !cfg.Verbose {
-				currentFormatter = NewLogFormatter(out, false)
-				opts = append(opts, WithStdoutWriter(currentFormatter))
-			} else if out != os.Stdout {
-				opts = append(opts, WithStdoutWriter(out))
-			}
-			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
-		}
 	}
 
 	assessFn := cfg.AssessFn
@@ -384,6 +352,76 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 		}
 	}
 
+	return resolvedConfig{
+		out:              out,
+		consecutiveLimit: consecutiveLimit,
+		wallTimeout:      wallTimeout,
+		fetchPrompt:      fetchPrompt,
+		render:           render,
+		assessFn:         assessFn,
+		syncFn:           syncFn,
+	}
+}
+
+// createExecuteFn creates an execute function with formatter support.
+// The formatter pointer can be nil if formatter tracking is not needed.
+func createExecuteFn(cfg LoopConfig, out io.Writer, formatterPtr **LogFormatter) func(ctx context.Context, prompt string) (*AgentResult, error) {
+	return func(ctx context.Context, prompt string) (*AgentResult, error) {
+		var opts []Option
+		if cfg.AgentTimeout > 0 {
+			opts = append(opts, WithTimeout(cfg.AgentTimeout))
+		}
+		if !cfg.Verbose {
+			if formatterPtr != nil {
+				*formatterPtr = NewLogFormatter(out, false)
+				opts = append(opts, WithStdoutWriter(*formatterPtr))
+			}
+		} else if out != os.Stdout {
+			opts = append(opts, WithStdoutWriter(out))
+		}
+		return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
+	}
+}
+
+// epicOrchestratorSetup holds setup state for epic orchestrator.
+type epicOrchestratorSetup struct {
+	out              io.Writer
+	summary          *RunSummary
+	epicPromptData   *PromptData
+	fetchPrompt      func(beadID string) (*PromptData, error)
+	render           func(data *PromptData) (string, error)
+	execute          func(ctx context.Context, prompt string) (*AgentResult, error)
+	assessFn         func(beadID string, result *AgentResult) (Outcome, string)
+	syncFn           func() error
+	currentFormatter *LogFormatter
+	processedBeads   map[string]bool
+	fetchChildren    func() ([]beads.Bead, error)
+}
+
+// setupEpicOrchestrator initializes the epic orchestrator setup.
+func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context, *epicOrchestratorSetup, func(), error) {
+	resolved := resolveConfig(cfg)
+
+	// Apply wall-clock timeout to context.
+	ctx, cancelWall := context.WithTimeout(ctx, resolved.wallTimeout)
+
+	summary := &RunSummary{}
+
+	// Fetch epic info for verification prompt
+	epicPromptData, err := FetchPromptData(nil, cfg.WorkDir, cfg.Epic)
+	if err != nil {
+		cancelWall()
+		return nil, nil, nil, fmt.Errorf("fetching epic prompt data: %w", err)
+	}
+
+	// Track formatter for summary output
+	var currentFormatter *LogFormatter
+
+	execute := cfg.Execute
+	if execute == nil {
+		execute = createExecuteFn(cfg, resolved.out, &currentFormatter)
+	}
+
 	// Track processed beads to avoid infinite loops if a bead keeps appearing
 	processedBeads := make(map[string]bool)
 
@@ -393,14 +431,14 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 	}
 
 	setup := &epicOrchestratorSetup{
-		out:              out,
+		out:              resolved.out,
 		summary:          summary,
 		epicPromptData:   epicPromptData,
-		fetchPrompt:      fetchPrompt,
-		render:           render,
+		fetchPrompt:      resolved.fetchPrompt,
+		render:           resolved.render,
 		execute:          execute,
-		assessFn:         assessFn,
-		syncFn:           syncFn,
+		assessFn:         resolved.assessFn,
+		syncFn:           resolved.syncFn,
 		currentFormatter: currentFormatter,
 		processedBeads:   processedBeads,
 		fetchChildren:    fetchChildren,
@@ -778,24 +816,10 @@ type sequentialLoopSetup struct {
 
 // setupSequentialLoop initializes the sequential loop setup.
 func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, *sequentialLoopSetup, func(), error) {
-	out := cfg.Output
-	if out == nil {
-		out = os.Stdout
-	}
-
-	// Resolve defaults.
-	consecutiveLimit := cfg.ConsecutiveFailureLimit
-	if consecutiveLimit <= 0 {
-		consecutiveLimit = DefaultConsecutiveFailureLimit
-	}
-
-	wallTimeout := cfg.Timeout
-	if wallTimeout <= 0 {
-		wallTimeout = DefaultWallClockTimeout
-	}
+	resolved := resolveConfig(cfg)
 
 	// Apply wall-clock timeout to context.
-	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
+	ctx, cancelWall := context.WithTimeout(ctx, resolved.wallTimeout)
 
 	pickNext := cfg.PickNext
 	if pickNext == nil {
@@ -850,53 +874,12 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 		}
 	}
 
-	fetchPrompt := cfg.FetchPrompt
-	if fetchPrompt == nil {
-		fetchPrompt = func(beadID string) (*PromptData, error) {
-			return FetchPromptData(nil, cfg.WorkDir, beadID)
-		}
-	}
-
-	render := cfg.Render
-	if render == nil {
-		render = RenderPrompt
-	}
-
 	// Track formatter for summary output
 	var currentFormatter *LogFormatter
 
 	execute := cfg.Execute
 	if execute == nil {
-		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
-			var opts []Option
-			if cfg.AgentTimeout > 0 {
-				opts = append(opts, WithTimeout(cfg.AgentTimeout))
-			}
-			// Wrap stdout with log formatter if not verbose
-			if !cfg.Verbose {
-				currentFormatter = NewLogFormatter(out, false)
-				opts = append(opts, WithStdoutWriter(currentFormatter))
-			} else if out != os.Stdout {
-				opts = append(opts, WithStdoutWriter(out))
-			}
-			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
-		}
-	}
-
-	assessFn := cfg.AssessFn
-	if assessFn == nil {
-		assessFn = func(beadID string, result *AgentResult) (Outcome, string) {
-			return Assess(cfg.WorkDir, beadID, result)
-		}
-	}
-
-	syncFn := cfg.SyncFn
-	if syncFn == nil {
-		syncFn = func() error {
-			cmd := exec.Command("bd", "sync")
-			cmd.Dir = cfg.WorkDir
-			return cmd.Run()
-		}
+		execute = createExecuteFn(cfg, resolved.out, &currentFormatter)
 	}
 
 	summary := &RunSummary{}
@@ -905,17 +888,17 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	skippedBeads := make(map[string]bool)
 
 	setup := &sequentialLoopSetup{
-		out:                 out,
+		out:                 resolved.out,
 		summary:             summary,
 		pickNext:            pickNext,
-		fetchPrompt:         fetchPrompt,
-		render:              render,
+		fetchPrompt:         resolved.fetchPrompt,
+		render:              resolved.render,
 		execute:             execute,
-		assessFn:            assessFn,
-		syncFn:              syncFn,
+		assessFn:            resolved.assessFn,
+		syncFn:              resolved.syncFn,
 		currentFormatter:    currentFormatter,
-		consecutiveLimit:    consecutiveLimit,
-		consecutiveFailures: consecutiveFailures,
+		consecutiveLimit:    resolved.consecutiveLimit,
+		consecutiveFailures:  consecutiveFailures,
 		lastFailedBeadID:    lastFailedBeadID,
 		skippedBeads:        skippedBeads,
 	}
@@ -1248,24 +1231,10 @@ type concurrentLoopSetup struct {
 
 // setupConcurrentLoop initializes the concurrent loop setup.
 func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, *concurrentLoopSetup, func(), error) {
-	out := cfg.Output
-	if out == nil {
-		out = os.Stdout
-	}
-
-	// Resolve defaults.
-	consecutiveLimit := cfg.ConsecutiveFailureLimit
-	if consecutiveLimit <= 0 {
-		consecutiveLimit = DefaultConsecutiveFailureLimit
-	}
-
-	wallTimeout := cfg.Timeout
-	if wallTimeout <= 0 {
-		wallTimeout = DefaultWallClockTimeout
-	}
+	resolved := resolveConfig(cfg)
 
 	// Apply wall-clock timeout to context.
-	ctx, cancelWall := context.WithTimeout(ctx, wallTimeout)
+	ctx, cancelWall := context.WithTimeout(ctx, resolved.wallTimeout)
 
 	// Initialize worktree manager
 	wtMgr, err := NewWorktreeManager(cfg.WorkDir)
@@ -1284,34 +1253,6 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 		pickNext = picker.Next
 	}
 
-	fetchPrompt := cfg.FetchPrompt
-	if fetchPrompt == nil {
-		fetchPrompt = func(beadID string) (*PromptData, error) {
-			return FetchPromptData(nil, cfg.WorkDir, beadID)
-		}
-	}
-
-	render := cfg.Render
-	if render == nil {
-		render = RenderPrompt
-	}
-
-	assessFn := cfg.AssessFn
-	if assessFn == nil {
-		assessFn = func(beadID string, result *AgentResult) (Outcome, string) {
-			return Assess(cfg.WorkDir, beadID, result)
-		}
-	}
-
-	syncFn := cfg.SyncFn
-	if syncFn == nil {
-		syncFn = func() error {
-			cmd := exec.Command("bd", "sync")
-			cmd.Dir = cfg.WorkDir
-			return cmd.Run()
-		}
-	}
-
 	// Shared state protected by mutex
 	summary := &RunSummary{}
 	consecutiveFailures := int32(0)
@@ -1322,15 +1263,15 @@ func setupConcurrentLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	shouldStop := int32(0) // atomic flag for early termination
 
 	setup := &concurrentLoopSetup{
-		out:                 out,
+		out:                 resolved.out,
 		summary:             summary,
 		wtMgr:               wtMgr,
 		pickNext:            pickNext,
-		fetchPrompt:         fetchPrompt,
-		render:              render,
-		assessFn:            assessFn,
-		syncFn:              syncFn,
-		consecutiveLimit:    consecutiveLimit,
+		fetchPrompt:         resolved.fetchPrompt,
+		render:              resolved.render,
+		assessFn:            resolved.assessFn,
+		syncFn:              resolved.syncFn,
+		consecutiveLimit:    resolved.consecutiveLimit,
 		mu:                  sync.Mutex{}, // Initialize as zero value, don't copy
 		consecutiveFailures: consecutiveFailures,
 		lastFailedBeadID:    lastFailedBeadID,
