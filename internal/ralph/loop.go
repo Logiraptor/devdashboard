@@ -288,18 +288,12 @@ func countRemainingBeads(cfg LoopConfig) int {
 //
 // When Concurrency > 1, agents run in parallel, each in its own git worktree.
 func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
-	concurrency := cfg.Concurrency
-	if concurrency <= 0 {
-		concurrency = 1
+	// Use WaveOrchestrator by default
+	orchestrator, err := NewWaveOrchestrator(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating wave orchestrator: %w", err)
 	}
-
-	// Use sequential path for concurrency=1 to maintain exact current behavior
-	if concurrency == 1 {
-		return runSequential(ctx, cfg)
-	}
-
-	// Use concurrent path for concurrency > 1
-	return runConcurrent(ctx, cfg, concurrency)
+	return orchestrator.Run(ctx)
 }
 
 // epicOrchestratorSetup holds setup state for epic orchestrator.
