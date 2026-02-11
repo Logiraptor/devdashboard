@@ -627,6 +627,13 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 				summary.Failed++
 				summary.Iterations++
 				summaryMu.Unlock()
+				if m.program != nil {
+					m.program.Send(IterationEndMsg{
+						BeadID:       bead.ID,
+						Outcome:      OutcomeFailure,
+						ErrorMessage: fmt.Sprintf("worktree creation failed: %v", err),
+					})
+				}
 				return
 			}
 			defer func() {
@@ -655,6 +662,13 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 				summary.Failed++
 				summary.Iterations++
 				summaryMu.Unlock()
+				if m.program != nil {
+					m.program.Send(IterationEndMsg{
+						BeadID:       bead.ID,
+						Outcome:      OutcomeFailure,
+						ErrorMessage: fmt.Sprintf("prompt fetch failed: %v", err),
+					})
+				}
 				return
 			}
 
@@ -665,6 +679,13 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 				summary.Failed++
 				summary.Iterations++
 				summaryMu.Unlock()
+				if m.program != nil {
+					m.program.Send(IterationEndMsg{
+						BeadID:       bead.ID,
+						Outcome:      OutcomeFailure,
+						ErrorMessage: fmt.Sprintf("prompt render failed: %v", err),
+					})
+				}
 				return
 			}
 
@@ -683,6 +704,13 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 				summary.Failed++
 				summary.Iterations++
 				summaryMu.Unlock()
+				if m.program != nil {
+					m.program.Send(IterationEndMsg{
+						BeadID:       bead.ID,
+						Outcome:      OutcomeFailure,
+						ErrorMessage: fmt.Sprintf("agent execution failed: %v", err),
+					})
+				}
 				return
 			}
 
