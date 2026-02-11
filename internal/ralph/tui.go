@@ -2,6 +2,7 @@ package ralph
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,15 +10,17 @@ import (
 
 // TUIModel is the Bubble Tea model for ralph TUI
 type TUIModel struct {
-	config      LoopConfig
-	// traceView   *TraceViewModel // Will be created in separate task
-	summary     *RunSummary
-	status      string // Current status message
-	err         error
-	loopStarted bool
-	loopDone    bool
-	width       int
-	height      int
+	config       LoopConfig
+	traceView    *TraceViewModel
+	traceEmitter *LocalTraceEmitter
+	styles       RalphStyles
+	summary      *RunSummary
+	status       string // Current status message
+	err          error
+	loopStarted  bool
+	loopDone     bool
+	width        int
+	height       int
 }
 
 // Message types for loop communication
@@ -60,10 +63,19 @@ type LoopErrorMsg struct {
 
 // NewTUIModel creates a new TUI model with the given config
 func NewTUIModel(cfg LoopConfig) *TUIModel {
+	styles := DefaultStyles()
 	return &TUIModel{
-		config:  cfg,
-		summary: &RunSummary{},
+		config:       cfg,
+		traceView:    NewTraceViewModel(styles),
+		traceEmitter: NewLocalTraceEmitter(),
+		styles:       styles,
+		summary:      &RunSummary{},
 	}
+}
+
+// GetTraceEmitter returns the trace emitter for loop integration
+func (m *TUIModel) GetTraceEmitter() *LocalTraceEmitter {
+	return m.traceEmitter
 }
 
 // Init implements tea.Model
@@ -74,53 +86,102 @@ func (m *TUIModel) Init() tea.Cmd {
 
 // Update implements tea.Model
 func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "j", "down":
+			cmds = append(cmds, m.traceView.Update(msg))
+		case "k", "up":
+			cmds = append(cmds, m.traceView.Update(msg))
 		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Update trace view size if exists
-		// Will be implemented when TraceViewModel is created
+		// Reserve space for header/footer
+		traceHeight := msg.Height - 4
+		if traceHeight < 10 {
+			traceHeight = 10
+		}
+		m.traceView.SetSize(msg.Width, traceHeight)
+
+	case TraceUpdateMsg:
+		m.traceView.SetTrace(msg.Trace)
+
 	case LoopStartedMsg:
 		m.loopStarted = true
-		m.status = "Loop started"
+		m.status = fmt.Sprintf("Loop started: %s", msg.Epic)
+
 	case IterationStartMsg:
 		m.status = fmt.Sprintf("Working on %s: %s", msg.BeadID, msg.BeadTitle)
+
 	case IterationEndMsg:
-		// Update summary counters based on outcome
-		m.summary.Iterations++
+		// Update summary counters
 		switch msg.Outcome {
 		case OutcomeSuccess:
 			m.summary.Succeeded++
-		case OutcomeQuestion:
-			m.summary.Questions++
 		case OutcomeFailure:
 			m.summary.Failed++
 		case OutcomeTimeout:
 			m.summary.TimedOut++
+		case OutcomeQuestion:
+			m.summary.Questions++
 		}
+		m.summary.Iterations++
+
 	case LoopEndMsg:
 		m.loopDone = true
 		m.summary = msg.Summary
 		m.status = fmt.Sprintf("Complete: %s", msg.StopReason)
+
 	case LoopErrorMsg:
 		m.err = msg.Err
 		return m, tea.Quit
 	}
-	return m, nil
+
+	return m, tea.Batch(cmds...)
 }
 
 // View implements tea.Model
 func (m *TUIModel) View() string {
-	// Placeholder - will be enhanced with trace view
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n", m.err)
+		return m.styles.Error.Render(fmt.Sprintf("Error: %v\n", m.err))
 	}
-	return fmt.Sprintf("Ralph Loop\nStatus: %s\n", m.status)
+
+	var b strings.Builder
+
+	// Header
+	header := m.styles.Title.Render("Ralph Loop")
+	if m.config.Epic != "" {
+		header += " " + m.styles.Subtitle.Render(m.config.Epic)
+	}
+	b.WriteString(header)
+	b.WriteString("\n")
+
+	// Trace view
+	b.WriteString(m.traceView.View())
+	b.WriteString("\n")
+
+	// Status bar
+	statusLine := m.styles.Status.Render(m.status)
+	if m.summary.Iterations > 0 {
+		stats := fmt.Sprintf(" | %d done, %d failed",
+			m.summary.Succeeded, m.summary.Failed)
+		statusLine += m.styles.Muted.Render(stats)
+	}
+	b.WriteString(statusLine)
+
+	// Quit hint
+	if m.loopDone {
+		b.WriteString("\n")
+		b.WriteString(m.styles.Muted.Render("Press q to quit"))
+	}
+
+	return b.String()
 }
 
 // startLoopCmd returns a command that runs the loop in background
