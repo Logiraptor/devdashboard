@@ -436,3 +436,39 @@ func TestBeadPicker_Next_DefaultScorerWhenNil(t *testing.T) {
 		t.Errorf("expected high-pri (P1), got %s (P%d)", got.ID, got.Priority)
 	}
 }
+
+func TestBeadPicker_Next_RequiresWorkDir(t *testing.T) {
+	picker := &BeadPicker{
+		WorkDir: "", // empty WorkDir
+		RunBD:   mockBDReady([]bdReadyEntry{}),
+	}
+
+	got, err := picker.Next()
+	if err == nil {
+		t.Fatal("expected error when WorkDir is empty, got nil")
+	}
+	if got != nil {
+		t.Errorf("expected nil bead when WorkDir is empty, got %+v", got)
+	}
+	if err.Error() != "BeadPicker.WorkDir is required" {
+		t.Errorf("expected error message 'BeadPicker.WorkDir is required', got %q", err.Error())
+	}
+}
+
+func TestBeadPicker_Count_RequiresWorkDir(t *testing.T) {
+	picker := &BeadPicker{
+		WorkDir: "", // empty WorkDir
+		RunBD:   mockBDReady([]bdReadyEntry{}),
+	}
+
+	count, err := picker.Count()
+	if err == nil {
+		t.Fatal("expected error when WorkDir is empty, got nil")
+	}
+	if count != 0 {
+		t.Errorf("expected count 0 when WorkDir is empty, got %d", count)
+	}
+	if err.Error() != "BeadPicker.WorkDir is required" {
+		t.Errorf("expected error message 'BeadPicker.WorkDir is required', got %q", err.Error())
+	}
+}

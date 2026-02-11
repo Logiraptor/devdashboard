@@ -31,6 +31,7 @@ type BDRunner = bd.Runner
 type BeadScorer func(beads []beads.Bead)
 
 // BeadPicker queries bd for ready beads and selects the next one to work on.
+// WorkDir must be set to a valid git repository path.
 // BeadPicker is safe for concurrent use.
 type BeadPicker struct {
 	WorkDir string
@@ -54,6 +55,9 @@ type BeadPicker struct {
 // (oldest first), and returns the top bead. Returns nil if no beads are available.
 // Next is safe for concurrent use.
 func (p *BeadPicker) Next() (*beads.Bead, error) {
+	if p.WorkDir == "" {
+		return nil, fmt.Errorf("BeadPicker.WorkDir is required")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -97,6 +101,9 @@ func (p *BeadPicker) Next() (*beads.Bead, error) {
 // Count returns the total number of ready beads available.
 // Count is safe for concurrent use.
 func (p *BeadPicker) Count() (int, error) {
+	if p.WorkDir == "" {
+		return 0, fmt.Errorf("BeadPicker.WorkDir is required")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
