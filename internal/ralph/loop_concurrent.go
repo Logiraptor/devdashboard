@@ -161,21 +161,21 @@ func pickAndValidateBead(setup *concurrentLoopSetup, cfg LoopConfig) (*beads.Bea
 // executeAgentInWorktree creates worktree, fetches prompt, renders it, and executes agent.
 func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurrentLoopSetup, workerID int, bead *beads.Bead, worktreePath, branchName string) (*AgentResult, error) {
 	// Fetch prompt data (beads state is shared, so use original workdir)
-	promptData, err := setup.fetchPrompt(bead.ID)
-	if err != nil {
+	promptData, fetchErr := setup.fetchPrompt(bead.ID)
+	if fetchErr != nil {
 		setup.mu.Lock()
-		writef(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, err)
+		writef(setup.out, "[worker %d] failed to fetch prompt for %s: %v\n", workerID, bead.ID, fetchErr)
 		setup.mu.Unlock()
-		return nil, err
+		return nil, fetchErr
 	}
 
 	// Render prompt
-	prompt, err := setup.render(promptData)
-	if err != nil {
+	prompt, renderErr := setup.render(promptData)
+	if renderErr != nil {
 		setup.mu.Lock()
-		writef(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, err)
+		writef(setup.out, "[worker %d] failed to render prompt for %s: %v\n", workerID, bead.ID, renderErr)
 		setup.mu.Unlock()
-		return nil, err
+		return nil, renderErr
 	}
 
 	// Execute agent in worktree (use worktree path for isolation)
@@ -186,12 +186,12 @@ func executeAgentInWorktree(ctx context.Context, cfg LoopConfig, setup *concurre
 		}
 		return RunAgent(ctx, worktreePath, prompt, opts...)
 	}
-	result, err := agentExecute(ctx, prompt)
-	if err != nil {
+	result, executeErr := agentExecute(ctx, prompt)
+	if executeErr != nil {
 		setup.mu.Lock()
-		writef(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, err)
+		writef(setup.out, "[worker %d] failed to run agent for %s: %v\n", workerID, bead.ID, executeErr)
 		setup.mu.Unlock()
-		return nil, err
+		return nil, executeErr
 	}
 
 	return result, nil
@@ -248,8 +248,8 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			}
 
 			// Pick and validate bead
-			bead, shouldContinue, err := pickAndValidateBead(setup, cfg)
-			if err != nil {
+			bead, shouldContinue, pickErr := pickAndValidateBead(setup, cfg)
+			if pickErr != nil {
 				return
 			}
 			if shouldContinue {
@@ -271,24 +271,24 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			}
 
 			// Create worktree for this bead
-			worktreePath, branchName, err := setup.wtMgr.CreateWorktree(bead.ID)
-			if err != nil {
+			worktreePath, branchName, createErr := setup.wtMgr.CreateWorktree(bead.ID)
+			if createErr != nil {
 				setup.mu.Lock()
-				writef(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, err)
+				writef(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, createErr)
 				setup.mu.Unlock()
 				continue
 			}
 			defer func() {
-				if err := setup.wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
+				if removeErr := setup.wtMgr.RemoveWorktree(worktreePath, branchName); removeErr != nil {
 					setup.mu.Lock()
-					writef(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, err)
+					writef(setup.out, "[worker %d] warning: failed to remove worktree %s: %v\n", workerID, worktreePath, removeErr)
 					setup.mu.Unlock()
 				}
 			}()
 
 			// Execute agent in worktree
-			result, err := executeAgentInWorktree(ctx, cfg, setup, workerID, bead, worktreePath, branchName)
-			if err != nil {
+			result, executeErr := executeAgentInWorktree(ctx, cfg, setup, workerID, bead, worktreePath, branchName)
+			if executeErr != nil {
 				continue
 			}
 
@@ -308,10 +308,10 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 
 			// Sync beads state (best-effort, don't fail on error)
 			setup.mu.Unlock()
-			if err := setup.syncFn(); err != nil {
+			if syncErr := setup.syncFn(); syncErr != nil {
 				setup.mu.Lock()
 				if cfg.Verbose {
-					writef(setup.out, "  bd sync warning: %v\n", err)
+					writef(setup.out, "  bd sync warning: %v\n", syncErr)
 				}
 				setup.mu.Unlock()
 			}

@@ -55,17 +55,17 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 				// So we'll use bd show to verify it exists and get title, then construct Bead
 				showCmd := exec.Command("bd", "show", cfg.TargetBead, "--json")
 				showCmd.Dir = cfg.WorkDir
-				outBytes, err := showCmd.Output()
-				if err != nil {
-					return nil, fmt.Errorf("bd show %s: %w", cfg.TargetBead, err)
+				outBytes, showErr := showCmd.Output()
+				if showErr != nil {
+					return nil, fmt.Errorf("bd show %s: %w", cfg.TargetBead, showErr)
 				}
 				// bd show returns an array with one entry containing id, title, description
 				var showEntries []struct {
 					ID    string `json:"id"`
 					Title string `json:"title"`
 				}
-				if err := json.Unmarshal(outBytes, &showEntries); err != nil {
-					return nil, fmt.Errorf("parsing bd show output: %w", err)
+				if unmarshalErr := json.Unmarshal(outBytes, &showEntries); unmarshalErr != nil {
+					return nil, fmt.Errorf("parsing bd show output: %w", unmarshalErr)
 				}
 				if len(showEntries) == 0 {
 					return nil, fmt.Errorf("bead %s not found", cfg.TargetBead)
@@ -158,25 +158,25 @@ func handleSameBeadRetry(setup *sequentialLoopSetup, bead *beads.Bead, cfg LoopC
 // executeAgentForBead fetches prompt, renders it, executes agent, and prints summary.
 func executeAgentForBead(ctx context.Context, cfg LoopConfig, setup *sequentialLoopSetup, bead *beads.Bead, loopStart time.Time, i int) (string, *AgentResult, error) {
 	// Fetch full bead data and render prompt.
-	promptData, err := setup.fetchPrompt(bead.ID)
-	if err != nil {
+	promptData, fetchErr := setup.fetchPrompt(bead.ID)
+	if fetchErr != nil {
 		setup.summary.Duration = time.Since(loopStart)
 		return "", nil, fmt.Errorf("iteration %d: fetching prompt data for %s: %w",
-			i+1, bead.ID, err)
+			i+1, bead.ID, fetchErr)
 	}
 
-	prompt, err := setup.render(promptData)
-	if err != nil {
+	prompt, renderErr := setup.render(promptData)
+	if renderErr != nil {
 		setup.summary.Duration = time.Since(loopStart)
 		return "", nil, fmt.Errorf("iteration %d: rendering prompt for %s: %w",
-			i+1, bead.ID, err)
+			i+1, bead.ID, renderErr)
 	}
 
 	// Get commit hash before agent execution for landing check.
 	cmd := exec.Command("git", "log", "-1", "--format=%H")
 	cmd.Dir = cfg.WorkDir
 	commitHashBefore := ""
-	if outBytes, err := cmd.Output(); err == nil {
+	if outBytes, gitErr := cmd.Output(); gitErr == nil {
 		commitHashBefore = strings.TrimSpace(string(outBytes))
 	}
 
@@ -186,11 +186,11 @@ func executeAgentForBead(ctx context.Context, cfg LoopConfig, setup *sequentialL
 	}
 
 	// Execute agent.
-	result, err := setup.execute(ctx, prompt)
-	if err != nil {
+	result, executeErr := setup.execute(ctx, prompt)
+	if executeErr != nil {
 		setup.summary.Duration = time.Since(loopStart)
 		return "", nil, fmt.Errorf("iteration %d: running agent for %s: %w",
-			i+1, bead.ID, err)
+			i+1, bead.ID, executeErr)
 	}
 
 	// Print summary if formatter was used
@@ -313,10 +313,10 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	}
 
 	// 1. Pick next bead.
-	bead, err := setup.pickNext()
-	if err != nil {
+	bead, pickErr := setup.pickNext()
+	if pickErr != nil {
 		setup.summary.Duration = time.Since(loopStart)
-		return false, fmt.Errorf("iteration %d: picking bead: %w", i+1, err)
+		return false, fmt.Errorf("iteration %d: picking bead: %w", i+1, pickErr)
 	}
 	if bead == nil {
 		setup.summary.StopReason = StopNormal
@@ -324,9 +324,9 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	}
 
 	// Guard: same-bead retry detection.
-	bead, shouldContinue, err := handleSameBeadRetry(setup, bead, cfg, loopStart, i)
-	if err != nil {
-		return false, err
+	bead, shouldContinue, retryErr := handleSameBeadRetry(setup, bead, cfg, loopStart, i)
+	if retryErr != nil {
+		return false, retryErr
 	}
 	if !shouldContinue {
 		return false, nil
@@ -340,9 +340,9 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	}
 
 	// 2. Execute agent for bead.
-	commitHashBefore, result, err := executeAgentForBead(ctx, cfg, setup, bead, loopStart, i)
-	if err != nil {
-		return false, err
+	commitHashBefore, result, executeErr := executeAgentForBead(ctx, cfg, setup, bead, loopStart, i)
+	if executeErr != nil {
+		return false, executeErr
 	}
 
 	// 3. Assess outcome.
@@ -366,9 +366,9 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 	}
 
 	// 6. Sync beads state.
-	if err := setup.syncFn(); err != nil {
+	if syncErr := setup.syncFn(); syncErr != nil {
 		if cfg.Verbose {
-			writef(setup.out, "  bd sync warning: %v\n", err)
+			writef(setup.out, "  bd sync warning: %v\n", syncErr)
 		}
 	}
 
@@ -399,18 +399,18 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 		return runEpicOrchestrator(ctx, cfg)
 	}
 
-	ctx, setup, cleanup, err := setupSequentialLoop(ctx, cfg)
-	if err != nil {
-		return nil, err
+	ctx, setup, cleanup, setupErr := setupSequentialLoop(ctx, cfg)
+	if setupErr != nil {
+		return nil, setupErr
 	}
 	defer cleanup()
 
 	loopStart := time.Now()
 
 	for i := 0; i < cfg.MaxIterations; i++ {
-		shouldContinue, err := processSequentialIteration(ctx, cfg, setup, loopStart, i)
-		if err != nil {
-			return setup.summary, err
+		shouldContinue, iterErr := processSequentialIteration(ctx, cfg, setup, loopStart, i)
+		if iterErr != nil {
+			return setup.summary, iterErr
 		}
 		if !shouldContinue {
 			break
