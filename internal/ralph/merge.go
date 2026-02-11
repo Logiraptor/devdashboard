@@ -48,10 +48,10 @@ func MergeBranches(repoPath, targetBranch, sourceBranch string, disableHooks boo
 	checkoutCmd.Stderr = &checkoutStderr
 	if err := checkoutCmd.Run(); err != nil {
 		msg := strings.TrimSpace(checkoutStderr.String())
-		if msg == "" {
-			msg = err.Error()
+		if msg != "" {
+			return fmt.Errorf("checkout %s: %s: %w", targetBranch, msg, err)
 		}
-		return fmt.Errorf("checkout %s: %s", targetBranch, msg)
+		return fmt.Errorf("checkout %s: %w", targetBranch, err)
 	}
 
 	// Restore original branch on return (best effort)
@@ -80,9 +80,6 @@ func MergeBranches(repoPath, targetBranch, sourceBranch string, disableHooks boo
 	mergeCmd.Stderr = &mergeStderr
 	if err := mergeCmd.Run(); err != nil {
 		msg := strings.TrimSpace(mergeStderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
 		
 		// Check if this is a merge conflict
 		if hasMergeConflicts(repoPath) {
@@ -93,10 +90,16 @@ func MergeBranches(repoPath, targetBranch, sourceBranch string, disableHooks boo
 					_ = createErr // Best effort - if bead creation fails, still return merge error
 				}
 			}
-			return fmt.Errorf("merge %s into %s: conflicts detected: %s", sourceRef, targetBranch, msg)
+			if msg != "" {
+				return fmt.Errorf("merge %s into %s: conflicts detected: %s: %w", sourceRef, targetBranch, msg, err)
+			}
+			return fmt.Errorf("merge %s into %s: conflicts detected: %w", sourceRef, targetBranch, err)
 		}
 		
-		return fmt.Errorf("merge %s into %s: %s", sourceRef, targetBranch, msg)
+		if msg != "" {
+			return fmt.Errorf("merge %s into %s: %s: %w", sourceRef, targetBranch, msg, err)
+		}
+		return fmt.Errorf("merge %s into %s: %w", sourceRef, targetBranch, err)
 	}
 
 	return nil

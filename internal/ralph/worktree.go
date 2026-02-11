@@ -101,10 +101,10 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 		addCmd.Stderr = &addStderr
 		if err := addCmd.Run(); err != nil {
 			msg := strings.TrimSpace(addStderr.String())
-			if msg == "" {
-				msg = err.Error()
+			if msg != "" {
+				return "", "", fmt.Errorf("creating worktree for %s: %s: %w", beadID, msg, err)
 			}
-			return "", "", fmt.Errorf("git worktree add: %s", msg)
+			return "", "", fmt.Errorf("creating worktree for %s: %w", beadID, err)
 		}
 	} else {
 		// Branch exists: add worktree to existing branch
@@ -112,10 +112,10 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 		addCmd.Stderr = &addStderr
 		if err := addCmd.Run(); err != nil {
 			msg := strings.TrimSpace(addStderr.String())
-			if msg == "" {
-				msg = err.Error()
+			if msg != "" {
+				return "", "", fmt.Errorf("creating worktree for %s: %s: %w", beadID, msg, err)
 			}
-			return "", "", fmt.Errorf("git worktree add: %s", msg)
+			return "", "", fmt.Errorf("creating worktree for %s: %w", beadID, err)
 		}
 	}
 
@@ -132,14 +132,14 @@ func (w *WorktreeManager) RemoveWorktree(worktreePath, branchName string) error 
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
 		// If worktree doesn't exist, that's okay (idempotent)
-		if strings.Contains(msg, "not found") || strings.Contains(msg, "No such file") {
+		if msg != "" && (strings.Contains(msg, "not found") || strings.Contains(msg, "No such file")) {
 			return nil
 		}
-		return fmt.Errorf("git worktree remove: %s", msg)
+		if msg != "" {
+			return fmt.Errorf("removing worktree %s: %s: %w", worktreePath, msg, err)
+		}
+		return fmt.Errorf("removing worktree %s: %w", worktreePath, err)
 	}
 
 	// Branch is preserved after worktree removal
