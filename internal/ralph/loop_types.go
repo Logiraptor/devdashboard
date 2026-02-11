@@ -256,7 +256,8 @@ func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome
 
 // formatSummary formats the end-of-loop summary.
 func formatSummary(summary *RunSummary, remainingBeads int) string {
-	var lines []string
+	// Max 8 lines: 1 header + up to 6 conditionals + 1 duration
+	lines := make([]string, 0, 8)
 	lines = append(lines, "Ralph loop complete:")
 
 	if summary.Succeeded > 0 {

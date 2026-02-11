@@ -241,7 +241,8 @@ func (m *TUIModel) View() string {
 	b.WriteString("\n")
 
 	// Status bar
-	var statusParts []string
+	// Max 5 parts: status (1) + iter (1) + status msg (1) + stats (1) + duration (1)
+	statusParts := make([]string, 0, 5)
 	
 	// Show running/completed status
 	if m.loopDone {

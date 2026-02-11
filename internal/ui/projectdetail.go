@@ -514,7 +514,8 @@ func resourceStatus(r project.Resource) string {
 			shells++
 		}
 	}
-	var parts []string
+	// Max 3 parts: 1 header + shells (1) + agents (1)
+	parts := make([]string, 0, 3)
 	parts = append(parts, "●")
 	if shells > 0 {
 		parts = append(parts, fmt.Sprintf("%d shell", shells))

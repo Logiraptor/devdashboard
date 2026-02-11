@@ -96,7 +96,8 @@ func (p *ProgressWindow) View() string {
 
 // refreshContent rebuilds the viewport content from accumulated events.
 func (p *ProgressWindow) refreshContent() {
-	var lines []string
+	// Each event can produce 1-3 lines (base + metadata + newline), estimate conservatively
+	lines := make([]string, 0, len(p.events)*2)
 	for i, ev := range p.events {
 		ts := ev.Timestamp.Format("15:04:05")
 		statusIcon := statusIcon(ev.Status)

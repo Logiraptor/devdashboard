@@ -81,7 +81,7 @@ func IsBeadClosed(workDir, beadID string, bdShow BDShowFunc) (bool, error) {
 
 // FormatLandingStatus returns a human-readable summary of landing status.
 func FormatLandingStatus(status *LandingStatus) string {
-	var parts []string
+	parts := make([]string, 0, 3)
 	if status.HasUncommittedChanges {
 		parts = append(parts, "uncommitted changes")
 	}

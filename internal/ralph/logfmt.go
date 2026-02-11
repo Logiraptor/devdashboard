@@ -498,7 +498,8 @@ func (f *LogFormatter) Summary() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	parts := []string{}
+	// Max 6 parts: reads, writes, edits, searches, shells, errors
+	parts := make([]string, 0, 6)
 	if f.readsCount > 0 {
 		parts = append(parts, fmt.Sprintf("read %d", f.readsCount))
 	}
@@ -534,7 +535,8 @@ func (f *LogFormatter) BeadSummary() string {
 
 	// Files changed
 	if len(f.filesChanged) > 0 {
-		var fileParts []string
+		// Limit to 5 files, so preallocate with capacity 5
+		fileParts := make([]string, 0, 5)
 		for _, fc := range f.filesChanged {
 			name := filepath.Base(fc.Path)
 			if fc.LinesAdded > 0 && fc.LinesRemoved > 0 {
@@ -612,7 +614,9 @@ func (f *LogFormatter) renderProgressLine() string {
 		title = title[:27] + "..."
 	}
 
-	parts := []string{fmt.Sprintf("● %s \"%s\"", f.beadID, title)}
+	// Max 6 parts: 1 header + up to 4 conditionals + 1 time
+	parts := make([]string, 0, 6)
+	parts = append(parts, fmt.Sprintf("● %s \"%s\"", f.beadID, title))
 	if f.readsCount > 0 {
 		parts = append(parts, fmt.Sprintf("read %d", f.readsCount))
 	}
@@ -633,7 +637,8 @@ func (f *LogFormatter) renderProgressLine() string {
 // renderProgressWithActivities renders the progress line with activity stream below it.
 // Must be called with mutex held.
 func (f *LogFormatter) renderProgressWithActivities() string {
-	var lines []string
+	// 1 progress line + len(activities) activity lines
+	lines := make([]string, 0, 1+len(f.activities))
 	lines = append(lines, f.renderProgressLine())
 
 	// Add activity lines with tree-style prefixes

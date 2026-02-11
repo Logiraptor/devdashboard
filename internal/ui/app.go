@@ -383,7 +383,7 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 	})
 
 	// Combine: repos first, then PRs
-	var ordered []session.TrackedPane
+	ordered := make([]session.TrackedPane, 0, len(repoPanes)+len(prPanes))
 	ordered = append(ordered, repoPanes...)
 	ordered = append(ordered, prPanes...)
 

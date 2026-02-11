@@ -156,7 +156,7 @@ func parseBDShow(data []byte) (*bdShowEntry, error) {
 // needsHumanDeps returns the IDs of open dependencies that carry the
 // "needs-human" label, indicating the agent raised questions.
 func needsHumanDeps(entry *bdShowEntry) []string {
-	var ids []string
+	ids := make([]string, 0, len(entry.Dependencies)+len(entry.Dependents))
 	// Check both dependencies and dependents for needs-human beads.
 	// Question beads created by the agent will appear as dependencies
 	// that block this bead (dependency_type "blocks").
