@@ -3,7 +3,6 @@ package ralph
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -207,92 +206,5 @@ func TestRunAgent_InvalidWorkDir(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected error for invalid work dir")
-	}
-}
-
-func TestTraceWriter_PassesThroughData(t *testing.T) {
-	// Create a real trace client (it will disable itself if server unavailable)
-	traceClient := NewTraceClient()
-	var inner bytes.Buffer
-	writer := NewTraceWriter(&inner, traceClient)
-
-	// Write a tool_call event (nested schema)
-	startEvent := map[string]interface{}{
-		"type":    "tool_call",
-		"subtype": "started",
-		"id":      "tool-1",
-		"tool_call": map[string]interface{}{
-			"readToolCall": map[string]interface{}{
-				"args": map[string]interface{}{
-					"target_file": "/path/to/file.go",
-				},
-			},
-		},
-	}
-	startJSON, _ := json.Marshal(startEvent)
-	_, err := writer.Write(append(startJSON, '\n'))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify inner writer received the data
-	innerStr := inner.String()
-	if !bytes.Contains([]byte(innerStr), []byte(`"type":"tool_call"`)) {
-		t.Error("inner writer should have received tool_call event")
-	}
-}
-
-func TestTraceWriter_HandlesPartialLines(t *testing.T) {
-	traceClient := NewTraceClient()
-	var inner bytes.Buffer
-	writer := NewTraceWriter(&inner, traceClient)
-
-	// Write partial line
-	partial := []byte(`{"type":"tool_call","subtype":"started","id":"tool-3","tool_call":{"editToolCall":{"args":{"path":"test.go"}}`)
-	n1, err := writer.Write(partial)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if n1 != len(partial) {
-		t.Errorf("expected Write to return %d, got %d", len(partial), n1)
-	}
-
-	// Complete the line
-	completion := []byte(`}}}\n`)
-	n2, err := writer.Write(completion)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if n2 != len(completion) {
-		t.Errorf("expected Write to return %d, got %d", len(completion), n2)
-	}
-
-	// Verify inner writer received complete data
-	innerStr := inner.String()
-	if !bytes.Contains([]byte(innerStr), []byte(`"path":"test.go"`)) {
-		t.Error("inner writer should have received complete event after partial write")
-	}
-}
-
-func TestTraceWriter_IgnoresNonToolCallEvents(t *testing.T) {
-	traceClient := NewTraceClient()
-	var inner bytes.Buffer
-	writer := NewTraceWriter(&inner, traceClient)
-
-	// Write a non-tool_call event
-	event := map[string]interface{}{
-		"type": "assistant",
-		"content": "Hello",
-	}
-	eventJSON, _ := json.Marshal(event)
-	_, err := writer.Write(append(eventJSON, '\n'))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify inner writer still received the data
-	innerStr := inner.String()
-	if !bytes.Contains([]byte(innerStr), []byte(`"type":"assistant"`)) {
-		t.Error("inner writer should have received non-tool_call event")
 	}
 }

@@ -315,7 +315,6 @@ type epicOrchestratorSetup struct {
 	currentFormatter *LogFormatter
 	processedBeads   map[string]bool
 	fetchChildren    func() ([]beads.Bead, error)
-	traceClient      *TraceClient
 }
 
 // setupEpicOrchestrator initializes the epic orchestrator setup.
@@ -358,9 +357,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 	// Track formatter for summary output
 	var currentFormatter *LogFormatter
 
-	// Set up trace client for devdeploy trace server.
-	traceClient := NewTraceClient()
-
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
@@ -373,10 +369,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 				opts = append(opts, WithStdoutWriter(currentFormatter))
 			} else if out != os.Stdout {
 				opts = append(opts, WithStdoutWriter(out))
-			}
-			// Pass trace client to executor
-			if traceClient != nil {
-				opts = append(opts, WithTraceClient(traceClient))
 			}
 			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 		}
@@ -418,7 +410,6 @@ func setupEpicOrchestrator(ctx context.Context, cfg LoopConfig) (context.Context
 		currentFormatter: currentFormatter,
 		processedBeads:   processedBeads,
 		fetchChildren:    fetchChildren,
-		traceClient:      traceClient,
 	}
 
 	cleanup := func() {
@@ -479,11 +470,6 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	// Mark as processed to avoid reprocessing
 	setup.processedBeads[child.ID] = true
 
-	// Start iteration trace
-	iterStartTime := time.Now()
-	iterSpanID := setup.traceClient.StartIteration(child.ID, child.Title, iterNum)
-	setup.traceClient.SetParent(iterSpanID)
-
 	// Fetch prompt data and render prompt
 	promptData, err := setup.fetchPrompt(child.ID)
 	if err != nil {
@@ -514,9 +500,6 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 	result, err := setup.execute(ctx, prompt)
 	if err != nil {
 		setup.summary.Duration = time.Since(loopStart)
-		// End iteration trace with error
-		durationMs := time.Since(iterStartTime).Milliseconds()
-		setup.traceClient.EndIteration(iterSpanID, "error", durationMs)
 		return false, fmt.Errorf("iteration %d: running agent for %s: %w", iterNum, child.ID, err)
 	}
 
@@ -579,10 +562,6 @@ func processEpicIteration(ctx context.Context, cfg LoopConfig, setup *epicOrches
 		setup.summary.Duration = time.Since(loopStart)
 		return false, nil
 	}
-
-	// End iteration trace with outcome and duration
-	durationMs := time.Since(iterStartTime).Milliseconds()
-	setup.traceClient.EndIteration(iterSpanID, outcome.String(), durationMs)
 
 	// Sync beads state after each completion
 	if err := setup.syncFn(); err != nil {
@@ -764,17 +743,6 @@ func runEpicOrchestrator(ctx context.Context, cfg LoopConfig) (*RunSummary, erro
 
 	loopStart := time.Now()
 
-	// Start trace loop
-	model := "composer-1" // Default model (matches executor default)
-	maxIterations := 0    // Epic orchestrator doesn't have a max iterations limit
-	traceID := setup.traceClient.StartLoop(model, cfg.Epic, cfg.WorkDir, maxIterations)
-	defer func() {
-		setup.traceClient.EndLoop(setup.summary.StopReason.String(), setup.summary.Iterations, setup.summary.Succeeded, setup.summary.Failed)
-	}()
-
-	// Suppress unused variable warning
-	_ = traceID
-
 	// Main loop: query for ready leaves, process first one, repeat until none remain
 	iteration := 0
 	for {
@@ -812,7 +780,6 @@ type sequentialLoopSetup struct {
 	consecutiveFailures int
 	lastFailedBeadID    string
 	skippedBeads        map[string]bool
-	traceClient         *TraceClient
 }
 
 // setupSequentialLoop initializes the sequential loop setup.
@@ -904,9 +871,6 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 	// Track formatter for summary output
 	var currentFormatter *LogFormatter
 
-	// Set up trace client for devdeploy trace server.
-	traceClient := NewTraceClient()
-
 	execute := cfg.Execute
 	if execute == nil {
 		execute = func(ctx context.Context, prompt string) (*AgentResult, error) {
@@ -920,10 +884,6 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 				opts = append(opts, WithStdoutWriter(currentFormatter))
 			} else if out != os.Stdout {
 				opts = append(opts, WithStdoutWriter(out))
-			}
-			// Pass trace client to executor
-			if traceClient != nil {
-				opts = append(opts, WithTraceClient(traceClient))
 			}
 			return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
 		}
@@ -964,7 +924,6 @@ func setupSequentialLoop(ctx context.Context, cfg LoopConfig) (context.Context, 
 		consecutiveFailures: consecutiveFailures,
 		lastFailedBeadID:    lastFailedBeadID,
 		skippedBeads:        skippedBeads,
-		traceClient:         traceClient,
 	}
 
 	cleanup := func() {
@@ -1182,27 +1141,16 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 		return false, nil
 	}
 
-	// Start iteration trace
-	iterStartTime := time.Now()
-	iterSpanID := setup.traceClient.StartIteration(bead.ID, bead.Title, i+1)
-	setup.traceClient.SetParent(iterSpanID)
-
 	// Dry-run: print what would be done without executing.
 	if cfg.DryRun {
 		_, _ = fmt.Fprintf(setup.out, "%s\n", formatIterationLog(i+1, cfg.MaxIterations, bead.ID, bead.Title, OutcomeSuccess, 0, ""))
 		setup.summary.Iterations++
-		// End iteration trace for dry-run
-		durationMs := time.Since(iterStartTime).Milliseconds()
-		setup.traceClient.EndIteration(iterSpanID, "success", durationMs)
 		return false, nil
 	}
 
 	// 2. Execute agent for bead.
 	commitHashBefore, result, err := executeAgentForBead(ctx, cfg, setup, bead, loopStart, i)
 	if err != nil {
-		// End iteration trace with error
-		durationMs := time.Since(iterStartTime).Milliseconds()
-		setup.traceClient.EndIteration(iterSpanID, "error", durationMs)
 		return false, err
 	}
 
@@ -1219,10 +1167,6 @@ func processSequentialIteration(ctx context.Context, cfg LoopConfig, setup *sequ
 
 	// 5. Update counters.
 	updateOutcomeCounters(setup, bead, outcome)
-
-	// End iteration trace with outcome and duration
-	durationMs := time.Since(iterStartTime).Milliseconds()
-	setup.traceClient.EndIteration(iterSpanID, outcome.String(), durationMs)
 
 	// Guard: consecutive failure limit.
 	if setup.consecutiveFailures >= setup.consecutiveLimit {
@@ -1272,17 +1216,6 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	loopStart := time.Now()
 
-	// Start trace loop
-	model := "composer-1" // Default model (matches executor default)
-	epic := cfg.Epic
-	if epic == "" {
-		epic = "default"
-	}
-	traceID := setup.traceClient.StartLoop(model, epic, cfg.WorkDir, cfg.MaxIterations)
-	defer func() {
-		setup.traceClient.EndLoop(setup.summary.StopReason.String(), setup.summary.Iterations, setup.summary.Succeeded, setup.summary.Failed)
-	}()
-
 	for i := 0; i < cfg.MaxIterations; i++ {
 		shouldContinue, err := processSequentialIteration(ctx, cfg, setup, loopStart, i)
 		if err != nil {
@@ -1295,9 +1228,6 @@ func runSequential(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 
 	// Write final status and summary
 	writeFinalSequentialStatus(cfg, setup, loopStart)
-
-	// Suppress unused variable warning
-	_ = traceID
 
 	return setup.summary, nil
 }
