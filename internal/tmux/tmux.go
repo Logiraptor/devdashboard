@@ -7,24 +7,27 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/GianlucaP106/gotmux/gotmux"
 )
 
-// tmuxClient is the package-level gotmux client, initialised lazily.
-var tmuxClient *gotmux.Tmux
+var (
+	tmuxClient *gotmux.Tmux
+	tmuxOnce   sync.Once
+	tmuxErr    error
+)
 
 // client returns the shared gotmux.Tmux instance, creating it on first call.
+// The initialization is thread-safe via sync.Once.
 func client() (*gotmux.Tmux, error) {
-	if tmuxClient != nil {
-		return tmuxClient, nil
-	}
-	t, err := gotmux.DefaultTmux()
-	if err != nil {
-		return nil, fmt.Errorf("init gotmux: %w", err)
-	}
-	tmuxClient = t
-	return tmuxClient, nil
+	tmuxOnce.Do(func() {
+		tmuxClient, tmuxErr = gotmux.DefaultTmux()
+		if tmuxErr != nil {
+			tmuxErr = fmt.Errorf("init gotmux: %w", tmuxErr)
+		}
+	})
+	return tmuxClient, tmuxErr
 }
 
 // SplitPane creates a new pane in the current window with cwd set to workDir.
