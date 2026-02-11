@@ -3,7 +3,9 @@ package ralph
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"devdeploy/internal/beads"
@@ -332,6 +334,21 @@ func (m *TUIModel) runLoopWithMessages() {
 		m.program.Send(LoopStartedMsg{TraceID: traceID, Epic: epic})
 	}
 
+	// Use concurrent execution if Concurrency > 1, otherwise sequential
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+
+	if concurrency > 1 {
+		m.runConcurrentLoop(ctx, cfg, emitter)
+	} else {
+		m.runSequentialLoop(ctx, cfg, emitter)
+	}
+}
+
+// runSequentialLoop runs beads one at a time (original behavior)
+func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitter *LocalTraceEmitter) {
 	// Set up picker
 	picker := &BeadPicker{WorkDir: cfg.WorkDir, Epic: cfg.Epic}
 
@@ -418,6 +435,226 @@ func (m *TUIModel) runLoopWithMessages() {
 				Duration: time.Since(iterStart),
 			})
 		}
+	}
+
+	// End loop
+	summary.Duration = time.Since(loopStart)
+	emitter.EndLoop(summary.StopReason.String(), summary.Iterations, summary.Succeeded, summary.Failed)
+
+	if m.program != nil {
+		m.program.Send(LoopEndMsg{Summary: summary, StopReason: summary.StopReason})
+	}
+}
+
+// runConcurrentLoop runs multiple beads in parallel, respecting concurrency limit
+func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitter *LocalTraceEmitter) {
+	// Initialize worktree manager for isolation
+	wtMgr, err := NewWorktreeManager(cfg.WorkDir)
+	if err != nil {
+		if m.program != nil {
+			m.program.Send(LoopErrorMsg{Err: fmt.Errorf("creating worktree manager: %w", err)})
+		}
+		return
+	}
+
+	// Fetch all ready beads upfront
+	var readyBeads []beads.Bead
+	
+	if cfg.Epic != "" {
+		// Fetch ready children of epic
+		readyBeads, err = FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic)
+	} else {
+		// Fetch all ready beads
+		runBD := func(dir string, args ...string) ([]byte, error) {
+			cmd := exec.Command("bd", args...)
+			cmd.Dir = dir
+			return cmd.Output()
+		}
+		out, bdErr := runBD(cfg.WorkDir, "ready", "--json")
+		if bdErr != nil {
+			err = fmt.Errorf("bd ready: %w", bdErr)
+		} else {
+			readyBeads, err = parseReadyBeads(out)
+		}
+	}
+	
+	if err != nil {
+		if m.program != nil {
+			m.program.Send(LoopErrorMsg{Err: fmt.Errorf("fetching ready beads: %w", err)})
+		}
+		return
+	}
+
+	if len(readyBeads) == 0 {
+		summary := &RunSummary{
+			StopReason: StopNormal,
+			Duration:   time.Since(m.loopStartTime),
+		}
+		if m.program != nil {
+			m.program.Send(LoopEndMsg{Summary: summary, StopReason: StopNormal})
+		}
+		return
+	}
+
+	// Limit to MaxIterations
+	if len(readyBeads) > cfg.MaxIterations {
+		readyBeads = readyBeads[:cfg.MaxIterations]
+	}
+
+	// Dispatch beads in parallel, respecting concurrency limit
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+
+	// Create a semaphore channel to limit concurrency
+	semaphore := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	summary := &RunSummary{}
+	summaryMu := &sync.Mutex{}
+	loopStart := time.Now()
+
+	for i := range readyBeads {
+		bead := &readyBeads[i]
+		
+		// Check context before starting new goroutine
+		if ctx.Err() != nil {
+			break
+		}
+
+		wg.Add(1)
+		go func(beadIdx int, bead *beads.Bead) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			// Check context again after acquiring semaphore
+			if ctx.Err() != nil {
+				return
+			}
+
+			// Create worktree for this bead
+			worktreePath, branchName, err := wtMgr.CreateWorktree(bead.ID)
+			if err != nil {
+				summaryMu.Lock()
+				summary.Failed++
+				summary.Iterations++
+				summaryMu.Unlock()
+				return
+			}
+			defer func() {
+				if err := wtMgr.RemoveWorktree(worktreePath, branchName); err != nil {
+					// Best effort cleanup, don't fail on error
+				}
+			}()
+
+			// Start iteration
+			iterStart := time.Now()
+			spanID := emitter.StartIteration(bead.ID, bead.Title, beadIdx+1)
+			emitter.SetParent(spanID)
+
+			if m.program != nil {
+				m.program.Send(IterationStartMsg{
+					BeadID:    bead.ID,
+					BeadTitle: bead.Title,
+					IterNum:   beadIdx + 1,
+				})
+			}
+
+			// Fetch prompt data (use original workdir for beads state)
+			promptData, err := FetchPromptData(nil, cfg.WorkDir, bead.ID)
+			if err != nil {
+				summaryMu.Lock()
+				summary.Failed++
+				summary.Iterations++
+				summaryMu.Unlock()
+				return
+			}
+
+			// Render prompt
+			prompt, err := RenderPrompt(promptData)
+			if err != nil {
+				summaryMu.Lock()
+				summary.Failed++
+				summary.Iterations++
+				summaryMu.Unlock()
+				return
+			}
+
+			// Execute agent in worktree (use worktree path for isolation)
+			var opts []Option
+			if cfg.AgentTimeout > 0 {
+				opts = append(opts, WithTimeout(cfg.AgentTimeout))
+			}
+			// Create trace writer that uses local emitter
+			traceWriter := NewLocalTraceWriter(emitter)
+			opts = append(opts, WithStdoutWriter(traceWriter))
+
+			result, err := RunAgent(ctx, worktreePath, prompt, opts...)
+			if err != nil {
+				summaryMu.Lock()
+				summary.Failed++
+				summary.Iterations++
+				summaryMu.Unlock()
+				return
+			}
+
+			// Assess outcome (use original workdir for beads state)
+			outcome, _ := Assess(cfg.WorkDir, bead.ID, result)
+
+			// Update summary atomically
+			summaryMu.Lock()
+			summary.Iterations++
+			switch outcome {
+			case OutcomeSuccess:
+				summary.Succeeded++
+			case OutcomeFailure:
+				summary.Failed++
+			case OutcomeTimeout:
+				summary.TimedOut++
+			case OutcomeQuestion:
+				summary.Questions++
+			}
+			summaryMu.Unlock()
+
+			// End iteration
+			durationMs := time.Since(iterStart).Milliseconds()
+			emitter.EndIteration(spanID, outcome.String(), durationMs)
+
+			if m.program != nil {
+				m.program.Send(IterationEndMsg{
+					BeadID:   bead.ID,
+					Outcome:  outcome,
+					Duration: time.Since(iterStart),
+				})
+			}
+
+			// Sync beads state (best-effort)
+			syncFn := func() error {
+				cmd := exec.Command("bd", "sync")
+				cmd.Dir = cfg.WorkDir
+				return cmd.Run()
+			}
+			if err := syncFn(); err != nil {
+				// Best effort, don't fail on sync errors
+			}
+		}(i, bead)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// Determine stop reason
+	if ctx.Err() != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			summary.StopReason = StopWallClock
+		} else {
+			summary.StopReason = StopContextCancelled
+		}
+	} else {
+		summary.StopReason = StopNormal
 	}
 
 	// End loop
