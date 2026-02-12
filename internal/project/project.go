@@ -400,10 +400,11 @@ func (m *Manager) ProjectDir(name string) string {
 
 // PRInfo holds minimal PR metadata from gh pr list.
 type PRInfo struct {
-	Number      int    `json:"number"`
-	Title       string `json:"title"`
-	State       string `json:"state"`
-	HeadRefName string `json:"headRefName"` // branch name for worktree checkout
+	Number      int        `json:"number"`
+	Title       string     `json:"title"`
+	State       string     `json:"state"`
+	HeadRefName string     `json:"headRefName"` // branch name for worktree checkout
+	MergedAt    *time.Time `json:"mergedAt"`    // when the PR was merged (nil if not merged)
 }
 
 // RepoPRs groups PRs by repository for display.
@@ -477,7 +478,7 @@ func (m *Manager) ClearPRCacheForProject(projectName string) {
 // state: "open", "merged", "closed", or "all". limit: max PRs (0 = default 30).
 // extraArgs are appended to the gh command (e.g. --author, --search).
 func (m *Manager) listPRsInRepo(worktreePath string, state string, limit int, extraArgs ...string) ([]PRInfo, error) {
-	args := []string{"pr", "list", "--json", "number,title,state,headRefName"}
+	args := []string{"pr", "list", "--json", "number,title,state,headRefName,mergedAt"}
 	if state != "" && state != "open" {
 		args = append(args, "--state", state)
 	}
@@ -682,6 +683,9 @@ func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
 // mergedPRsLimit is how many recently merged PRs to show per repo.
 const mergedPRsLimit = 5
 
+// mergedPRMaxAge is the maximum age of merged PRs to show (20 hours).
+const mergedPRMaxAge = 20 * time.Hour
+
 // ListProjectPRs returns PRs grouped by repo (open + recently merged).
 // PRs are fetched in parallel across repos, and within each repo, open and merged PRs
 // are fetched concurrently for optimal performance.
@@ -735,7 +739,13 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 				allPRs = append(allPRs, openPRs...)
 			}
 			if mergedErr == nil {
-				allPRs = append(allPRs, mergedPRs...)
+				// Filter merged PRs to only include those merged within mergedPRMaxAge
+				cutoff := time.Now().Add(-mergedPRMaxAge)
+				for _, pr := range mergedPRs {
+					if pr.MergedAt != nil && pr.MergedAt.After(cutoff) {
+						allPRs = append(allPRs, pr)
+					}
+				}
 			}
 
 			resultChan <- repoResult{repoName: name, prs: allPRs, err: nil}
