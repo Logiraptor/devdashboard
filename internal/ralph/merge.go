@@ -2,11 +2,13 @@ package ralph
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"text/template"
+	"time"
 
 	"devdeploy/internal/beads"
 )
@@ -92,6 +94,10 @@ func MergeBranches(repoPath, targetBranch, sourceBranch string, disableHooks boo
 					_ = createErr // Best effort - if bead creation fails, still return merge error
 				}
 			}
+			// Abort the merge to leave repo in a clean state (important for concurrent execution)
+			abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+			_ = abortCmd.Run() // Best effort - if abort fails, we still return the conflict error
+			
 			if msg != "" {
 				return fmt.Errorf("merge %s into %s: conflicts detected: %s: %w", sourceRef, targetBranch, msg, err)
 			}
@@ -174,6 +180,171 @@ func RenderMergePrompt(data *MergePromptData) (string, error) {
 		return "", fmt.Errorf("rendering merge prompt template: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// conflictResolutionPromptTemplate is a simplified prompt for resolving merge conflicts.
+var conflictResolutionPromptTemplate = template.Must(template.New("conflictResolution").Parse(conflictResolutionPromptText))
+
+const conflictResolutionPromptText = `# Merge Conflict Resolution
+
+You need to resolve merge conflicts between **{{.SourceBranch}}** and **{{.TargetBranch}}**.
+
+## Current State
+
+The repository is in a conflicted state after attempting to merge ` + "`{{.SourceBranch}}`" + ` into ` + "`{{.TargetBranch}}`" + `.
+
+Working directory: ` + "`{{.RepoPath}}`" + `
+
+## Conflicting Files
+
+{{.ConflictDetails}}
+
+## Your Task
+
+1. **Examine the conflicts** - Look at each conflicting file to understand what changed on both branches
+2. **Resolve conflicts** - Edit the files to combine changes appropriately, removing conflict markers (<<<<<<, ======, >>>>>>)
+3. **Stage resolved files** - ` + "`git add <resolved-file>`" + `
+4. **Complete the merge** - ` + "`git commit --no-edit`" + ` (uses the default merge commit message)
+5. **Verify** - Run ` + "`git status`" + ` to confirm the merge is complete
+
+## Important
+
+- Do NOT abort the merge
+- Do NOT create new branches
+- Do NOT push (the caller will handle that)
+- If conflicts are too complex to resolve confidently, you may leave the merge incomplete and explain why
+
+## Context from Original Work
+
+Bead: {{.BeadID}}
+{{if .BeadTitle}}Title: {{.BeadTitle}}{{end}}
+`
+
+// ConflictResolutionData holds data for the conflict resolution prompt.
+type ConflictResolutionData struct {
+	TargetBranch    string
+	SourceBranch    string
+	RepoPath        string
+	ConflictDetails string
+	BeadID          string
+	BeadTitle       string
+}
+
+// RenderConflictResolutionPrompt renders the conflict resolution prompt.
+func RenderConflictResolutionPrompt(data *ConflictResolutionData) (string, error) {
+	var buf bytes.Buffer
+	if err := conflictResolutionPromptTemplate.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("rendering conflict resolution prompt: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// getConflictDetails returns a string describing the current merge conflicts.
+func getConflictDetails(repoPath string) string {
+	statusCmd := exec.Command("git", "-C", repoPath, "status", "--short")
+	statusOut, err := statusCmd.Output()
+	if err != nil {
+		return "(unable to get conflict details)"
+	}
+	return strings.TrimSpace(string(statusOut))
+}
+
+// MergeWithAgentResolution attempts to merge sourceBranch into targetBranch.
+// If conflicts occur, it spawns an agent to resolve them automatically.
+// If the agent fails to resolve conflicts, it creates a question bead and aborts.
+// Returns nil on success, error on failure.
+func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourceBranch string, beadID, beadTitle string, agentTimeout time.Duration) error {
+	// First, try the merge
+	err := MergeBranches(repoPath, targetBranch, sourceBranch, true, "")
+	if err == nil {
+		return nil // Merge succeeded without conflicts
+	}
+
+	// Check if error was due to conflicts (MergeBranches aborts on conflict)
+	if !strings.Contains(err.Error(), "conflicts detected") {
+		return err // Not a conflict error, return as-is
+	}
+
+	// Conflicts detected but were aborted. Re-attempt the merge to get into conflicted state
+	// for agent resolution.
+	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", targetBranch)
+	if checkoutErr := checkoutCmd.Run(); checkoutErr != nil {
+		return fmt.Errorf("checkout %s for conflict resolution: %w", targetBranch, checkoutErr)
+	}
+
+	mergeCmd := exec.Command("git", "-C", repoPath, "merge", sourceBranch, "--no-edit")
+	mergeCmd.Run() // This will fail with conflicts, which is expected
+
+	if !hasMergeConflicts(repoPath) {
+		// Somehow no conflicts now - merge must have succeeded
+		return nil
+	}
+
+	// Get conflict details for the prompt
+	conflictDetails := getConflictDetails(repoPath)
+
+	// Render conflict resolution prompt
+	promptData := &ConflictResolutionData{
+		TargetBranch:    targetBranch,
+		SourceBranch:    sourceBranch,
+		RepoPath:        repoPath,
+		ConflictDetails: conflictDetails,
+		BeadID:          beadID,
+		BeadTitle:       beadTitle,
+	}
+	prompt, renderErr := RenderConflictResolutionPrompt(promptData)
+	if renderErr != nil {
+		// Abort merge and return error
+		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		_ = abortCmd.Run()
+		return fmt.Errorf("rendering conflict resolution prompt: %w", renderErr)
+	}
+
+	// Run agent to resolve conflicts
+	var opts []Option
+	if agentTimeout > 0 {
+		opts = append(opts, WithTimeout(agentTimeout))
+	}
+	result, agentErr := RunAgent(ctx, repoPath, prompt, opts...)
+	if agentErr != nil {
+		// Agent failed to run - abort merge and create question bead
+		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		_ = abortCmd.Run()
+		if beadID != "" {
+			_ = createQuestionBeadForMergeConflict(repoPath, beadID, targetBranch, sourceBranch)
+		}
+		return fmt.Errorf("merge conflict resolution agent failed: %w", agentErr)
+	}
+
+	// Check if agent resolved the conflicts
+	if hasMergeConflicts(repoPath) {
+		// Agent didn't resolve all conflicts - abort and create question bead
+		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		_ = abortCmd.Run()
+		if beadID != "" {
+			_ = createQuestionBeadForMergeConflict(repoPath, beadID, targetBranch, sourceBranch)
+		}
+		return fmt.Errorf("agent could not resolve merge conflicts (exit code: %d)", result.ExitCode)
+	}
+
+	// Conflicts resolved! Verify the merge commit exists
+	statusCmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	statusOut, _ := statusCmd.Output()
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		// There are uncommitted changes - agent may have resolved but not committed
+		// Try to complete the merge commit
+		commitCmd := exec.Command("git", "-C", repoPath, "commit", "--no-edit")
+		if commitErr := commitCmd.Run(); commitErr != nil {
+			abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+			_ = abortCmd.Run()
+			if beadID != "" {
+				_ = createQuestionBeadForMergeConflict(repoPath, beadID, targetBranch, sourceBranch)
+			}
+			return fmt.Errorf("agent resolved conflicts but failed to commit: %w", commitErr)
+		}
+	}
+
+	return nil
 }
 
 // hasMergeConflicts checks if there are merge conflicts in the repository.

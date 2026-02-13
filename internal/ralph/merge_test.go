@@ -280,9 +280,9 @@ func TestMergeBranches(t *testing.T) {
 					t.Errorf("MergeBranches() error = %v, expected 'conflicts detected'", err)
 				}
 
-				// Verify conflicts are actually present
-				if !hasMergeConflicts(repoPath) {
-					t.Error("MergeBranches() expected conflicts but hasMergeConflicts() returned false")
+				// Verify merge was aborted and repo is clean (no lingering conflicts)
+				if hasMergeConflicts(repoPath) {
+					t.Error("MergeBranches() should abort merge on conflict, leaving repo clean")
 				}
 			}
 

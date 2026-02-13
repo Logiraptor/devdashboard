@@ -271,7 +271,7 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 			}
 
 			// Create worktree for this bead
-			worktreePath, _, createErr := setup.wtMgr.CreateWorktree(bead.ID)
+			worktreePath, branchName, createErr := setup.wtMgr.CreateWorktree(bead.ID)
 			if createErr != nil {
 				setup.mu.Lock()
 				writef(setup.out, "[worker %d] failed to create worktree for %s: %v\n", workerID, bead.ID, createErr)
@@ -294,6 +294,17 @@ func createConcurrentWorker(ctx context.Context, cfg LoopConfig, setup *concurre
 
 			// Assess outcome (beads state is shared, so use original workdir)
 			outcome, outcomeSummary := setup.assessFn(bead.ID, result)
+
+			// Merge successful work back into the original branch
+			if outcome == OutcomeSuccess {
+				// Use agent-based conflict resolution if conflicts occur
+				if mergeErr := MergeWithAgentResolution(ctx, setup.wtMgr.SrcRepo(), setup.wtMgr.Branch(), branchName, bead.ID, bead.Title, cfg.AgentTimeout); mergeErr != nil {
+					setup.mu.Lock()
+					writef(setup.out, "[worker %d] warning: failed to merge %s back to %s: %v\n", workerID, branchName, setup.wtMgr.Branch(), mergeErr)
+					setup.mu.Unlock()
+					// Don't change outcome - the work was done, just the merge failed
+				}
+			}
 
 			// Update shared state atomically
 			setup.mu.Lock()

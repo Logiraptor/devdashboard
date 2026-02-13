@@ -77,6 +77,16 @@ func getCurrentBranch(workDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// SrcRepo returns the path to the main git repository.
+func (w *WorktreeManager) SrcRepo() string {
+	return w.srcRepo
+}
+
+// Branch returns the branch name used for worktrees.
+func (w *WorktreeManager) Branch() string {
+	return w.branch
+}
+
 // CreateWorktree creates a temporary worktree for the given bead ID.
 // Returns the path to the worktree directory and the branch name used.
 func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, branchName string, err error) {
