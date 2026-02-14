@@ -202,6 +202,19 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 		connector = "└─"
 	}
 
+	// Calculate available space for detail text
+	// Account for: prefix + connector + space + toolName + space + detail + space + icon + space + duration
+	// Approximate overhead: prefix (variable) + connector (2) + toolName (~8) + icon (1) + duration (~5) + spaces (~5) = ~20 + prefix
+	prefixLen := len(prefix)
+	overhead := 25 // connector + tool name + icon + duration + spaces
+	maxDetail := v.width - prefixLen - overhead
+	if maxDetail < 20 {
+		maxDetail = 20 // Minimum reasonable length
+	}
+	if maxDetail > 80 {
+		maxDetail = 80 // Cap at reasonable max to avoid very long lines
+	}
+
 	// Tool name and key attribute
 	toolName := span.Name
 	detail := ""
@@ -212,13 +225,13 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 		}
 	case "shell":
 		if cmd, ok := span.Attributes["command"]; ok {
-			detail = truncate(cmd, 30)
+			detail = truncate(cmd, maxDetail)
 		}
 	case "search", "grep":
 		if q, ok := span.Attributes["query"]; ok {
-			detail = truncate(q, 30)
+			detail = truncate(q, maxDetail)
 		} else if p, ok := span.Attributes["pattern"]; ok {
-			detail = truncate(p, 30)
+			detail = truncate(p, maxDetail)
 		}
 	}
 

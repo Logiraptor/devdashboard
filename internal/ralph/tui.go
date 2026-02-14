@@ -668,7 +668,9 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 			// Start iteration
 			iterStart := time.Now()
 			spanID := emitter.StartIteration(bead.ID, bead.Title, beadIdx+1)
-			emitter.SetParent(spanID)
+			// Note: We don't call emitter.SetParent(spanID) here because in parallel
+			// execution, that would create a race condition. Instead, we pass the
+			// parent span ID directly to the trace writer.
 
 			if m.program != nil {
 				m.program.Send(IterationStartMsg{
@@ -717,8 +719,9 @@ func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitte
 			if cfg.AgentTimeout > 0 {
 				opts = append(opts, WithTimeout(cfg.AgentTimeout))
 			}
-			// Create trace writer that uses local emitter
-			traceWriter := NewLocalTraceWriter(emitter)
+			// Create trace writer with explicit parent span ID for parallel execution.
+			// This ensures tool calls are associated with the correct iteration span.
+			traceWriter := NewLocalTraceWriterWithParent(emitter, spanID)
 			opts = append(opts, WithStdoutWriter(traceWriter))
 
 			result, err := RunAgent(ctx, worktreePath, prompt, opts...)

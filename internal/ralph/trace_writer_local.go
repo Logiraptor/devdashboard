@@ -12,6 +12,7 @@ import (
 // LocalTraceWriter wraps an io.Writer and emits trace events via LocalTraceEmitter
 type LocalTraceWriter struct {
 	emitter      *LocalTraceEmitter
+	parentSpanID string            // Fixed parent span ID for tool calls (for parallel execution)
 	pendingSpans map[string]string // tool call ID -> span ID
 	mu           sync.Mutex
 	buf          []byte
@@ -21,6 +22,17 @@ type LocalTraceWriter struct {
 func NewLocalTraceWriter(emitter *LocalTraceEmitter) *LocalTraceWriter {
 	return &LocalTraceWriter{
 		emitter:      emitter,
+		pendingSpans: make(map[string]string),
+	}
+}
+
+// NewLocalTraceWriterWithParent creates a new LocalTraceWriter with a fixed parent span ID.
+// This is used for parallel execution where each writer should associate tool calls
+// with a specific iteration span, rather than relying on the emitter's shared parentID.
+func NewLocalTraceWriterWithParent(emitter *LocalTraceEmitter, parentSpanID string) *LocalTraceWriter {
+	return &LocalTraceWriter{
+		emitter:      emitter,
+		parentSpanID: parentSpanID,
 		pendingSpans: make(map[string]string),
 	}
 }
@@ -70,7 +82,9 @@ func (w *LocalTraceWriter) processEvent(event map[string]interface{}) {
 	case "started":
 		toolName, attrs := w.extractToolInfo(event)
 		if toolName != "" {
-			spanID := w.emitter.StartTool(toolName, attrs)
+			// Use explicit parent span ID if set (for parallel execution),
+			// otherwise fall back to emitter's current parentID
+			spanID := w.emitter.StartToolWithParent(toolName, attrs, w.parentSpanID)
 			if spanID != "" && toolCallID != "" {
 				w.pendingSpans[toolCallID] = spanID
 			}

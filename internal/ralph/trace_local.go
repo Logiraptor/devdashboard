@@ -175,6 +175,12 @@ func (e *LocalTraceEmitter) EndIterationWithAttrs(spanID string, outcome string,
 
 // StartTool begins a tool call span
 func (e *LocalTraceEmitter) StartTool(toolName string, attrs map[string]string) string {
+	return e.StartToolWithParent(toolName, attrs, "")
+}
+
+// StartToolWithParent begins a tool call span with an explicit parent span ID.
+// If parentSpanID is empty, it uses the emitter's current parentID.
+func (e *LocalTraceEmitter) StartToolWithParent(toolName string, attrs map[string]string, parentSpanID string) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -184,10 +190,16 @@ func (e *LocalTraceEmitter) StartTool(toolName string, attrs map[string]string) 
 
 	spanID := trace.NewSpanID()
 
+	// Use explicit parent if provided, otherwise fall back to emitter's parentID
+	parent := parentSpanID
+	if parent == "" {
+		parent = e.parentID
+	}
+
 	event := trace.TraceEvent{
 		TraceID:    e.traceID,
 		SpanID:     spanID,
-		ParentID:   e.parentID,
+		ParentID:   parent,
 		Type:       trace.EventToolStart,
 		Name:       toolName,
 		Timestamp:  time.Now(),
