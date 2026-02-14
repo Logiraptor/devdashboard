@@ -141,6 +141,20 @@ type LoopConfig struct {
 	AssessFn    func(beadID string, result *AgentResult) (Outcome, string)
 	SyncFn      func() error
 	Output      io.Writer // defaults to os.Stdout
+
+	// Progress callbacks (all optional) — called during execution for TUI integration.
+	// If nil, no-op.
+	OnBatchStart func(batch []beads.Bead, batchNum int)
+	OnBeadStart  func(bead beads.Bead)
+	OnBeadEnd    func(bead beads.Bead, outcome Outcome, duration time.Duration)
+	OnBatchEnd   func(batchNum int, results []BeadResult)
+}
+
+// BeadResult holds the result of executing a single bead.
+type BeadResult struct {
+	Bead    beads.Bead
+	Outcome Outcome
+	Duration time.Duration
 }
 
 // RunSummary holds aggregate results across all iterations.
