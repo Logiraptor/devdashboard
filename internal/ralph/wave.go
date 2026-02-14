@@ -144,14 +144,26 @@ func (w *WaveOrchestrator) fetchReadyBeads() ([]beads.Bead, error) {
 }
 
 // executeBead executes a single bead in its own worktree.
-func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
+// Returns a BeadResult if execution completed, nil if it failed early.
+func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) *BeadResult {
+	// Call OnBeadStart callback if provided
+	if w.cfg.OnBeadStart != nil {
+		w.cfg.OnBeadStart(*bead)
+	}
+
+	beadStart := time.Now()
+
 	// Create worktree for this bead
 	worktreePath, _, err := w.setup.wtMgr.CreateWorktree(bead.ID)
 	if err != nil {
 		w.setup.mu.Lock()
 		writef(w.setup.out, "[wave] failed to create worktree for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
-		return
+		// Call OnBeadEnd with failure outcome
+		if w.cfg.OnBeadEnd != nil {
+			w.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
+		}
+		return nil
 	}
 	defer func() {
 		if err := w.setup.wtMgr.RemoveWorktree(worktreePath); err != nil {
@@ -167,7 +179,10 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		w.setup.mu.Lock()
 		writef(w.setup.out, "[wave] failed to fetch prompt for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
-		return
+		if w.cfg.OnBeadEnd != nil {
+			w.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
+		}
+		return nil
 	}
 
 	// Render prompt
@@ -176,7 +191,10 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		w.setup.mu.Lock()
 		writef(w.setup.out, "[wave] failed to render prompt for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
-		return
+		if w.cfg.OnBeadEnd != nil {
+			w.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
+		}
+		return nil
 	}
 
 	// Execute agent in worktree
@@ -196,11 +214,15 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		w.setup.mu.Lock()
 		writef(w.setup.out, "[wave] failed to run agent for %s: %v\n", bead.ID, err)
 		w.setup.mu.Unlock()
-		return
+		if w.cfg.OnBeadEnd != nil {
+			w.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
+		}
+		return nil
 	}
 
 	// Assess outcome
 	outcome, outcomeSummary := w.setup.assessFn(bead.ID, result)
+	duration := result.Duration
 
 	// Update summary
 	w.setup.mu.Lock()
@@ -223,7 +245,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		bead.ID,
 		bead.Title,
 		outcome,
-		result.Duration,
+		duration,
 		outcomeSummary,
 	))
 
@@ -241,6 +263,17 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 			writef(w.setup.out, "  bd sync warning: %v\n", err)
 		}
 		w.setup.mu.Unlock()
+	}
+
+	// Call OnBeadEnd callback if provided
+	if w.cfg.OnBeadEnd != nil {
+		w.cfg.OnBeadEnd(*bead, outcome, duration)
+	}
+
+	return &BeadResult{
+		Bead:     *bead,
+		Outcome:  outcome,
+		Duration: duration,
 	}
 }
 
@@ -298,8 +331,14 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 
 		waveNum++
 
+		// Call OnBatchStart callback if provided
+		if w.cfg.OnBatchStart != nil {
+			w.cfg.OnBatchStart(unprocessedBeads, waveNum)
+		}
+
 		// Dry-run: print what would be done without executing
 		if w.cfg.DryRun {
+			results := make([]BeadResult, 0, len(unprocessedBeads))
 			for i, bead := range unprocessedBeads {
 				writef(w.setup.out, "%s\n", formatIterationLog(
 					w.setup.summary.Iterations+i+1,
@@ -311,8 +350,17 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 					"",
 				))
 				processedBeads[bead.ID] = true
+				results = append(results, BeadResult{
+					Bead:     bead,
+					Outcome:  OutcomeSuccess,
+					Duration: 0,
+				})
 			}
 			w.setup.summary.Iterations += len(unprocessedBeads)
+			// Call OnBatchEnd callback if provided
+			if w.cfg.OnBatchEnd != nil {
+				w.cfg.OnBatchEnd(waveNum, results)
+			}
 			continue
 		}
 
@@ -325,16 +373,30 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 
 		// Dispatch all beads in parallel
 		var wg sync.WaitGroup
+		results := make([]*BeadResult, len(unprocessedBeads))
 		for i := range unprocessedBeads {
 			wg.Add(1)
-			go func(bead *beads.Bead) {
+			go func(idx int, bead *beads.Bead) {
 				defer wg.Done()
-				w.executeBead(ctx, bead)
-			}(&unprocessedBeads[i])
+				results[idx] = w.executeBead(ctx, bead)
+			}(i, &unprocessedBeads[i])
 		}
 
 		// Wait for all beads in this wave to complete
 		wg.Wait()
+
+		// Collect results (filter out nil results from early failures)
+		batchResults := make([]BeadResult, 0, len(results))
+		for _, result := range results {
+			if result != nil {
+				batchResults = append(batchResults, *result)
+			}
+		}
+
+		// Call OnBatchEnd callback if provided
+		if w.cfg.OnBatchEnd != nil {
+			w.cfg.OnBatchEnd(waveNum, batchResults)
+		}
 	}
 
 	// Calculate total duration
