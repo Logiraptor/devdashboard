@@ -1012,17 +1012,16 @@ func TestFetchEpicChildren(t *testing.T) {
 	}
 }
 
-// TestRunEpicOrchestrator_AllChildrenSuccess tests epic orchestrator with all children succeeding.
+// TestEpicMode_AllChildrenSuccess tests epic mode with all children succeeding.
 // This test verifies that epic mode is triggered when Epic is set and TargetBead is empty.
-func TestRunEpicOrchestrator_AllChildrenSuccess(t *testing.T) {
+func TestEpicMode_AllChildrenSuccess(t *testing.T) {
 	buf := &bytes.Buffer{}
 	cfg := baseCfg(buf)
 	cfg.Epic = "epic-1"
 	cfg.TargetBead = "" // Must be empty for epic mode
 
 	// Verify epic mode routing: when Epic is set and TargetBead is empty,
-	// runSequential should route to runEpicOrchestrator
-	// We test this by verifying the config and that Run routes correctly
+	// Run() uses EpicBatcher to orchestrate children
 	if cfg.Epic == "" {
 		t.Error("Epic should be set for epic mode")
 	}
@@ -1032,14 +1031,13 @@ func TestRunEpicOrchestrator_AllChildrenSuccess(t *testing.T) {
 
 	// Note: Full integration test would require mocking all bd commands (show, ready, list, sync)
 	// which is complex. The routing logic is tested here, and individual components
-	// (FetchEpicChildren priority sorting, opus verification) are tested separately.
+	// (FetchEpicChildren priority sorting) are tested separately.
 }
 
-// TestRunEpicOrchestrator_ChildFailure tests epic orchestrator stopping on child failure.
-func TestRunEpicOrchestrator_ChildFailure(t *testing.T) {
-	// Test that when a child fails, epic orchestrator stops
-	// This is verified by the implementation: when outcome is OutcomeFailure,
-	// runEpicOrchestrator returns immediately with StopConsecutiveFails
+// TestEpicMode_ChildFailure tests epic mode stopping on child failure.
+func TestEpicMode_ChildFailure(t *testing.T) {
+	// Test that when a child fails, the runner stops due to consecutive failure limit.
+	// This is handled by Runner.Run() which tracks consecutive failures.
 	buf := &bytes.Buffer{}
 	cfg := baseCfg(buf)
 	cfg.Epic = "epic-1"
@@ -1050,11 +1048,11 @@ func TestRunEpicOrchestrator_ChildFailure(t *testing.T) {
 		t.Error("Epic should be set")
 	}
 	// Note: Full test would require mocking, but the stop-on-failure logic
-	// is straightforward and tested through the implementation.
+	// is straightforward and tested through the Runner implementation.
 }
 
-// TestRunEpicOrchestrator_NoChildren tests epic orchestrator with no children.
-func TestRunEpicOrchestrator_NoChildren(t *testing.T) {
+// TestEpicMode_NoChildren tests epic mode with no children.
+func TestEpicMode_NoChildren(t *testing.T) {
 	// Test FetchEpicChildren with empty result
 	children, err := FetchEpicChildren(mockBDReady([]bdReadyEntry{}), "/fake/dir", "epic-1")
 	if err != nil {
@@ -1066,22 +1064,15 @@ func TestRunEpicOrchestrator_NoChildren(t *testing.T) {
 	}
 }
 
-// TestRunEpicOrchestrator_OpusVerification tests that opus verification runs after all leaves complete.
-// Test case (3): Opus verification runs after all leaves complete
-func TestRunEpicOrchestrator_OpusVerification(t *testing.T) {
-	// This test verifies the logic path for opus verification.
-	// In runEpicOrchestrator (loop.go lines 543-667), opus verification is triggered when:
+// TestEpicMode_OpusVerificationConditions tests the conditions for opus verification.
+// Note: Opus verification logic was removed during the runner unification.
+// This test verifies the summary condition logic that would trigger such verification.
+func TestEpicMode_OpusVerificationConditions(t *testing.T) {
+	// Verify the condition logic for when opus verification should run:
 	// - summary.Failed == 0
 	// - summary.TimedOut == 0
 	// - summary.Iterations > 0
-	//
-	// The verification calls RunAgentOpus with a prompt that includes:
-	// - Epic ID and description
-	// - Closed tasks list
-	// - Git log and diff stats
-	// - Instructions to close epic or create follow-up beads
 
-	// Verify the condition logic
 	summary := &RunSummary{
 		Failed:     0,
 		TimedOut:   0,
