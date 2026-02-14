@@ -153,8 +153,8 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	selectedBead := a.Detail.SelectedBead()
 	cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
 
-	// Always run agents in parallel (3 concurrent by default)
-	cmd += " --max-parallel 3"
+	// Always run agents in parallel with generous limits
+	cmd += " --max-iterations 50 --max-parallel 10"
 
 	if selectedBead != nil {
 		escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
