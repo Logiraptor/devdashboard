@@ -244,7 +244,8 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 	}
 }
 
-// Run dispatches all ready beads in parallel and waits for completion.
+// Run dispatches all ready beads in parallel waves until no more are available.
+// After each wave completes, it re-queries for newly unblocked beads.
 func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 	// Apply wall-clock timeout if configured
 	wallTimeout := w.cfg.Timeout
@@ -256,56 +257,88 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 
 	waveStart := time.Now()
 
-	// Fetch all ready beads
-	readyBeads, err := w.fetchReadyBeads()
-	if err != nil {
-		return nil, fmt.Errorf("fetching ready beads: %w", err)
-	}
+	// Track processed beads to avoid reprocessing in case of sync delays
+	processedBeads := make(map[string]bool)
+	waveNum := 0
 
-	if len(readyBeads) == 0 {
-		w.setup.summary.StopReason = StopNormal
-		w.setup.summary.Duration = time.Since(waveStart)
-		writef(w.setup.out, "No ready beads found\n")
-		return w.setup.summary, nil
-	}
-
-	// Dry-run: print what would be done without executing
-	if w.cfg.DryRun {
-		for i, bead := range readyBeads {
-			writef(w.setup.out, "%s\n", formatIterationLog(
-				i+1,
-				len(readyBeads),
-				bead.ID,
-				bead.Title,
-				OutcomeSuccess,
-				0,
-				"",
-			))
+	for {
+		// Check context cancellation
+		if ctx.Err() != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				w.setup.summary.StopReason = StopWallClock
+			} else {
+				w.setup.summary.StopReason = StopContextCancelled
+			}
+			break
 		}
-		w.setup.summary.Iterations = len(readyBeads)
-		w.setup.summary.StopReason = StopNormal
-		w.setup.summary.Duration = time.Since(waveStart)
-		return w.setup.summary, nil
+
+		// Fetch all ready beads
+		readyBeads, err := w.fetchReadyBeads()
+		if err != nil {
+			return nil, fmt.Errorf("fetching ready beads: %w", err)
+		}
+
+		// Filter out already processed beads
+		unprocessedBeads := make([]beads.Bead, 0, len(readyBeads))
+		for _, bead := range readyBeads {
+			if !processedBeads[bead.ID] {
+				unprocessedBeads = append(unprocessedBeads, bead)
+			}
+		}
+
+		if len(unprocessedBeads) == 0 {
+			if waveNum == 0 {
+				writef(w.setup.out, "No ready beads found\n")
+			} else {
+				writef(w.setup.out, "\nNo more ready beads after wave %d\n", waveNum)
+			}
+			w.setup.summary.StopReason = StopNormal
+			break
+		}
+
+		waveNum++
+
+		// Dry-run: print what would be done without executing
+		if w.cfg.DryRun {
+			for i, bead := range unprocessedBeads {
+				writef(w.setup.out, "%s\n", formatIterationLog(
+					w.setup.summary.Iterations+i+1,
+					0, // Don't show max in dry-run
+					bead.ID,
+					bead.Title,
+					OutcomeSuccess,
+					0,
+					"",
+				))
+				processedBeads[bead.ID] = true
+			}
+			w.setup.summary.Iterations += len(unprocessedBeads)
+			continue
+		}
+
+		writef(w.setup.out, "Wave %d: dispatching %d ready bead(s) in parallel\n", waveNum, len(unprocessedBeads))
+
+		// Mark beads as processed before dispatching
+		for _, bead := range unprocessedBeads {
+			processedBeads[bead.ID] = true
+		}
+
+		// Dispatch all beads in parallel
+		var wg sync.WaitGroup
+		for i := range unprocessedBeads {
+			wg.Add(1)
+			go func(bead *beads.Bead) {
+				defer wg.Done()
+				w.executeBead(ctx, bead)
+			}(&unprocessedBeads[i])
+		}
+
+		// Wait for all beads in this wave to complete
+		wg.Wait()
 	}
-
-	writef(w.setup.out, "Wave orchestrator: dispatching %d ready bead(s) in parallel\n", len(readyBeads))
-
-	// Dispatch all beads in parallel
-	var wg sync.WaitGroup
-	for i := range readyBeads {
-		wg.Add(1)
-		go func(bead *beads.Bead) {
-			defer wg.Done()
-			w.executeBead(ctx, bead)
-		}(&readyBeads[i])
-	}
-
-	// Wait for all beads to complete
-	wg.Wait()
 
 	// Calculate total duration
 	w.setup.summary.Duration = time.Since(waveStart)
-	w.setup.summary.StopReason = StopNormal
 
 	// Count remaining beads
 	remainingBeads := countRemainingBeads(w.cfg)
