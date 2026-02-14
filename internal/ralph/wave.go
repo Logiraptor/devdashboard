@@ -143,23 +143,20 @@ func (w *WaveOrchestrator) fetchReadyBeads() ([]beads.Bead, error) {
 	return parsed, nil
 }
 
-// executeBead executes a single bead in its own worktree.
-func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
-	// Create worktree for this bead
-	worktreePath, _, err := w.setup.wtMgr.CreateWorktree(bead.ID)
-	if err != nil {
-		w.setup.mu.Lock()
-		writef(w.setup.out, "[wave] failed to create worktree for %s: %v\n", bead.ID, err)
-		w.setup.mu.Unlock()
-		return
+// executeBead executes a single bead, optionally in its own worktree.
+// If worktreePath is empty, uses the main workdir (cfg.WorkDir).
+// If worktreePath is set, creates and cleans up the worktree.
+func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead, worktreePath string) {
+	// If worktreePath is provided, set up cleanup
+	if worktreePath != "" {
+		defer func() {
+			if err := w.setup.wtMgr.RemoveWorktree(worktreePath); err != nil {
+				w.setup.mu.Lock()
+				writef(w.setup.out, "[wave] warning: failed to remove worktree %s: %v\n", worktreePath, err)
+				w.setup.mu.Unlock()
+			}
+		}()
 	}
-	defer func() {
-		if err := w.setup.wtMgr.RemoveWorktree(worktreePath); err != nil {
-			w.setup.mu.Lock()
-			writef(w.setup.out, "[wave] warning: failed to remove worktree %s: %v\n", worktreePath, err)
-			w.setup.mu.Unlock()
-		}
-	}()
 
 	// Fetch prompt data
 	promptData, err := w.setup.fetchPrompt(bead.ID)
@@ -179,9 +176,15 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		return
 	}
 
-	// Execute agent in worktree
+	// Determine execution path: use worktreePath if provided, otherwise use main workdir
+	execPath := worktreePath
+	if execPath == "" {
+		execPath = w.cfg.WorkDir
+	}
+
+	// Execute agent
 	// If cfg.Execute is provided (typically for testing), use it directly
-	// Otherwise, run the agent in the worktree path
+	// Otherwise, run the agent in the determined path
 	var result *AgentResult
 	if w.cfg.Execute != nil {
 		result, err = w.cfg.Execute(ctx, prompt)
@@ -190,7 +193,7 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead) {
 		if w.cfg.AgentTimeout > 0 {
 			opts = append(opts, WithTimeout(w.cfg.AgentTimeout))
 		}
-		result, err = RunAgent(ctx, worktreePath, prompt, opts...)
+		result, err = RunAgent(ctx, execPath, prompt, opts...)
 	}
 	if err != nil {
 		w.setup.mu.Lock()
@@ -325,12 +328,30 @@ func (w *WaveOrchestrator) Run(ctx context.Context) (*RunSummary, error) {
 
 		// Dispatch all beads in parallel
 		var wg sync.WaitGroup
-		for i := range unprocessedBeads {
+		if len(unprocessedBeads) > 1 {
+			// Multiple beads: create worktree per bead for isolation
+			for i := range unprocessedBeads {
+				wg.Add(1)
+				go func(bead *beads.Bead) {
+					defer wg.Done()
+					// Create worktree for this bead
+					worktreePath, _, err := w.setup.wtMgr.CreateWorktree(bead.ID)
+					if err != nil {
+						w.setup.mu.Lock()
+						writef(w.setup.out, "[wave] failed to create worktree for %s: %v\n", bead.ID, err)
+						w.setup.mu.Unlock()
+						return
+					}
+					w.executeBead(ctx, bead, worktreePath)
+				}(&unprocessedBeads[i])
+			}
+		} else {
+			// Single bead: run in main workdir
 			wg.Add(1)
 			go func(bead *beads.Bead) {
 				defer wg.Done()
-				w.executeBead(ctx, bead)
-			}(&unprocessedBeads[i])
+				w.executeBead(ctx, bead, "")
+			}(&unprocessedBeads[0])
 		}
 
 		// Wait for all beads in this wave to complete

@@ -560,7 +560,8 @@ func TestWaveOrchestrator_executeBead(t *testing.T) {
 			os.RemoveAll(worktreePath)
 
 			ctx := context.Background()
-			wo.executeBead(ctx, tt.bead)
+			// Test with empty worktree path (uses main workdir)
+			wo.executeBead(ctx, tt.bead, "")
 
 			// Verify summary was updated
 			wo.setup.mu.Lock()
