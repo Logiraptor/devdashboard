@@ -269,11 +269,22 @@ func (w *WaveOrchestrator) executeBead(ctx context.Context, bead *beads.Bead, wo
 		w.cfg.OnBeadEnd(*bead, outcome, duration)
 	}
 
-	return &BeadResult{
-		Bead:     *bead,
-		Outcome:  outcome,
-		Duration: duration,
+	beadResult := &BeadResult{
+		Bead:         *bead,
+		Outcome:      outcome,
+		Duration:     duration,
+		ChatID:       result.ChatID,
+		ErrorMessage: result.ErrorMessage,
+		ExitCode:     result.ExitCode,
+		Stderr:       result.Stderr,
 	}
+
+	// Call OnBeadComplete callback with full result (for TUI integration)
+	if w.cfg.OnBeadComplete != nil {
+		w.cfg.OnBeadComplete(beadResult)
+	}
+
+	return beadResult
 }
 
 // Run dispatches all ready beads in parallel waves until no more are available.

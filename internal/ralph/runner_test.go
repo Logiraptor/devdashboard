@@ -8,28 +8,15 @@ import (
 	"devdeploy/internal/beads"
 )
 
-// fakeBatcher is a simple batcher for testing that yields predetermined beads.
-type fakeBatcher struct {
-	batches [][]beads.Bead
-	index   int
-}
-
-// NewFakeBatcher creates a fake batcher that yields the given batches.
-func NewFakeBatcher(batches [][]beads.Bead) *fakeBatcher {
-	return &fakeBatcher{
-		batches: batches,
-		index:   0,
+// fakeBatcher creates a BeadBatcher (iter.Seq) that yields predetermined batches.
+func fakeBatcher(batches [][]beads.Bead) BeadBatcher {
+	return func(yield func([]beads.Bead) bool) {
+		for _, batch := range batches {
+			if !yield(batch) {
+				return
+			}
+		}
 	}
-}
-
-// Next returns the next batch, or nil when no more batches are available.
-func (f *fakeBatcher) Next() ([]beads.Bead, error) {
-	if f.index >= len(f.batches) {
-		return nil, nil
-	}
-	batch := f.batches[f.index]
-	f.index++
-	return batch, nil
 }
 
 // TestRunner_Run tests the Run method with a fake batcher.
@@ -58,6 +45,8 @@ func TestRunner_Run(t *testing.T) {
 			batches: [][]beads.Bead{
 				{
 					{ID: "test-1", Title: "Test Bead 1"},
+				},
+				{
 					{ID: "test-2", Title: "Test Bead 2"},
 				},
 				{
@@ -108,7 +97,7 @@ func TestRunner_Run(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			batcher := NewFakeBatcher(tt.batches)
+			batcher := fakeBatcher(tt.batches)
 
 			// Create a mock fetch prompt that returns valid data
 			mockFetchPrompt := func(beadID string) (*PromptData, error) {
@@ -151,7 +140,10 @@ func TestRunner_Run(t *testing.T) {
 				ctx, _ = context.WithCancel(ctx)
 			}
 
-			runner := NewRunner(batcher, cfg)
+			runner, err := NewRunner(batcher, cfg)
+			if err != nil {
+				t.Fatalf("NewRunner() error = %v, want nil", err)
+			}
 			summary, err := runner.Run(ctx)
 
 			if err != nil {
@@ -177,7 +169,7 @@ func TestRunner_Run_ContextCancellation(t *testing.T) {
 		{{ID: "test-2", Title: "Test Bead 2"}},
 	}
 
-	batcher := NewFakeBatcher(batches)
+	batcher := fakeBatcher(batches)
 
 	mockFetchPrompt := func(beadID string) (*PromptData, error) {
 		return &PromptData{ID: beadID, Title: "Test", Description: "Test"}, nil
@@ -216,7 +208,10 @@ func TestRunner_Run_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	runner := NewRunner(batcher, cfg)
+	runner, err := NewRunner(batcher, cfg)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v, want nil", err)
+	}
 	summary, err := runner.Run(ctx)
 
 	if err != nil {

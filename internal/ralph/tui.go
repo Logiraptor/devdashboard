@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"devdeploy/internal/beads"
@@ -356,28 +356,24 @@ func (m *TUIModel) View() string {
 }
 
 
-// runLoopWithMessages executes the loop and sends messages via program.Send()
+// runLoopWithMessages executes the loop using the unified Run() function
+// and sends progress messages via program.Send() for TUI updates.
 func (m *TUIModel) runLoopWithMessages() {
 	cfg := m.config
-	
+
 	// Use provided context or create a new one
 	ctx := m.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// Apply wall-clock timeout
-	wallTimeout := cfg.Timeout
-	if wallTimeout <= 0 {
-		wallTimeout = DefaultWallClockTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, wallTimeout)
-	defer cancel()
-	
 	// Start a ticker to update duration in real-time
 	durationTicker := time.NewTicker(1 * time.Second)
 	defer durationTicker.Stop()
-	
+
+	tickerCtx, tickerCancel := context.WithCancel(ctx)
+	defer tickerCancel()
+
 	go func() {
 		for {
 			select {
@@ -386,7 +382,7 @@ func (m *TUIModel) runLoopWithMessages() {
 					m.summary.Duration = time.Since(m.loopStartTime)
 					m.program.Send(DurationTickMsg{})
 				}
-			case <-ctx.Done():
+			case <-tickerCtx.Done():
 				return
 			}
 		}
@@ -404,129 +400,28 @@ func (m *TUIModel) runLoopWithMessages() {
 		m.program.Send(LoopStartedMsg{TraceID: traceID, Epic: epic})
 	}
 
-	// Use concurrent execution if Concurrency > 1, otherwise sequential
-	concurrency := cfg.Concurrency
-	if concurrency <= 0 {
-		concurrency = 1
-	}
+	// Track iteration number for display
+	iterNum := 0
 
-	if concurrency > 1 {
-		m.runConcurrentLoop(ctx, cfg, emitter)
-	} else {
-		m.runSequentialLoop(ctx, cfg, emitter)
-	}
-}
-
-// runSequentialLoop runs beads one at a time (original behavior)
-func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitter *LocalTraceEmitter) {
-	// Set up picker - respect TargetBead if set
-	var pickNext func() (*beads.Bead, error)
-	if cfg.TargetBead != "" {
-		// When TargetBead is set, return that bead once then nil
-		once := false
-		pickNext = func() (*beads.Bead, error) {
-			if once {
-				return nil, nil // Signal no more beads
-			}
-			once = true
-			return fetchTargetBead(cfg.WorkDir, cfg.TargetBead)
-		}
-	} else {
-		picker := &BeadPicker{WorkDir: cfg.WorkDir, Epic: cfg.Epic}
-		pickNext = picker.Next
-	}
-
-	summary := &RunSummary{}
-	loopStart := time.Now()
-
-	for i := 0; i < cfg.MaxIterations; i++ {
-		// Check context
-		if ctx.Err() != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				summary.StopReason = StopWallClock
-			} else {
-				summary.StopReason = StopContextCancelled
-			}
-			break
-		}
-
-		// Pick next bead
-		bead, err := pickNext()
-		if err != nil {
-			if m.program != nil {
-				m.program.Send(LoopErrorMsg{Err: err})
-			}
-			return
-		}
-		if bead == nil {
-			summary.StopReason = StopNormal
-			if m.program != nil {
-				m.program.Send(LoopEndMsg{
-					Summary:    summary,
-					StopReason: StopNormal,
-				})
-			}
-			break
-		}
-
-		// Start iteration
-		iterStart := time.Now()
-		spanID := emitter.StartIteration(bead.ID, bead.Title, i+1)
-		emitter.SetParent(spanID)
-
+	// Configure callbacks for TUI integration
+	tuiCfg := cfg
+	tuiCfg.OnBeadStart = func(bead beads.Bead) {
+		iterNum++
 		if m.program != nil {
 			m.program.Send(IterationStartMsg{
 				BeadID:    bead.ID,
 				BeadTitle: bead.Title,
-				IterNum:   i + 1,
+				IterNum:   iterNum,
 			})
 		}
+	}
 
-		// Execute agent (using existing executor)
-		// Pass trace emitter for tool call tracking
-		result, err := m.executeAgent(ctx, bead, emitter)
-		if err != nil {
-			if m.program != nil {
-				m.program.Send(LoopErrorMsg{Err: err})
-			}
-			return
-		}
-
-		// Assess outcome
-		outcome, _ := Assess(cfg.WorkDir, bead.ID, result, nil)
-
-		// Update summary
-		summary.Iterations++
-		switch outcome {
-		case OutcomeSuccess:
-			summary.Succeeded++
-		case OutcomeFailure:
-			summary.Failed++
-		case OutcomeTimeout:
-			summary.TimedOut++
-		case OutcomeQuestion:
-			summary.Questions++
-		}
-
-		// End iteration with failure details in trace
-		durationMs := time.Since(iterStart).Milliseconds()
-		extraAttrs := map[string]string{}
-		if result.ChatID != "" {
-			extraAttrs["chat_id"] = result.ChatID
-		}
-		if result.ErrorMessage != "" {
-			extraAttrs["error"] = result.ErrorMessage
-		}
-		if result.ExitCode != 0 {
-			extraAttrs["exit_code"] = fmt.Sprintf("%d", result.ExitCode)
-		}
-		emitter.EndIterationWithAttrs(spanID, outcome.String(), durationMs, extraAttrs)
-
+	tuiCfg.OnBeadComplete = func(result *BeadResult) {
 		if m.program != nil {
 			m.program.Send(IterationEndMsg{
-				BeadID:       bead.ID,
-				Outcome:      outcome,
-				Duration:     time.Since(iterStart),
+				BeadID:       result.Bead.ID,
+				Outcome:      result.Outcome,
+				Duration:     result.Duration,
 				ChatID:       result.ChatID,
 				ErrorMessage: result.ErrorMessage,
 				ExitCode:     result.ExitCode,
@@ -535,284 +430,23 @@ func (m *TUIModel) runSequentialLoop(ctx context.Context, cfg LoopConfig, emitte
 		}
 	}
 
-	// End loop
-	summary.Duration = time.Since(loopStart)
-	emitter.EndLoop(summary.StopReason.String(), summary.Iterations, summary.Succeeded, summary.Failed)
+	// Suppress default output since TUI handles display
+	tuiCfg.Output = io.Discard
 
-	if m.program != nil {
-		m.program.Send(LoopEndMsg{Summary: summary, StopReason: summary.StopReason})
+	// Run the unified loop
+	summary, err := Run(ctx, tuiCfg)
+
+	// End loop trace
+	if summary != nil {
+		emitter.EndLoop(summary.StopReason.String(), summary.Iterations, summary.Succeeded, summary.Failed)
 	}
-}
 
-// runConcurrentLoop runs multiple beads in parallel, respecting concurrency limit
-func (m *TUIModel) runConcurrentLoop(ctx context.Context, cfg LoopConfig, emitter *LocalTraceEmitter) {
-	// Initialize worktree manager for isolation
-	wtMgr, err := NewWorktreeManager(cfg.WorkDir)
 	if err != nil {
 		if m.program != nil {
-			m.program.Send(LoopErrorMsg{Err: fmt.Errorf("creating worktree manager: %w", err)})
+			m.program.Send(LoopErrorMsg{Err: err})
 		}
 		return
 	}
-
-	// Fetch beads to work on
-	var readyBeads []beads.Bead
-
-	// If TargetBead is set, work on just that bead
-	if cfg.TargetBead != "" {
-		targetBead, fetchErr := fetchTargetBead(cfg.WorkDir, cfg.TargetBead)
-		if fetchErr != nil {
-			if m.program != nil {
-				m.program.Send(LoopErrorMsg{Err: fmt.Errorf("fetching target bead: %w", fetchErr)})
-			}
-			return
-		}
-		readyBeads = []beads.Bead{*targetBead}
-	} else if cfg.Epic != "" {
-		// Fetch ready children of epic
-		readyBeads, err = FetchEpicChildren(nil, cfg.WorkDir, cfg.Epic)
-	} else {
-		// Fetch all ready beads
-		runBD := func(dir string, args ...string) ([]byte, error) {
-			cmd := exec.Command("bd", args...)
-			cmd.Dir = dir
-			return cmd.Output()
-		}
-		out, bdErr := runBD(cfg.WorkDir, "ready", "--json")
-		if bdErr != nil {
-			err = fmt.Errorf("bd ready: %w", bdErr)
-		} else {
-			readyBeads, err = parseReadyBeads(out)
-		}
-	}
-	
-	if err != nil {
-		if m.program != nil {
-			m.program.Send(LoopErrorMsg{Err: fmt.Errorf("fetching ready beads: %w", err)})
-		}
-		return
-	}
-
-	if len(readyBeads) == 0 {
-		summary := &RunSummary{
-			StopReason: StopNormal,
-			Duration:   time.Since(m.loopStartTime),
-		}
-		if m.program != nil {
-			m.program.Send(LoopEndMsg{Summary: summary, StopReason: StopNormal})
-		}
-		return
-	}
-
-	// Limit to MaxIterations
-	if len(readyBeads) > cfg.MaxIterations {
-		readyBeads = readyBeads[:cfg.MaxIterations]
-	}
-
-	// Dispatch beads in parallel, respecting concurrency limit
-	concurrency := cfg.Concurrency
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-
-	// Create a semaphore channel to limit concurrency
-	semaphore := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	summary := &RunSummary{}
-	summaryMu := &sync.Mutex{}
-	loopStart := time.Now()
-
-	for i := range readyBeads {
-		bead := &readyBeads[i]
-		
-		// Check context before starting new goroutine
-		if ctx.Err() != nil {
-			break
-		}
-
-		wg.Add(1)
-		go func(beadIdx int, bead *beads.Bead) {
-			defer wg.Done()
-
-			// Acquire semaphore
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			// Check context again after acquiring semaphore
-			if ctx.Err() != nil {
-				return
-			}
-
-			// Create worktree for this bead
-			worktreePath, _, err := wtMgr.CreateWorktree(bead.ID)
-			if err != nil {
-				summaryMu.Lock()
-				summary.Failed++
-				summary.Iterations++
-				summaryMu.Unlock()
-				if m.program != nil {
-					m.program.Send(IterationEndMsg{
-						BeadID:       bead.ID,
-						Outcome:      OutcomeFailure,
-						ErrorMessage: fmt.Sprintf("worktree creation failed: %v", err),
-					})
-				}
-				return
-			}
-			defer func() {
-				if err := wtMgr.RemoveWorktree(worktreePath); err != nil {
-					// Best effort cleanup, don't fail on error
-				}
-			}()
-
-			// Start iteration
-			iterStart := time.Now()
-			spanID := emitter.StartIteration(bead.ID, bead.Title, beadIdx+1)
-			// Note: We don't call emitter.SetParent(spanID) here because in parallel
-			// execution, that would create a race condition. Instead, we pass the
-			// parent span ID directly to the trace writer.
-
-			if m.program != nil {
-				m.program.Send(IterationStartMsg{
-					BeadID:    bead.ID,
-					BeadTitle: bead.Title,
-					IterNum:   beadIdx + 1,
-				})
-			}
-
-			// Fetch prompt data (use original workdir for beads state)
-			promptData, err := FetchPromptData(nil, cfg.WorkDir, bead.ID)
-			if err != nil {
-				summaryMu.Lock()
-				summary.Failed++
-				summary.Iterations++
-				summaryMu.Unlock()
-				if m.program != nil {
-					m.program.Send(IterationEndMsg{
-						BeadID:       bead.ID,
-						Outcome:      OutcomeFailure,
-						ErrorMessage: fmt.Sprintf("prompt fetch failed: %v", err),
-					})
-				}
-				return
-			}
-
-			// Render prompt
-			prompt, err := RenderPrompt(promptData)
-			if err != nil {
-				summaryMu.Lock()
-				summary.Failed++
-				summary.Iterations++
-				summaryMu.Unlock()
-				if m.program != nil {
-					m.program.Send(IterationEndMsg{
-						BeadID:       bead.ID,
-						Outcome:      OutcomeFailure,
-						ErrorMessage: fmt.Sprintf("prompt render failed: %v", err),
-					})
-				}
-				return
-			}
-
-			// Execute agent in worktree (use worktree path for isolation)
-			var opts []Option
-			if cfg.AgentTimeout > 0 {
-				opts = append(opts, WithTimeout(cfg.AgentTimeout))
-			}
-			// Create trace writer with explicit parent span ID for parallel execution.
-			// This ensures tool calls are associated with the correct iteration span.
-			traceWriter := NewLocalTraceWriterWithParent(emitter, spanID)
-			opts = append(opts, WithStdoutWriter(traceWriter))
-
-			result, err := RunAgent(ctx, worktreePath, prompt, opts...)
-			if err != nil {
-				summaryMu.Lock()
-				summary.Failed++
-				summary.Iterations++
-				summaryMu.Unlock()
-				if m.program != nil {
-					m.program.Send(IterationEndMsg{
-						BeadID:       bead.ID,
-						Outcome:      OutcomeFailure,
-						ErrorMessage: fmt.Sprintf("agent execution failed: %v", err),
-					})
-				}
-				return
-			}
-
-			// Assess outcome (use original workdir for beads state)
-			outcome, _ := Assess(cfg.WorkDir, bead.ID, result, nil)
-
-			// Update summary atomically
-			summaryMu.Lock()
-			summary.Iterations++
-			switch outcome {
-			case OutcomeSuccess:
-				summary.Succeeded++
-			case OutcomeFailure:
-				summary.Failed++
-			case OutcomeTimeout:
-				summary.TimedOut++
-			case OutcomeQuestion:
-				summary.Questions++
-			}
-			summaryMu.Unlock()
-
-			// End iteration with failure details in trace
-			durationMs := time.Since(iterStart).Milliseconds()
-			extraAttrs := map[string]string{}
-			if result.ChatID != "" {
-				extraAttrs["chat_id"] = result.ChatID
-			}
-			if result.ErrorMessage != "" {
-				extraAttrs["error"] = result.ErrorMessage
-			}
-			if result.ExitCode != 0 {
-				extraAttrs["exit_code"] = fmt.Sprintf("%d", result.ExitCode)
-			}
-			emitter.EndIterationWithAttrs(spanID, outcome.String(), durationMs, extraAttrs)
-
-			if m.program != nil {
-				m.program.Send(IterationEndMsg{
-					BeadID:       bead.ID,
-					Outcome:      outcome,
-					Duration:     time.Since(iterStart),
-					ChatID:       result.ChatID,
-					ErrorMessage: result.ErrorMessage,
-					ExitCode:     result.ExitCode,
-					Stderr:       result.Stderr,
-				})
-			}
-
-			// Sync beads state (best-effort)
-			syncFn := func() error {
-				cmd := exec.Command("bd", "sync")
-				cmd.Dir = cfg.WorkDir
-				return cmd.Run()
-			}
-			if err := syncFn(); err != nil {
-				// Best effort, don't fail on sync errors
-			}
-		}(i, bead)
-	}
-
-	// Wait for all goroutines to complete
-	wg.Wait()
-
-	// Determine stop reason
-	if ctx.Err() != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			summary.StopReason = StopWallClock
-		} else {
-			summary.StopReason = StopContextCancelled
-		}
-	} else {
-		summary.StopReason = StopNormal
-	}
-
-	// End loop
-	summary.Duration = time.Since(loopStart)
-	emitter.EndLoop(summary.StopReason.String(), summary.Iterations, summary.Succeeded, summary.Failed)
 
 	if m.program != nil {
 		m.program.Send(LoopEndMsg{Summary: summary, StopReason: summary.StopReason})
@@ -845,30 +479,3 @@ func fetchTargetBead(workDir, beadID string) (*beads.Bead, error) {
 	}, nil
 }
 
-// executeAgent runs the agent and tracks tool calls via trace emitter
-func (m *TUIModel) executeAgent(ctx context.Context, bead *beads.Bead, emitter *LocalTraceEmitter) (*AgentResult, error) {
-	cfg := m.config
-
-	// Fetch prompt
-	promptData, err := FetchPromptData(nil, cfg.WorkDir, bead.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	prompt, err := RenderPrompt(promptData)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create trace writer that uses local emitter
-	traceWriter := NewLocalTraceWriter(emitter)
-
-	// Run agent with trace writer
-	var opts []Option
-	if cfg.AgentTimeout > 0 {
-		opts = append(opts, WithTimeout(cfg.AgentTimeout))
-	}
-	opts = append(opts, WithStdoutWriter(traceWriter))
-
-	return RunAgent(ctx, cfg.WorkDir, prompt, opts...)
-}

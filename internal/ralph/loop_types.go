@@ -144,17 +144,24 @@ type LoopConfig struct {
 
 	// Progress callbacks (all optional) — called during execution for TUI integration.
 	// If nil, no-op.
-	OnBatchStart func(batch []beads.Bead, batchNum int)
-	OnBeadStart  func(bead beads.Bead)
-	OnBeadEnd    func(bead beads.Bead, outcome Outcome, duration time.Duration)
-	OnBatchEnd   func(batchNum int, results []BeadResult)
+	OnBatchStart   func(batch []beads.Bead, batchNum int)
+	OnBeadStart    func(bead beads.Bead)
+	OnBeadEnd      func(bead beads.Bead, outcome Outcome, duration time.Duration)
+	OnBeadComplete func(result *BeadResult) // Called with full result including agent details
+	OnBatchEnd     func(batchNum int, results []BeadResult)
 }
 
 // BeadResult holds the result of executing a single bead.
 type BeadResult struct {
-	Bead    beads.Bead
-	Outcome Outcome
+	Bead     beads.Bead
+	Outcome  Outcome
 	Duration time.Duration
+
+	// Agent execution details (for debugging failures)
+	ChatID       string // Agent chat session ID
+	ErrorMessage string // Error message from the agent
+	ExitCode     int    // Agent process exit code
+	Stderr       string // Stderr output from the agent
 }
 
 // RunSummary holds aggregate results across all iterations.

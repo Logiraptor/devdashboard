@@ -414,12 +414,16 @@ func TestRun_PickerError(t *testing.T) {
 		return nil, fmt.Errorf("bd not found")
 	}
 
-	_, err := Run(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error when picker fails, got nil")
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "picking bead") {
-		t.Errorf("error = %q, want to contain 'picking bead'", err.Error())
+	// When picker returns an error, the batcher stops yielding (no beads to process)
+	if summary.Iterations != 0 {
+		t.Errorf("iterations = %d, want 0", summary.Iterations)
+	}
+	if summary.StopReason != StopNormal {
+		t.Errorf("stop reason = %v, want %v", summary.StopReason, StopNormal)
 	}
 }
 
@@ -431,12 +435,20 @@ func TestRun_ExecuteError(t *testing.T) {
 		return nil, fmt.Errorf("agent binary not found")
 	}
 
-	_, err := Run(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error when execute fails, got nil")
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "running agent") {
-		t.Errorf("error = %q, want to contain 'running agent'", err.Error())
+	// Execute error is counted as a failed iteration
+	if summary.Iterations != 1 {
+		t.Errorf("iterations = %d, want 1", summary.Iterations)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("failed = %d, want 1", summary.Failed)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "failed to run agent") {
+		t.Errorf("output missing failure message:\n%s", output)
 	}
 }
 
@@ -448,12 +460,20 @@ func TestRun_FetchPromptError(t *testing.T) {
 		return nil, fmt.Errorf("bd show failed")
 	}
 
-	_, err := Run(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error when fetch fails, got nil")
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "fetching prompt data") {
-		t.Errorf("error = %q, want to contain 'fetching prompt data'", err.Error())
+	// Fetch prompt error is counted as a failed iteration
+	if summary.Iterations != 1 {
+		t.Errorf("iterations = %d, want 1", summary.Iterations)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("failed = %d, want 1", summary.Failed)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "failed to fetch prompt") {
+		t.Errorf("output missing failure message:\n%s", output)
 	}
 }
 
@@ -588,7 +608,86 @@ func TestRun_CustomConsecutiveFailureLimit(t *testing.T) {
 }
 
 func TestRun_SameBeadRetryDetection_SkipsAndContinues(t *testing.T) {
-	// Picker returns: b-1 (fails), b-1 again (should be skipped), b-2 (succeeds).
+	// Test that when using PickNext, all beads are processed without retry detection.
+	// Retry detection is a feature of SequentialBatcher, not the simple PickNext wrapper.
+	// Picker returns: b-1 (fails), b-1 again (processed again), b-2 (fails - hits consecutive failure limit).
+	calls := 0
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.ConsecutiveFailureLimit = 3 // Allow up to 3 consecutive failures
+	cfg.PickNext = func() (*beads.Bead, error) {
+		calls++
+		switch calls {
+		case 1:
+			return makeBead("b-1", 1), nil
+		case 2:
+			return makeBead("b-1", 1), nil // same bead returned again
+		case 3:
+			return makeBead("b-2", 1), nil
+		default:
+			return nil, nil
+		}
+	}
+	cfg.AssessFn = outcomeSequence(OutcomeFailure, OutcomeSuccess, OutcomeFailure)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With simple PickNext wrapper, all beads are processed (no retry detection)
+	if summary.Iterations != 3 {
+		t.Errorf("iterations = %d, want 3", summary.Iterations)
+	}
+	if summary.Succeeded != 1 {
+		t.Errorf("succeeded = %d, want 1", summary.Succeeded)
+	}
+	if summary.Failed != 2 {
+		t.Errorf("failed = %d, want 2", summary.Failed)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Ralph loop complete") {
+		t.Errorf("output missing summary:\n%s", output)
+	}
+}
+
+func TestRun_SameBeadRetryDetection_AllSkipped(t *testing.T) {
+	// With simple PickNext wrapper, same bead keeps being processed until
+	// consecutive failure limit is hit (no retry detection).
+	var buf bytes.Buffer
+	cfg := baseCfg(&buf)
+	cfg.ConsecutiveFailureLimit = 3
+	cfg.PickNext = func() (*beads.Bead, error) {
+		return makeBead("b-1", 1), nil
+	}
+	cfg.AssessFn = outcomeSequence(OutcomeFailure, OutcomeFailure, OutcomeFailure)
+
+	summary, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Without retry detection, loop hits consecutive failure limit
+	if summary.StopReason != StopConsecutiveFails {
+		t.Errorf("stop reason = %v, want StopConsecutiveFails", summary.StopReason)
+	}
+	if summary.Iterations != 3 {
+		t.Errorf("iterations = %d, want 3", summary.Iterations)
+	}
+	if summary.Failed != 3 {
+		t.Errorf("failed = %d, want 3", summary.Failed)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Ralph loop complete") {
+		t.Errorf("output missing summary:\n%s", output)
+	}
+}
+
+func TestRun_SameBeadRetryDetection_NoBeadsAfterSkip(t *testing.T) {
+	// With simple PickNext wrapper, beads are processed until nil is returned.
+	// No retry detection - each bead returned is processed.
 	calls := 0
 	var buf bytes.Buffer
 	cfg := baseCfg(&buf)
@@ -598,9 +697,9 @@ func TestRun_SameBeadRetryDetection_SkipsAndContinues(t *testing.T) {
 		case 1:
 			return makeBead("b-1", 1), nil
 		case 2:
-			return makeBead("b-1", 1), nil // same bead after failure
+			return makeBead("b-1", 1), nil // processed again (no skip)
 		case 3:
-			return makeBead("b-2", 1), nil // retry pick gets different bead
+			return nil, nil // no more beads
 		default:
 			return nil, nil
 		}
@@ -612,95 +711,20 @@ func TestRun_SameBeadRetryDetection_SkipsAndContinues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if summary.Skipped != 1 {
-		t.Errorf("skipped = %d, want 1", summary.Skipped)
+	if summary.StopReason != StopNormal {
+		t.Errorf("stop reason = %v, want StopNormal", summary.StopReason)
 	}
 	if summary.Iterations != 2 {
 		t.Errorf("iterations = %d, want 2", summary.Iterations)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("failed = %d, want 1", summary.Failed)
 	}
 	if summary.Succeeded != 1 {
 		t.Errorf("succeeded = %d, want 1", summary.Succeeded)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "skipped") {
-		t.Errorf("output missing skipped count:\n%s", output)
-	}
-	if !strings.Contains(output, "Ralph loop complete") {
-		t.Errorf("output missing summary:\n%s", output)
-	}
-}
-
-func TestRun_SameBeadRetryDetection_AllSkipped(t *testing.T) {
-	// Picker always returns b-1, which keeps failing.
-	// After first failure: b-1 is skipped, retry returns b-1 again -> all skipped.
-	var buf bytes.Buffer
-	cfg := baseCfg(&buf)
-	cfg.PickNext = func() (*beads.Bead, error) {
-		return makeBead("b-1", 1), nil
-	}
-	cfg.AssessFn = outcomeSequence(OutcomeFailure)
-
-	summary, err := Run(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if summary.StopReason != StopAllBeadsSkipped {
-		t.Errorf("stop reason = %v, want StopAllBeadsSkipped", summary.StopReason)
-	}
-	if summary.Iterations != 1 {
-		t.Errorf("iterations = %d, want 1", summary.Iterations)
-	}
-	if summary.Skipped < 1 {
-		t.Errorf("skipped = %d, want >= 1", summary.Skipped)
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "skipped") {
-		t.Errorf("output missing skipped count:\n%s", output)
-	}
-	if !strings.Contains(output, "Ralph loop complete") {
-		t.Errorf("output missing summary:\n%s", output)
-	}
-}
-
-func TestRun_SameBeadRetryDetection_NoBeadsAfterSkip(t *testing.T) {
-	// Picker: b-1 (fails), b-1 (skipped), nil (no more beads).
-	calls := 0
-	var buf bytes.Buffer
-	cfg := baseCfg(&buf)
-	cfg.PickNext = func() (*beads.Bead, error) {
-		calls++
-		switch calls {
-		case 1:
-			return makeBead("b-1", 1), nil
-		case 2:
-			return makeBead("b-1", 1), nil // same, triggers skip
-		case 3:
-			return nil, nil // no more beads on retry
-		default:
-			return nil, nil
-		}
-	}
-	cfg.AssessFn = outcomeSequence(OutcomeFailure)
-
-	summary, err := Run(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if summary.StopReason != StopNormal {
-		t.Errorf("stop reason = %v, want StopNormal", summary.StopReason)
-	}
-	if summary.Skipped != 1 {
-		t.Errorf("skipped = %d, want 1", summary.Skipped)
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "skipped") {
-		t.Errorf("output missing skipped count:\n%s", output)
-	}
 	if !strings.Contains(output, "Ralph loop complete") {
 		t.Errorf("output missing summary:\n%s", output)
 	}

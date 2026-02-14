@@ -269,12 +269,14 @@ func (r *Runner) executeBead(ctx context.Context, bead *beads.Bead, useWorktree 
 		worktreePath, branchName, err = r.wtMgr.CreateWorktree(bead.ID)
 		if err != nil {
 			r.mu.Lock()
+			r.summary.Iterations++
+			r.summary.Failed++
 			writef(r.out, "[runner] failed to create worktree for %s: %v\n", bead.ID, err)
 			r.mu.Unlock()
 			if r.cfg.OnBeadEnd != nil {
 				r.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
 			}
-			return nil
+			return &BeadResult{Bead: *bead, Outcome: OutcomeFailure, Duration: time.Since(beadStart), ErrorMessage: fmt.Sprintf("worktree creation failed: %v", err)}
 		}
 		defer func() {
 			if removeErr := r.wtMgr.RemoveWorktree(worktreePath); removeErr != nil {
@@ -289,24 +291,28 @@ func (r *Runner) executeBead(ctx context.Context, bead *beads.Bead, useWorktree 
 	promptData, err := r.fetchPrompt(bead.ID)
 	if err != nil {
 		r.mu.Lock()
+		r.summary.Iterations++
+		r.summary.Failed++
 		writef(r.out, "[runner] failed to fetch prompt for %s: %v\n", bead.ID, err)
 		r.mu.Unlock()
 		if r.cfg.OnBeadEnd != nil {
 			r.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
 		}
-		return nil
+		return &BeadResult{Bead: *bead, Outcome: OutcomeFailure, Duration: time.Since(beadStart), ErrorMessage: fmt.Sprintf("fetch prompt failed: %v", err)}
 	}
 
 	// Render prompt
 	prompt, err := r.render(promptData)
 	if err != nil {
 		r.mu.Lock()
+		r.summary.Iterations++
+		r.summary.Failed++
 		writef(r.out, "[runner] failed to render prompt for %s: %v\n", bead.ID, err)
 		r.mu.Unlock()
 		if r.cfg.OnBeadEnd != nil {
 			r.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
 		}
-		return nil
+		return &BeadResult{Bead: *bead, Outcome: OutcomeFailure, Duration: time.Since(beadStart), ErrorMessage: fmt.Sprintf("render prompt failed: %v", err)}
 	}
 
 	// Get commit hash before agent execution for landing check
@@ -333,12 +339,14 @@ func (r *Runner) executeBead(ctx context.Context, bead *beads.Bead, useWorktree 
 	}
 	if err != nil {
 		r.mu.Lock()
+		r.summary.Iterations++
+		r.summary.Failed++
 		writef(r.out, "[runner] failed to run agent for %s: %v\n", bead.ID, err)
 		r.mu.Unlock()
 		if r.cfg.OnBeadEnd != nil {
 			r.cfg.OnBeadEnd(*bead, OutcomeFailure, time.Since(beadStart))
 		}
-		return nil
+		return &BeadResult{Bead: *bead, Outcome: OutcomeFailure, Duration: time.Since(beadStart), ErrorMessage: fmt.Sprintf("agent execution failed: %v", err)}
 	}
 
 	// Assess outcome
@@ -427,11 +435,22 @@ func (r *Runner) executeBead(ctx context.Context, bead *beads.Bead, useWorktree 
 		r.cfg.OnBeadEnd(*bead, outcome, duration)
 	}
 
-	return &BeadResult{
-		Bead:     *bead,
-		Outcome:  outcome,
-		Duration: duration,
+	beadResult := &BeadResult{
+		Bead:         *bead,
+		Outcome:      outcome,
+		Duration:     duration,
+		ChatID:       result.ChatID,
+		ErrorMessage: result.ErrorMessage,
+		ExitCode:     result.ExitCode,
+		Stderr:       result.Stderr,
 	}
+
+	// Call OnBeadComplete callback with full result (for TUI integration)
+	if r.cfg.OnBeadComplete != nil {
+		r.cfg.OnBeadComplete(beadResult)
+	}
+
+	return beadResult
 }
 
 // getCommitHashBefore gets the commit hash before agent execution for landing check.
