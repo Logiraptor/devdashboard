@@ -979,9 +979,9 @@ func TestRun_FinalSummaryIncludesStopReason(t *testing.T) {
 	}
 }
 
-// TestFetchEpicChildren tests fetching epic children.
+// TestReadyBeadsWithEpic tests fetching ready beads with an epic parent.
 // Test case (2): Leaf tasks run in priority order
-func TestFetchEpicChildren(t *testing.T) {
+func TestReadyBeadsWithEpic(t *testing.T) {
 	now := time.Now()
 	// Create entries with different priorities - child-2 has higher priority (lower number)
 	entries := []bdReadyEntry{
@@ -990,7 +990,7 @@ func TestFetchEpicChildren(t *testing.T) {
 		{ID: "child-3", Title: "Child 3", Status: "open", Priority: 3, CreatedAt: now.Add(-2 * time.Hour)},
 	}
 
-	children, err := FetchEpicChildren(mockBDReady(entries), "/fake/dir", "epic-1")
+	children, err := ReadyBeadsWithRunner(mockBDReady(entries), "/fake/dir", "epic-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1031,7 +1031,7 @@ func TestEpicMode_AllChildrenSuccess(t *testing.T) {
 
 	// Note: Full integration test would require mocking all bd commands (show, ready, list, sync)
 	// which is complex. The routing logic is tested here, and individual components
-	// (FetchEpicChildren priority sorting) are tested separately.
+	// (ReadyBeads priority sorting) are tested separately.
 }
 
 // TestEpicMode_ChildFailure tests epic mode stopping on child failure.
@@ -1053,8 +1053,8 @@ func TestEpicMode_ChildFailure(t *testing.T) {
 
 // TestEpicMode_NoChildren tests epic mode with no children.
 func TestEpicMode_NoChildren(t *testing.T) {
-	// Test FetchEpicChildren with empty result
-	children, err := FetchEpicChildren(mockBDReady([]bdReadyEntry{}), "/fake/dir", "epic-1")
+	// Test ReadyBeads with empty result
+	children, err := ReadyBeadsWithRunner(mockBDReady([]bdReadyEntry{}), "/fake/dir", "epic-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

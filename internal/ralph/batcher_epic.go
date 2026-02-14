@@ -11,7 +11,7 @@ func EpicBatcher(workDir string, epicID string) BeadBatcher {
 		processed := make(map[string]bool)
 		for {
 			// Query for ready leaf tasks
-			children, err := FetchEpicChildren(nil, workDir, epicID)
+			children, err := ReadyBeads(workDir, epicID)
 			if err != nil {
 				// If we can't fetch children, stop batching
 				return

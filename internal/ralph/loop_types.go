@@ -313,15 +313,11 @@ func formatSummary(summary *RunSummary, remainingBeads int) string {
 // countRemainingBeads counts the number of ready beads remaining.
 func countRemainingBeads(cfg LoopConfig) int {
 	if cfg.PickNext == nil {
-		picker := &BeadPicker{
-			WorkDir: cfg.WorkDir,
-			Epic:    cfg.Epic,
-		}
-		count, err := picker.Count()
+		beads, err := ReadyBeads(cfg.WorkDir, cfg.Epic)
 		if err != nil {
 			return 0
 		}
-		return count
+		return len(beads)
 	}
 
 	// With a custom picker, we can't easily count

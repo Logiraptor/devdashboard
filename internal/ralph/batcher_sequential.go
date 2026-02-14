@@ -7,61 +7,34 @@ import (
 // SequentialBatcher yields one bead at a time from bd ready.
 // It includes same-bead retry detection to avoid infinite loops when
 // the same failed bead is repeatedly returned.
-//
-// The retry detection matches the logic from handleSameBeadRetry in loop_sequential.go:
-// if the picker returns the same bead that was just yielded (indicating a retry),
-// it skips that bead and tries the next one. If all beads are skipped, it stops.
 func SequentialBatcher(workDir string, epic string) BeadBatcher {
 	return func(yield func([]beads.Bead) bool) {
-		picker := &BeadPicker{WorkDir: workDir, Epic: epic}
-		lastFailedBeadID := ""
 		skippedBeads := make(map[string]bool)
 		lastYieldedBeadID := ""
 
 		for {
-			bead, err := picker.Next()
-			if err != nil || bead == nil {
+			readyBeads, err := ReadyBeads(workDir, epic)
+			if err != nil || len(readyBeads) == 0 {
 				return
 			}
 
-			// Same-bead retry detection: if this is the same bead that just failed,
-			// skip it and try the next one. This matches the logic from handleSameBeadRetry
-			// in loop_sequential.go.
-			if lastFailedBeadID != "" && bead.ID == lastFailedBeadID {
-				skippedBeads[bead.ID] = true
-				lastFailedBeadID = "" // reset so we don't skip indefinitely
-
-				// Try one more pick; if that's also skipped, stop.
-				retryBead, retryErr := picker.Next()
-				if retryErr != nil {
-					return
+			// Find first non-skipped bead
+			var bead *beads.Bead
+			for i := range readyBeads {
+				if !skippedBeads[readyBeads[i].ID] {
+					bead = &readyBeads[i]
+					break
 				}
-				if retryBead == nil {
-					return
-				}
-				if skippedBeads[retryBead.ID] {
-					return
-				}
-				bead = retryBead
+			}
+			if bead == nil {
+				return
 			}
 
-			// Also detect if the picker returns the same bead consecutively
-			// (this can happen if a bead fails and the picker keeps returning it)
+			// Detect same-bead retry: if this is the same bead that was just yielded,
+			// skip it and try the next one.
 			if lastYieldedBeadID != "" && bead.ID == lastYieldedBeadID {
 				skippedBeads[bead.ID] = true
-
-				// Try one more pick; if that's also skipped, stop.
-				retryBead, retryErr := picker.Next()
-				if retryErr != nil {
-					return
-				}
-				if retryBead == nil {
-					return
-				}
-				if skippedBeads[retryBead.ID] {
-					return
-				}
-				bead = retryBead
+				continue
 			}
 
 			// Yield the bead (single bead in a slice)

@@ -1,44 +1,15 @@
 package ralph
 
 import (
-	"fmt"
-
-	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
 )
-
-// fetchReadyBeads fetches all ready beads.
-// If epic is set, fetches ready children of that epic.
-// Otherwise, fetches all ready beads.
-func fetchReadyBeads(workDir string, epic string) ([]beads.Bead, error) {
-	if epic != "" {
-		// Fetch ready children of epic
-		return FetchEpicChildren(nil, workDir, epic)
-	}
-
-	// Fetch all ready beads (no epic filter)
-	runner := bd.Run
-	args := []string{"ready", "--json"}
-
-	out, err := runner(workDir, args...)
-	if err != nil {
-		return nil, fmt.Errorf("bd ready: %w", err)
-	}
-
-	parsed, err := parseReadyBeads(out)
-	if err != nil {
-		return nil, fmt.Errorf("parsing bd ready output: %w", err)
-	}
-
-	return parsed, nil
-}
 
 // WaveBatcher yields all ready beads at once, then re-queries for newly unblocked.
 func WaveBatcher(workDir string, epic string) BeadBatcher {
 	return func(yield func([]beads.Bead) bool) {
 		processed := make(map[string]bool)
 		for {
-			ready, err := fetchReadyBeads(workDir, epic)
+			ready, err := ReadyBeads(workDir, epic)
 			if err != nil {
 				// If we can't fetch beads, stop batching
 				return
