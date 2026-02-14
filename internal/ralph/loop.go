@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// Run executes the ralph loop with the given configuration.
+// This is the main entry point for running the ralph loop.
+func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+	return RunLegacy(ctx, cfg)
+}
+
 // RunLegacy is the legacy Run function, temporarily renamed to make room for the new Run API in runner.go.
 // TODO: Migrate callers to the new Run API and remove this function.
 func RunLegacy(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {

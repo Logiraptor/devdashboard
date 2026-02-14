@@ -7,10 +7,6 @@ import (
 	"devdeploy/internal/beads"
 )
 
-// BeadBatcher is a function that yields batches of beads.
-// The yield function receives a batch of beads and returns false to stop batching.
-type BeadBatcher func(yield func([]beads.Bead) bool)
-
 // fetchReadyBeads fetches all ready beads.
 // If epic is set, fetches ready children of that epic.
 // Otherwise, fetches all ready beads.
