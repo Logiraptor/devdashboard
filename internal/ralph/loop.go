@@ -9,18 +9,9 @@ import (
 	"time"
 )
 
-// Run executes the ralph autonomous work loop. It picks beads, dispatches
-// agents, assesses outcomes, and enforces safety guards. The loop stops when:
-//   - no more beads are available
-//   - max iteration count is reached
-//   - the context is cancelled
-//   - N consecutive failures occur
-//   - the total wall-clock timeout expires
-//   - all available beads have been skipped (same-bead retry detection)
-//
-// When Concurrency > 1, agents run in parallel, each in its own git worktree.
-// When PickNext is provided (typically for testing), uses the sequential loop.
-func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
+// RunLegacy is the legacy Run function, temporarily renamed to make room for the new Run API in runner.go.
+// TODO: Migrate callers to the new Run API and remove this function.
+func RunLegacy(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
 	// If PickNext is provided, use the sequential loop (typically for testing)
 	// This allows tests to control bead selection without requiring a git repo
 	if cfg.PickNext != nil {

@@ -131,7 +131,7 @@ func run(cfg config) (ralph.StopReason, error) {
 
 	// Verbose mode: use original non-TUI runner for debugging/compatibility
 	if cfg.verbose {
-		summary, err := ralph.Run(ctx, loopCfg)
+		summary, err := ralph.RunLegacy(ctx, loopCfg)
 		if err != nil {
 			return ralph.StopNormal, err
 		}
