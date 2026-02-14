@@ -129,9 +129,9 @@ func run(cfg config) (ralph.StopReason, error) {
 		StrictLanding:           cfg.strictLanding,
 	}
 
-	// Verbose mode: use original non-TUI runner for debugging/compatibility
+	// Verbose mode: use unified runner (no TUI)
 	if cfg.verbose {
-		summary, err := ralph.RunLegacy(ctx, loopCfg)
+		summary, err := ralph.Run(ctx, loopCfg)
 		if err != nil {
 			return ralph.StopNormal, err
 		}

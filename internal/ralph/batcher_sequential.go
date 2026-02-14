@@ -4,10 +4,6 @@ import (
 	"devdeploy/internal/beads"
 )
 
-// BeadBatcher is a function type that yields batches of beads.
-// The yield function returns false to stop batching, true to continue.
-type BeadBatcher func(yield func([]beads.Bead) bool)
-
 // SequentialBatcher yields one bead at a time from bd ready.
 // It includes same-bead retry detection to avoid infinite loops when
 // the same failed bead is repeatedly returned.

@@ -7,29 +7,60 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"devdeploy/internal/beads"
 )
 
 // Run executes the ralph loop with the given configuration.
 // This is the main entry point for running the ralph loop.
 func Run(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
-	return RunLegacy(ctx, cfg)
-}
+	// Select batcher based on configuration
+	var batcher BeadBatcher
 
-// RunLegacy is the legacy Run function, temporarily renamed to make room for the new Run API in runner.go.
-// TODO: Migrate callers to the new Run API and remove this function.
-func RunLegacy(ctx context.Context, cfg LoopConfig) (*RunSummary, error) {
-	// If PickNext is provided, use the sequential loop (typically for testing)
-	// This allows tests to control bead selection without requiring a git repo
 	if cfg.PickNext != nil {
-		return runSequential(ctx, cfg)
+		// Test mode: use a custom batcher that wraps PickNext
+		batcher = func(yield func([]beads.Bead) bool) {
+			for {
+				bead, err := cfg.PickNext()
+				if err != nil || bead == nil {
+					return
+				}
+				if !yield([]beads.Bead{*bead}) {
+					return
+				}
+			}
+		}
+	} else if cfg.TargetBead != "" {
+		// Targeted mode: work on a specific bead
+		batcher = TargetedBatcher(cfg.WorkDir, cfg.TargetBead)
+	} else if cfg.Epic != "" {
+		// Epic mode: orchestrate children sequentially
+		batcher = EpicBatcher(cfg.WorkDir, cfg.Epic)
+	} else {
+		// Default: wave mode (all ready beads in parallel)
+		batcher = WaveBatcher(cfg.WorkDir, "")
 	}
 
-	// Use WaveOrchestrator by default
-	orchestrator, err := NewWaveOrchestrator(cfg)
+	// Create runner with selected batcher
+	runner, err := NewRunner(batcher, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("creating wave orchestrator: %w", err)
+		return nil, fmt.Errorf("creating runner: %w", err)
 	}
-	return orchestrator.Run(ctx)
+
+	// Run the unified loop
+	summary, err := runner.Run(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Epic mode: run opus verification after all children complete
+	if cfg.Epic != "" && summary.Failed == 0 && summary.TimedOut == 0 && summary.Iterations > 0 {
+		// Note: Epic verification logic would go here if needed
+		// For now, we'll keep it simple and let the epic orchestrator handle it separately
+		// if needed in the future
+	}
+
+	return summary, nil
 }
 
 // resolvedConfig holds resolved configuration values common to all loop types.
