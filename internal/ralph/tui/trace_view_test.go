@@ -1,4 +1,4 @@
-package ralph
+package tui
 
 import (
 	"strings"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"devdeploy/internal/trace"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -16,16 +17,12 @@ func TestTraceViewModel_NoTrace(t *testing.T) {
 	// Set trace to nil explicitly to trigger refreshContent
 	view.SetTrace(nil)
 	output := view.View()
-	
+
 	// The viewport content should contain "No active trace" (may be styled with ANSI codes)
-	// Check for the text - it may be wrapped in ANSI escape sequences
 	if !strings.Contains(output, "No active trace") && !strings.Contains(output, "active trace") {
-		// Output may contain ANSI codes, so let's check if viewport has content
-		// The actual check is that refreshContent was called and set the content
 		if view.trace != nil {
 			t.Error("trace should be nil")
 		}
-		// If output is empty, that's also acceptable - viewport may not render until sized
 		if output == "" {
 			t.Log("Viewport output is empty (may be acceptable if viewport not initialized)")
 		}
@@ -260,11 +257,7 @@ func TestTraceViewModel_UpdateScrolling(t *testing.T) {
 	_ = view.View() // Initial render
 
 	// Test that Update handles scrolling messages
-	// Note: We can't easily test the actual scrolling behavior without
-	// a full tea.Program, but we can verify Update doesn't panic
 	teaMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	cmd := view.Update(teaMsg)
-	// Update may return nil command if viewport doesn't need to update
-	// This is acceptable behavior
 	_ = cmd
 }

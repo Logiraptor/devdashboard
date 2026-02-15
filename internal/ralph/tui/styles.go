@@ -1,6 +1,11 @@
-package ralph
+// Package tui provides a terminal user interface for the ralph agent loop.
+package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"devdeploy/internal/ralph"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Color constants
 const (
@@ -12,8 +17,8 @@ const (
 	ColorHighlight = "212" // Pink
 )
 
-// RalphStyles contains all styles for ralph TUI
-type RalphStyles struct {
+// Styles contains all styles for ralph TUI
+type Styles struct {
 	Title      lipgloss.Style
 	Subtitle   lipgloss.Style
 	Status     lipgloss.Style
@@ -29,8 +34,8 @@ type RalphStyles struct {
 }
 
 // DefaultStyles returns the default ralph styles
-func DefaultStyles() RalphStyles {
-	return RalphStyles{
+func DefaultStyles() Styles {
+	return Styles{
 		Title: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(ColorPrimary)),
@@ -72,15 +77,15 @@ const (
 )
 
 // StatusIcon returns the appropriate icon for an outcome
-func StatusIcon(outcome Outcome) string {
+func StatusIcon(outcome ralph.Outcome) string {
 	switch outcome {
-	case OutcomeSuccess:
+	case ralph.OutcomeSuccess:
 		return IconSuccess
-	case OutcomeFailure:
+	case ralph.OutcomeFailure:
 		return IconFailed
-	case OutcomeTimeout:
+	case ralph.OutcomeTimeout:
 		return IconTimeout
-	case OutcomeQuestion:
+	case ralph.OutcomeQuestion:
 		return IconQuestion
 	default:
 		return IconRunning
@@ -88,15 +93,15 @@ func StatusIcon(outcome Outcome) string {
 }
 
 // StatusStyle returns the appropriate style for an outcome
-func (s RalphStyles) StatusStyle(outcome Outcome) lipgloss.Style {
+func (s Styles) StatusStyle(outcome ralph.Outcome) lipgloss.Style {
 	switch outcome {
-	case OutcomeSuccess:
+	case ralph.OutcomeSuccess:
 		return s.Success
-	case OutcomeFailure:
+	case ralph.OutcomeFailure:
 		return s.Error
-	case OutcomeTimeout:
+	case ralph.OutcomeTimeout:
 		return s.Warning
-	case OutcomeQuestion:
+	case ralph.OutcomeQuestion:
 		return s.Warning
 	default:
 		return s.Status

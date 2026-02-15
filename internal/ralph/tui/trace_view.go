@@ -1,9 +1,10 @@
-package ralph
+package tui
 
 import (
 	"fmt"
 	"strings"
 
+	"devdeploy/internal/ralph"
 	"devdeploy/internal/trace"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -14,13 +15,13 @@ import (
 type TraceViewModel struct {
 	trace    *trace.Trace
 	viewport viewport.Model
-	styles   RalphStyles
+	styles   Styles
 	width    int
 	height   int
 }
 
 // NewTraceViewModel creates a new trace view
-func NewTraceViewModel(styles RalphStyles) *TraceViewModel {
+func NewTraceViewModel(styles Styles) *TraceViewModel {
 	vp := viewport.New(80, 20)
 	return &TraceViewModel{
 		viewport: vp,
@@ -67,11 +68,11 @@ func (v *TraceViewModel) refreshContent() {
 	var lines []string
 
 	// Header
-	var headerOutcome Outcome
+	var headerOutcome ralph.Outcome
 	if v.trace.Status == "completed" {
-		headerOutcome = OutcomeSuccess
+		headerOutcome = ralph.OutcomeSuccess
 	} else {
-		headerOutcome = Outcome(-1) // Running
+		headerOutcome = ralph.Outcome(-1) // Running
 	}
 	statusIcon := StatusIcon(headerOutcome)
 	header := fmt.Sprintf("Trace: %s %s %s",
@@ -127,13 +128,13 @@ func (v *TraceViewModel) renderIteration(span *trace.Span, prefix string, isLast
 	}
 
 	// Determine status
-	var outcome Outcome
+	var outcome ralph.Outcome
 	if outcomeStr, ok := span.Attributes["outcome"]; ok {
 		outcome = parseOutcome(outcomeStr)
 	} else if span.Duration == 0 {
-		outcome = Outcome(-1) // Running (no outcome attribute yet)
+		outcome = ralph.Outcome(-1) // Running (no outcome attribute yet)
 	} else {
-		outcome = OutcomeSuccess // Default for completed spans
+		outcome = ralph.OutcomeSuccess // Default for completed spans
 	}
 
 	icon := StatusIcon(outcome)
@@ -149,11 +150,11 @@ func (v *TraceViewModel) renderIteration(span *trace.Span, prefix string, isLast
 		iconStyle.Render(icon))
 
 	if span.Duration > 0 {
-		line += " " + v.styles.Duration.Render(formatDuration(span.Duration))
+		line += " " + v.styles.Duration.Render(ralph.FormatDuration(span.Duration))
 	}
 
 	// Show exit code for failures
-	if (outcome == OutcomeFailure || outcome == OutcomeTimeout) {
+	if outcome == ralph.OutcomeFailure || outcome == ralph.OutcomeTimeout {
 		if exitCode, ok := span.Attributes["exit_code"]; ok && exitCode != "" && exitCode != "0" {
 			line += " " + v.styles.Error.Render(fmt.Sprintf("(exit %s)", exitCode))
 		}
@@ -162,7 +163,7 @@ func (v *TraceViewModel) renderIteration(span *trace.Span, prefix string, isLast
 	lines = append(lines, line)
 
 	// Show chat ID for failed iterations (on a separate line)
-	if (outcome == OutcomeFailure || outcome == OutcomeTimeout) {
+	if outcome == ralph.OutcomeFailure || outcome == ralph.OutcomeTimeout {
 		if chatID, ok := span.Attributes["chat_id"]; ok && chatID != "" {
 			childPrefix := prefix
 			if isLast {
@@ -203,16 +204,14 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 	}
 
 	// Calculate available space for detail text
-	// Account for: prefix + connector + space + toolName + space + detail + space + icon + space + duration
-	// Approximate overhead: prefix (variable) + connector (2) + toolName (~8) + icon (1) + duration (~5) + spaces (~5) = ~20 + prefix
 	prefixLen := len(prefix)
 	overhead := 25 // connector + tool name + icon + duration + spaces
 	maxDetail := v.width - prefixLen - overhead
 	if maxDetail < 20 {
-		maxDetail = 20 // Minimum reasonable length
+		maxDetail = 20
 	}
 	if maxDetail > 80 {
-		maxDetail = 80 // Cap at reasonable max to avoid very long lines
+		maxDetail = 80
 	}
 
 	// Tool name and key attribute
@@ -253,7 +252,7 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 	}
 	line += " " + iconStyle.Render(icon)
 	if span.Duration > 0 {
-		line += " " + v.styles.Duration.Render(formatDuration(span.Duration))
+		line += " " + v.styles.Duration.Render(ralph.FormatDuration(span.Duration))
 	}
 
 	return []string{line}
@@ -282,17 +281,17 @@ func truncate(s string, max int) string {
 	return s
 }
 
-func parseOutcome(s string) Outcome {
+func parseOutcome(s string) ralph.Outcome {
 	switch s {
 	case "success":
-		return OutcomeSuccess
+		return ralph.OutcomeSuccess
 	case "failure":
-		return OutcomeFailure
+		return ralph.OutcomeFailure
 	case "timeout":
-		return OutcomeTimeout
+		return ralph.OutcomeTimeout
 	case "question":
-		return OutcomeQuestion
+		return ralph.OutcomeQuestion
 	default:
-		return OutcomeSuccess
+		return ralph.OutcomeSuccess
 	}
 }

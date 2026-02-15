@@ -14,6 +14,32 @@ import (
 	"devdeploy/internal/beads"
 )
 
+// ProgressObserver receives progress updates from Core execution.
+// All methods are optional — implement only what you need.
+// Methods are called synchronously from the execution goroutine.
+type ProgressObserver interface {
+	// OnLoopStart is called when the loop begins.
+	OnLoopStart(rootBead string)
+
+	// OnBeadStart is called when work begins on a bead.
+	OnBeadStart(bead beads.Bead)
+
+	// OnBeadComplete is called when a bead finishes (success or failure).
+	OnBeadComplete(result BeadResult)
+
+	// OnLoopEnd is called when the loop completes.
+	OnLoopEnd(result *CoreResult)
+}
+
+// NoopObserver is a ProgressObserver that does nothing.
+// Embed this in your observer to avoid implementing unused methods.
+type NoopObserver struct{}
+
+func (NoopObserver) OnLoopStart(string)            {}
+func (NoopObserver) OnBeadStart(beads.Bead)        {}
+func (NoopObserver) OnBeadComplete(BeadResult)     {}
+func (NoopObserver) OnLoopEnd(*CoreResult)         {}
+
 // Core orchestrates parallel agent execution for a bead tree.
 type Core struct {
 	// WorkDir is the root repository directory.
@@ -34,6 +60,9 @@ type Core struct {
 
 	// Output is where logs are written. Defaults to os.Stdout.
 	Output io.Writer
+
+	// Observer receives progress updates. Optional.
+	Observer ProgressObserver
 
 	// Test hooks (nil means use real implementations)
 	RunBD       BDRunner
@@ -64,6 +93,11 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	out := c.Output
 	if out == nil {
 		out = os.Stdout
+	}
+
+	// Notify observer of loop start
+	if c.Observer != nil {
+		c.Observer.OnLoopStart(c.RootBead)
 	}
 
 	// Initialize worktree manager for parallel execution
@@ -147,7 +181,12 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	if result.TimedOut > 0 {
 		writef(out, "  ⏱ %d timeouts\n", result.TimedOut)
 	}
-	writef(out, "  Duration: %s\n", formatDuration(result.Duration))
+	writef(out, "  Duration: %s\n", FormatDuration(result.Duration))
+
+	// Notify observer of loop end
+	if c.Observer != nil {
+		c.Observer.OnLoopEnd(result)
+	}
 
 	return result, nil
 }
@@ -203,6 +242,32 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 	start := time.Now()
 	result := beadExecResult{BeadID: bead.ID}
 
+	// For observer notifications
+	var agentResult *AgentResult
+	notifyComplete := func(outcome Outcome, errMsg string) {
+		if c.Observer != nil {
+			br := BeadResult{
+				Bead:     *bead,
+				Outcome:  outcome,
+				Duration: result.Duration,
+			}
+			if agentResult != nil {
+				br.ChatID = agentResult.ChatID
+				br.ExitCode = agentResult.ExitCode
+				br.Stderr = agentResult.Stderr
+			}
+			if errMsg != "" {
+				br.ErrorMessage = errMsg
+			}
+			c.Observer.OnBeadComplete(br)
+		}
+	}
+
+	// Notify observer of bead start
+	if c.Observer != nil {
+		c.Observer.OnBeadStart(*bead)
+	}
+
 	// Determine execution directory
 	execDir := c.WorkDir
 	if wtMgr != nil {
@@ -211,6 +276,7 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 			writef(out, "[%s] failed to create worktree: %v\n", bead.ID, err)
 			result.Outcome = OutcomeFailure
 			result.Duration = time.Since(start)
+			notifyComplete(result.Outcome, err.Error())
 			return result
 		}
 		execDir = worktreePath
@@ -228,6 +294,7 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		writef(out, "[%s] failed to fetch prompt: %v\n", bead.ID, err)
 		result.Outcome = OutcomeFailure
 		result.Duration = time.Since(start)
+		notifyComplete(result.Outcome, err.Error())
 		return result
 	}
 
@@ -241,11 +308,11 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		writef(out, "[%s] failed to render prompt: %v\n", bead.ID, err)
 		result.Outcome = OutcomeFailure
 		result.Duration = time.Since(start)
+		notifyComplete(result.Outcome, err.Error())
 		return result
 	}
 
 	// Execute agent
-	var agentResult *AgentResult
 	if c.Execute != nil {
 		agentResult, err = c.Execute(ctx, execDir, prompt)
 	} else {
@@ -259,6 +326,7 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		writef(out, "[%s] agent execution error: %v\n", bead.ID, err)
 		result.Outcome = OutcomeFailure
 		result.Duration = time.Since(start)
+		notifyComplete(result.Outcome, err.Error())
 		return result
 	}
 
@@ -274,11 +342,12 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 	result.Outcome = outcome
 	result.Duration = agentResult.Duration
 
-	writef(out, "[%s] %s → %s (%s)\n", bead.ID, bead.Title, outcome, formatDuration(result.Duration))
+	writef(out, "[%s] %s → %s (%s)\n", bead.ID, bead.Title, outcome, FormatDuration(result.Duration))
 	if summary != "" && outcome != OutcomeSuccess {
 		writef(out, "  %s\n", summary)
 	}
 
+	notifyComplete(result.Outcome, summary)
 	return result
 }
 

@@ -176,8 +176,8 @@ type RunSummary struct {
 	Duration   time.Duration
 }
 
-// formatDuration formats a duration in a human-readable way (e.g., "2m34s", "1h12m").
-func formatDuration(d time.Duration) string {
+// FormatDuration formats a duration in a human-readable way (e.g., "2m34s", "1h12m").
+func FormatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	h := d / time.Hour
 	d -= h * time.Hour
@@ -277,7 +277,7 @@ func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome
 
 	var result strings.Builder
 	fmt.Fprintf(&result, "[%d/%d] %s \"%s\" → %s (%s)",
-		iter, maxIter, beadID, title, status.String(), formatDuration(duration))
+		iter, maxIter, beadID, title, status.String(), FormatDuration(duration))
 	return result.String()
 }
 
@@ -305,7 +305,7 @@ func formatSummary(summary *RunSummary, remainingBeads int) string {
 		fmt.Fprintf(&b, "  ○ %d beads remaining (blocked)\n", remainingBeads)
 	}
 
-	fmt.Fprintf(&b, "  Duration: %s", formatDuration(summary.Duration))
+	fmt.Fprintf(&b, "  Duration: %s", FormatDuration(summary.Duration))
 
 	return b.String()
 }
