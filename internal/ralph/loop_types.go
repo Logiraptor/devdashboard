@@ -1,11 +1,8 @@
 package ralph
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"strings"
 	"time"
 
 	"devdeploy/internal/beads"
@@ -100,56 +97,8 @@ const DefaultConsecutiveFailureLimit = 3
 
 // DefaultWallClockTimeout is the maximum total duration for a ralph session.
 // Set to 2 hours to allow for substantial work while preventing runaway sessions.
-// Individual agent timeouts are controlled separately via LoopConfig.AgentTimeout.
+// Individual agent timeouts are controlled separately via Core.AgentTimeout.
 const DefaultWallClockTimeout = 2 * time.Hour
-
-// LoopConfig configures the ralph autonomous work loop.
-type LoopConfig struct {
-	WorkDir       string
-	Epic          string
-	TargetBead    string // if set, skip picker and work on this specific bead
-	MaxIterations int
-	DryRun        bool
-	Verbose       bool
-
-	// AgentTimeout is the per-agent execution timeout. Zero means use the
-	// executor's DefaultTimeout (10m).
-	AgentTimeout time.Duration
-
-	// ConsecutiveFailureLimit stops the loop after N consecutive failures.
-	// Zero means use DefaultConsecutiveFailureLimit (3).
-	ConsecutiveFailureLimit int
-
-	// Timeout is the total wall-clock timeout for the entire ralph session.
-	// Zero means use DefaultWallClockTimeout (2h).
-	Timeout time.Duration
-
-	// Concurrency is the number of concurrent agents to run. Default is 1 (sequential).
-	// When > 1, each agent runs in its own git worktree for isolation.
-	Concurrency int
-
-	// StrictLanding, when true, treats incomplete landing (uncommitted changes or
-	// unclosed bead) as failure. When false, warns but counts as success if bead closed.
-	// Default is true.
-	StrictLanding bool
-
-	// Test hooks — nil means use real implementations.
-	PickNext    func() (*beads.Bead, error)
-	FetchPrompt func(beadID string) (*PromptData, error)
-	Render      func(data *PromptData) (string, error)
-	Execute     func(ctx context.Context, prompt string) (*AgentResult, error)
-	AssessFn    func(beadID string, result *AgentResult) (Outcome, string)
-	SyncFn      func() error
-	Output      io.Writer // defaults to os.Stdout
-
-	// Progress callbacks (all optional) — called during execution for TUI integration.
-	// If nil, no-op.
-	OnBatchStart   func(batch []beads.Bead, batchNum int)
-	OnBeadStart    func(bead beads.Bead)
-	OnBeadEnd      func(bead beads.Bead, outcome Outcome, duration time.Duration)
-	OnBeadComplete func(result *BeadResult) // Called with full result including agent details
-	OnBatchEnd     func(batchNum int, results []BeadResult)
-}
 
 // BeadResult holds the result of executing a single bead.
 type BeadResult struct {
@@ -192,139 +141,4 @@ func FormatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
-}
-
-// formatIterationLog formats a per-iteration log line.
-func formatIterationLog(iter, maxIter int, beadID, title string, outcome Outcome, duration time.Duration, outcomeSummary string) string {
-	var status strings.Builder
-	switch outcome {
-	case OutcomeSuccess:
-		status.WriteString("success")
-	case OutcomeQuestion:
-		// Extract question bead IDs from outcomeSummary: "bead X has N question(s) needing human input: id1, id2"
-		status.WriteString("question")
-		if strings.Contains(outcomeSummary, ": ") {
-			parts := strings.Split(outcomeSummary, ": ")
-			if len(parts) > 1 {
-				questionIDs := strings.TrimSpace(parts[1])
-				status.Reset()
-				fmt.Fprintf(&status, "question: %s", questionIDs)
-			}
-		}
-	case OutcomeFailure:
-		status.WriteString("failed")
-		// Extract exit code from: "bead X still open after agent run (exit code N, duration ...)"
-		// or: "failed to query bead X: ... (agent exit code N)"
-		if strings.Contains(outcomeSummary, "exit code") {
-			// Find "exit code" and extract the number after it
-			idx := strings.Index(outcomeSummary, "exit code")
-			if idx >= 0 {
-				afterCode := outcomeSummary[idx+len("exit code"):]
-				afterCode = strings.TrimSpace(afterCode)
-				// Extract first number
-				var exitCode strings.Builder
-				for _, r := range afterCode {
-					if r >= '0' && r <= '9' {
-						exitCode.WriteRune(r)
-					} else if exitCode.Len() > 0 {
-						break
-					}
-				}
-				if exitCode.Len() > 0 {
-					status.Reset()
-					fmt.Fprintf(&status, "failed: exit code %s", exitCode.String())
-				}
-			}
-		}
-	case OutcomeTimeout:
-		status.WriteString("timeout")
-		// Extract exit code from: "agent timed out after ... (exit code N)"
-		if strings.Contains(outcomeSummary, "exit code") {
-			idx := strings.Index(outcomeSummary, "exit code")
-			if idx >= 0 {
-				afterCode := outcomeSummary[idx+len("exit code"):]
-				afterCode = strings.TrimSpace(afterCode)
-				// Extract first number
-				var exitCode strings.Builder
-				for _, r := range afterCode {
-					if r >= '0' && r <= '9' {
-						exitCode.WriteRune(r)
-					} else if exitCode.Len() > 0 {
-						break
-					}
-				}
-				if exitCode.Len() > 0 {
-					status.Reset()
-					fmt.Fprintf(&status, "timeout: exit code %s", exitCode.String())
-				}
-			}
-		}
-		// For timeout, also show the timeout duration if available
-		if strings.Contains(outcomeSummary, "timed out after") {
-			idx := strings.Index(outcomeSummary, "timed out after")
-			if idx >= 0 {
-				afterAfter := outcomeSummary[idx+len("timed out after"):]
-				afterAfter = strings.TrimSpace(afterAfter)
-				// Extract duration (everything up to " (")
-				if parenIdx := strings.Index(afterAfter, " ("); parenIdx >= 0 {
-					timeoutDur := strings.TrimSpace(afterAfter[:parenIdx])
-					status.Reset()
-					fmt.Fprintf(&status, "timeout (%s)", timeoutDur)
-				}
-			}
-		}
-	}
-
-	var result strings.Builder
-	fmt.Fprintf(&result, "[%d/%d] %s \"%s\" → %s (%s)",
-		iter, maxIter, beadID, title, status.String(), FormatDuration(duration))
-	return result.String()
-}
-
-// formatSummary formats the end-of-loop summary.
-func formatSummary(summary *RunSummary, remainingBeads int) string {
-	var b strings.Builder
-	b.WriteString("Ralph loop complete:\n")
-
-	if summary.Succeeded > 0 {
-		fmt.Fprintf(&b, "  ✓ %d beads completed\n", summary.Succeeded)
-	}
-	if summary.Questions > 0 {
-		fmt.Fprintf(&b, "  ? %d questions created (needs human)\n", summary.Questions)
-	}
-	if summary.Failed > 0 {
-		fmt.Fprintf(&b, "  ✗ %d failure(s)\n", summary.Failed)
-	}
-	if summary.TimedOut > 0 {
-		fmt.Fprintf(&b, "  ⏱ %d timeout(s)\n", summary.TimedOut)
-	}
-	if summary.Skipped > 0 {
-		fmt.Fprintf(&b, "  ⊘ %d skipped\n", summary.Skipped)
-	}
-	if remainingBeads > 0 {
-		fmt.Fprintf(&b, "  ○ %d beads remaining (blocked)\n", remainingBeads)
-	}
-
-	fmt.Fprintf(&b, "  Duration: %s", FormatDuration(summary.Duration))
-
-	return b.String()
-}
-
-// countRemainingBeads counts the number of ready beads remaining.
-func countRemainingBeads(cfg LoopConfig) int {
-	if cfg.PickNext == nil {
-		beads, err := ReadyBeads(cfg.WorkDir, cfg.Epic)
-		if err != nil {
-			return 0
-		}
-		return len(beads)
-	}
-
-	// With a custom picker, we can't easily count
-	// Try to pick one to see if any remain
-	bead, err := cfg.PickNext()
-	if err != nil || bead == nil {
-		return 0
-	}
-	return 1 // At least one remains
 }

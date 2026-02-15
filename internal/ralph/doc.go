@@ -1,33 +1,27 @@
 // Package ralph implements the autonomous agent work loop for devdeploy.
 //
 // Ralph orchestrates AI agents to work through beads (issues) autonomously.
-// It supports multiple execution modes:
-//
-//   - Sequential: Process beads one at a time (default)
-//   - Concurrent: Process multiple beads in parallel using git worktrees
-//   - Epic: Orchestrate all children of an epic sequentially with verification
-//   - Wave: Dispatch all ready beads in parallel
+// It processes beads in parallel using git worktrees for isolation.
 //
 // # Basic Usage
 //
-// The main entry point is the Run function:
+// The main entry point is Core.Run:
 //
-//     cfg := ralph.LoopConfig{
-//         WorkDir:       "/path/to/repo",
-//         MaxIterations: 10,
-//     }
-//     summary, err := ralph.Run(ctx, cfg)
+//	core := &ralph.Core{
+//	    WorkDir:     "/path/to/repo",
+//	    RootBead:    "my-epic",    // optional: filter to epic's children
+//	    MaxParallel: 4,            // concurrent agents
+//	}
+//	result, err := core.Run(ctx)
 //
-// # Safety Guards
+// # Progress Observation
 //
-// Ralph includes several safety mechanisms:
-//   - Maximum iteration limit (default unlimited, configurable)
-//   - Consecutive failure limit (default 3)
-//   - Wall-clock timeout (default 2 hours)
-//   - Same-bead retry detection
+// Implement ProgressObserver to receive live updates:
 //
-// # Dependency Injection
+//	core.Observer = myObserver  // receives OnBeadStart, OnBeadComplete, etc.
 //
-// LoopConfig supports test hooks for all external dependencies:
-// PickNext, FetchPrompt, Render, Execute, AssessFn, SyncFn.
+// # Testing
+//
+// Core supports test hooks for all external dependencies:
+// RunBD, FetchPrompt, Render, Execute, AssessFn.
 package ralph
