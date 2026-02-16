@@ -33,8 +33,8 @@ func TestLocalTraceEmitter_ToolSpans(t *testing.T) {
 	}
 
 	// Verify the trace manager has the tool span
-	manager := emitter.GetManager()
-	activeTrace := manager.GetActiveTrace()
+	manager := emitter.Manager()
+	activeTrace := manager.ActiveTrace()
 	if activeTrace == nil {
 		t.Fatal("GetActiveTrace should return a trace")
 	}
@@ -82,9 +82,9 @@ func TestLocalTraceEmitter_ToolSpans(t *testing.T) {
 	emitter.EndTool(toolSpanID, endAttrs)
 
 	// Verify the tool span still exists (EndTool doesn't remove it, just updates it)
-	activeTrace = manager.GetActiveTrace()
+	activeTrace = manager.ActiveTrace()
 	if activeTrace == nil {
-		t.Fatal("GetActiveTrace should still return a trace after EndTool")
+		t.Fatal("ActiveTrace should still return a trace after EndTool")
 	}
 
 	// Find the tool span again to verify it's still there
@@ -140,8 +140,8 @@ func TestLocalTraceEmitter_ToolSpanTreeStructure(t *testing.T) {
 	emitter.EndTool(tool3SpanID, map[string]string{"duration_ms": "200"})
 
 	// Verify all tools are children of the iteration span
-	manager := emitter.GetManager()
-	activeTrace := manager.GetActiveTrace()
+	manager := emitter.Manager()
+	activeTrace := manager.ActiveTrace()
 	if activeTrace == nil {
 		t.Fatal("GetActiveTrace should return a trace")
 	}

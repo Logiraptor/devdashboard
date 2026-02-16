@@ -36,14 +36,14 @@ func (e *LocalTraceEmitter) SetProgram(p *tea.Program) {
 	e.program = p
 }
 
-// GetManager returns the trace manager for reading state
-func (e *LocalTraceEmitter) GetManager() *trace.Manager {
+// Manager returns the trace manager for reading state
+func (e *LocalTraceEmitter) Manager() *trace.Manager {
 	return e.manager
 }
 
-// GetActiveTrace returns the currently active trace
-func (e *LocalTraceEmitter) GetActiveTrace() *trace.Trace {
-	return e.manager.GetActiveTrace()
+// ActiveTrace returns the currently active trace
+func (e *LocalTraceEmitter) ActiveTrace() *trace.Trace {
+	return e.manager.ActiveTrace()
 }
 
 // StartLoop begins a new trace
@@ -252,7 +252,7 @@ func (e *LocalTraceEmitter) sendUpdate() {
 	if e.program == nil {
 		return
 	}
-	activeTrace := e.manager.GetActiveTrace()
+	activeTrace := e.manager.ActiveTrace()
 	if activeTrace != nil {
 		e.program.Send(TraceUpdateMsg{Trace: activeTrace})
 	}

@@ -91,9 +91,9 @@ func (v *MultiAgentView) AddToolEvent(beadID string, toolName string, started bo
 	}
 }
 
-// GetActiveBeadID returns the bead ID of the most recently started running agent
+// ActiveBeadID returns the bead ID of the most recently started running agent
 // This is used to route tool events when we don't have explicit bead context
-func (v *MultiAgentView) GetActiveBeadID() string {
+func (v *MultiAgentView) ActiveBeadID() string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
@@ -223,8 +223,8 @@ func (v *MultiAgentView) TotalCount() int {
 	return len(v.agents)
 }
 
-// GetIterNum returns the current iteration number
-func (v *MultiAgentView) GetIterNum() int {
+// IterNum returns the current iteration number
+func (v *MultiAgentView) IterNum() int {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return v.iterCounter

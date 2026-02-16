@@ -273,15 +273,15 @@ func (m *Manager) callOnChange() {
 	}
 }
 
-// GetTrace returns a trace by ID
-func (m *Manager) GetTrace(id string) *Trace {
+// Trace returns a trace by ID
+func (m *Manager) Trace(id string) *Trace {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.traces[id]
 }
 
-// GetActiveTrace returns the currently running trace (if any)
-func (m *Manager) GetActiveTrace() *Trace {
+// ActiveTrace returns the currently running trace (if any)
+func (m *Manager) ActiveTrace() *Trace {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, trace := range m.traces {
@@ -292,8 +292,8 @@ func (m *Manager) GetActiveTrace() *Trace {
 	return nil
 }
 
-// GetRecentTraces returns recent traces (newest first)
-func (m *Manager) GetRecentTraces() []*Trace {
+// RecentTraces returns recent traces (newest first)
+func (m *Manager) RecentTraces() []*Trace {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

@@ -130,7 +130,7 @@ func TestHandleEvent_DurationCalculatedAccurately(t *testing.T) {
 	m.HandleEvent(startEvent)
 	m.HandleEvent(endEvent)
 
-	trace := m.GetTrace(traceID)
+	trace := m.Trace(traceID)
 	if trace == nil {
 		t.Fatal("GetTrace: expected trace, got nil")
 	}
@@ -222,7 +222,7 @@ func TestHandleEvent_NestedSpans(t *testing.T) {
 	m.HandleEvent(iterationEnd)
 	m.HandleEvent(loopEnd)
 
-	trace := m.GetTrace(traceID)
+	trace := m.Trace(traceID)
 	if trace == nil {
 		t.Fatal("GetTrace: expected trace, got nil")
 	}
@@ -325,7 +325,7 @@ func TestGetTrace_ReturnsTrace(t *testing.T) {
 	}
 
 	m.HandleEvent(event)
-	trace := m.GetTrace(traceID)
+	trace := m.Trace(traceID)
 
 	if trace == nil {
 		t.Fatal("GetTrace: expected trace, got nil")
@@ -337,9 +337,9 @@ func TestGetTrace_ReturnsTrace(t *testing.T) {
 
 func TestGetTrace_NotFound_ReturnsNil(t *testing.T) {
 	m := NewManager(10)
-	trace := m.GetTrace("nonexistent")
+	trace := m.Trace("nonexistent")
 	if trace != nil {
-		t.Errorf("GetTrace(nonexistent): expected nil, got %v", trace)
+		t.Errorf("Trace(nonexistent): expected nil, got %v", trace)
 	}
 }
 
@@ -376,7 +376,7 @@ func TestGetActiveTrace_ReturnsRunningTrace(t *testing.T) {
 	}
 	m.HandleEvent(event2)
 
-	active := m.GetActiveTrace()
+	active := m.ActiveTrace()
 	if active == nil {
 		t.Fatal("GetActiveTrace: expected running trace, got nil")
 	}
@@ -387,7 +387,7 @@ func TestGetActiveTrace_ReturnsRunningTrace(t *testing.T) {
 
 func TestGetActiveTrace_NoRunningTrace_ReturnsNil(t *testing.T) {
 	m := NewManager(10)
-	active := m.GetActiveTrace()
+	active := m.ActiveTrace()
 	if active != nil {
 		t.Errorf("GetActiveTrace: expected nil, got %v", active)
 	}
@@ -411,7 +411,7 @@ func TestGetRecentTraces_NewestFirst(t *testing.T) {
 		m.HandleEvent(event)
 	}
 
-	recent := m.GetRecentTraces()
+	recent := m.RecentTraces()
 	if len(recent) != 3 {
 		t.Fatalf("GetRecentTraces: expected 3 traces, got %d", len(recent))
 	}
@@ -444,27 +444,27 @@ func TestRingBuffer_EvictsOldTraces(t *testing.T) {
 	}
 
 	// Should only have 3 traces (newest 3)
-	recent := m.GetRecentTraces()
+	recent := m.RecentTraces()
 	if len(recent) != 3 {
 		t.Fatalf("GetRecentTraces: expected 3 traces, got %d", len(recent))
 	}
 
 	// Oldest traces should be evicted
-	if m.GetTrace(traceIDs[0]) != nil {
+	if m.Trace(traceIDs[0]) != nil {
 		t.Error("RingBuffer: expected oldest trace to be evicted")
 	}
-	if m.GetTrace(traceIDs[1]) != nil {
+	if m.Trace(traceIDs[1]) != nil {
 		t.Error("RingBuffer: expected second oldest trace to be evicted")
 	}
 
 	// Newest traces should still exist
-	if m.GetTrace(traceIDs[2]) == nil {
+	if m.Trace(traceIDs[2]) == nil {
 		t.Error("RingBuffer: expected third trace to exist")
 	}
-	if m.GetTrace(traceIDs[3]) == nil {
+	if m.Trace(traceIDs[3]) == nil {
 		t.Error("RingBuffer: expected fourth trace to exist")
 	}
-	if m.GetTrace(traceIDs[4]) == nil {
+	if m.Trace(traceIDs[4]) == nil {
 		t.Error("RingBuffer: expected newest trace to exist")
 	}
 }
@@ -546,9 +546,9 @@ func TestConcurrentAccess_Safe(t *testing.T) {
 				m.HandleEvent(endEvent)
 
 				// Concurrent reads
-				m.GetTrace(traceID)
-				m.GetActiveTrace()
-				m.GetRecentTraces()
+				m.Trace(traceID)
+				m.ActiveTrace()
+				m.RecentTraces()
 			}
 		}(i)
 	}
@@ -556,7 +556,7 @@ func TestConcurrentAccess_Safe(t *testing.T) {
 	wg.Wait()
 
 	// Verify no panics occurred and state is consistent
-	recent := m.GetRecentTraces()
+	recent := m.RecentTraces()
 	if len(recent) > m.maxTraces {
 		t.Errorf("ConcurrentAccess: expected at most %d traces, got %d", m.maxTraces, len(recent))
 	}
