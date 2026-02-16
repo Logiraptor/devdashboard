@@ -76,7 +76,14 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 
 	// Capture stdout: tee to live writer + buffer.
 	var stdoutBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
+	stdoutWriter := cfg.stdoutWriter
+	if cfg.observer != nil {
+		stdoutWriter = &toolEventWriter{
+			inner:    cfg.stdoutWriter,
+			observer: cfg.observer,
+		}
+	}
+	cmd.Stdout = io.MultiWriter(&stdoutBuf, stdoutWriter)
 
 	// Capture stderr into a buffer.
 	var stderrBuf bytes.Buffer
@@ -160,7 +167,6 @@ func WithModel(model string) Option {
 func WithObserver(observer ProgressObserver) Option {
 	return func(o *options) { o.observer = observer }
 }
-
 // RunAgentOpus runs an opus model agent for verification passes.
 // Uses "agent --model claude-4.5-opus-high-thinking --print --force --output-format stream-json".
 func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
