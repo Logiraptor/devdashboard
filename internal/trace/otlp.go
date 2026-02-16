@@ -3,7 +3,11 @@ package trace
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
+	"log"
+	"net/url"
 	"os"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -28,18 +32,52 @@ func NewOTLPExporter(ctx context.Context) (*OTLPExporter, error) {
 		return nil, nil // Disabled
 	}
 
-	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(), // For local dev; make configurable
-	)
+	// Parse endpoint URL to extract host:port and path
+	var endpointHost string
+	var urlPath string
+	var useInsecure bool
+
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		// Full URL provided
+		parsedURL, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OTEL_EXPORTER_OTLP_ENDPOINT URL: %w", err)
+		}
+		endpointHost = parsedURL.Host
+		urlPath = parsedURL.Path
+		if parsedURL.Scheme == "http" {
+			useInsecure = true
+		}
+	} else {
+		// Just host:port provided
+		endpointHost = endpoint
+		urlPath = "" // Use default path
+		useInsecure = true // Assume insecure for local dev
+	}
+
+	// Build exporter options
+	opts := []otlptracehttp.Option{
+		otlptracehttp.WithEndpoint(endpointHost),
+	}
+	if useInsecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+	if urlPath != "" && urlPath != "/v1/traces" {
+		// Only set custom path if it's different from default
+		opts = append(opts, otlptracehttp.WithURLPath(urlPath))
+	}
+
+	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
 	}
 
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
 		serviceName = "devdeploy"
 	}
+
+	log.Printf("OTLP exporter configured: endpoint=%s, path=%s, service=%s", endpointHost, urlPath, serviceName)
 
 	res := resource.NewWithAttributes(
 		semconv.SchemaURL,
@@ -71,7 +109,7 @@ func (e *OTLPExporter) ExportTrace(ctx context.Context, t *Trace) error {
 	// Convert hex string trace ID to set up trace context
 	traceID, err := hexToTraceID(t.ID)
 	if err != nil {
-		return err // Invalid trace ID
+		return fmt.Errorf("invalid trace ID: %w", err)
 	}
 
 	// Create a context with the trace ID
@@ -82,6 +120,12 @@ func (e *OTLPExporter) ExportTrace(ctx context.Context, t *Trace) error {
 
 	// Export spans recursively
 	e.exportSpan(traceCtx, t.RootSpan, oteltrace.SpanContext{})
+
+	// Force flush the batcher to ensure spans are sent immediately
+	if err := e.provider.ForceFlush(ctx); err != nil {
+		return fmt.Errorf("failed to flush traces: %w", err)
+	}
+
 	return nil
 }
 
@@ -93,19 +137,20 @@ func (e *OTLPExporter) exportSpan(ctx context.Context, span *Span, parent oteltr
 		return // Skip invalid trace ID
 	}
 
-	// Create a context with the trace ID and parent span context
-	// The SDK will use the trace ID from the context and create a new span ID
-	spanCtx := oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
-		TraceID:    traceID,
-		TraceFlags: oteltrace.FlagsSampled,
-	})
-	
-	// Set up context with trace ID and parent
-	parentCtx := oteltrace.ContextWithSpanContext(ctx, spanCtx)
+	// Set up context with parent span context (which contains the trace ID)
+	// The SDK will extract the trace ID from the parent and create a new span ID
+	parentCtx := ctx
 	if parent.IsValid() {
-		// If we have a parent, set it in the context
-		// The SDK will use this to establish parent-child relationships
+		// Parent is valid - use it as the parent context
+		// The parent's span context already contains the trace ID
 		parentCtx = oteltrace.ContextWithSpanContext(ctx, parent)
+	} else {
+		// No parent - this is the root span, set trace ID in context
+		spanCtx := oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+			TraceID:    traceID,
+			TraceFlags: oteltrace.FlagsSampled,
+		})
+		parentCtx = oteltrace.ContextWithSpanContext(ctx, spanCtx)
 	}
 
 	// Create OTLP span with explicit start/end times
