@@ -372,6 +372,7 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 
 	// Conflicts resolved! Verify the merge commit exists
 	statusCmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	// Ignore status error: if git status fails, we'll proceed anyway (best-effort check)
 	statusOut, _ := statusCmd.Output()
 	if len(strings.TrimSpace(string(statusOut))) > 0 {
 		// There are uncommitted changes - agent may have resolved but not committed
