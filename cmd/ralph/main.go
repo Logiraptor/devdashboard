@@ -78,6 +78,7 @@ func run(cfg config) (int, error) {
 		MaxParallel:  cfg.maxParallel,
 		AgentTimeout: cfg.agentTimeout,
 		Output:       os.Stdout,
+		Observer:     ralph.NewTracingObserver(),
 	}
 
 	result, err := core.Run(ctx)
