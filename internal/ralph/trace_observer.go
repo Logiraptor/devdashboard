@@ -1,6 +1,7 @@
 package ralph
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -214,4 +215,9 @@ func (o *TracingObserver) OnToolEnd(event ToolEvent) {
 	}
 
 	o.manager.HandleEvent(traceEvent)
+}
+
+// Shutdown flushes pending OTLP exports. Must be called before exit.
+func (o *TracingObserver) Shutdown(ctx context.Context) error {
+	return o.manager.Shutdown(ctx)
 }

@@ -72,16 +72,25 @@ func run(cfg config) (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	observer := ralph.NewTracingObserver()
 	core := &ralph.Core{
 		WorkDir:      cfg.workdir,
 		RootBead:     cfg.bead,
 		MaxParallel:  cfg.maxParallel,
 		AgentTimeout: cfg.agentTimeout,
 		Output:       os.Stdout,
-		Observer:     ralph.NewTracingObserver(),
+		Observer:     observer,
 	}
 
 	result, err := core.Run(ctx)
+
+	// Flush OTLP traces before exit (give 10s for export to complete)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if shutdownErr := observer.Shutdown(shutdownCtx); shutdownErr != nil {
+		fmt.Fprintf(os.Stderr, "ralph: warning: failed to flush traces: %v\n", shutdownErr)
+	}
+
 	if err != nil {
 		return 1, err
 	}
