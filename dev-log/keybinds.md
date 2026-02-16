@@ -86,6 +86,7 @@ In project detail view, `SPC r` reloads beads for all resources without reloadin
 | Sequence | Action | Context |
 |----------|--------|---------|
 | `SPC b r` | Refresh beads for all resources | Project detail only |
+| `SPC b c` | Close selected bead (marks as closed via bd close) | Project detail only |
 
 Bead-related operations. `SPC b r` is an alias for `SPC r` (refresh beads).
 

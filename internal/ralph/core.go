@@ -368,6 +368,10 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		}
 		if c.Observer != nil {
 			opts = append(opts, WithObserver(c.Observer))
+			// Suppress stdout when observer is present (TUI mode) to avoid
+			// interfering with bubbletea. The observer handles tool events,
+			// and stdout is still captured in the buffer for parsing.
+			opts = append(opts, WithStdoutWriter(io.Discard))
 		}
 		agentResult, err = RunAgent(ctx, execDir, prompt, opts...)
 	}
