@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"time"
@@ -82,7 +83,7 @@ func run(cfg config) (int, error) {
 		RootBead:     cfg.bead,
 		MaxParallel:  cfg.maxParallel,
 		AgentTimeout: cfg.agentTimeout,
-		Output:       os.Stdout,
+		Output:       io.Discard,
 	}
 
 	// Run with TUI, combining tracing observer with TUI observer
