@@ -34,6 +34,31 @@ type AgentResult struct {
 	ErrorMessage string
 }
 
+// ToolEvent represents a parsed tool call event from the agent's JSON stream.
+// Tool events are emitted when tools are called (read, write, shell, search, etc.)
+// and can represent either the start or end of a tool call.
+//
+// The agent outputs tool events in JSON format:
+//   - Start: {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+//   - End:   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
+type ToolEvent struct {
+	// Name is the tool name (e.g., "read", "write", "shell", "search", "grep").
+	Name string
+
+	// Started is true for start events (subtype="started"), false for end events (subtype="ended").
+	Started bool
+
+	// Timestamp is when the event occurred, parsed from the event or set during parsing.
+	Timestamp time.Time
+
+	// Attributes contains tool-specific attributes extracted from the event.
+	// Common attributes include:
+	//   - For read/write/edit: "file_path" (from arguments.path)
+	//   - For shell: "command" (from arguments.command)
+	//   - For search/grep: "query" or "pattern"
+	//   - Other fields from the event's "arguments" object
+	Attributes map[string]string
+}
 // CommandFactory builds an *exec.Cmd for the given context, working directory,
 // and arguments. The default factory uses exec.CommandContext with "agent" as
 // the binary. Tests can inject a factory that invokes a helper process instead.
@@ -156,6 +181,97 @@ func WithModel(model string) Option {
 // Uses "agent --model claude-4.5-opus-high-thinking --print --force --output-format stream-json".
 func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
 	return runAgentInternal(ctx, workDir, prompt, "claude-4.5-opus-high-thinking", opts...)
+}
+
+// ParseToolEvent parses a tool_call event from a JSON line.
+// Expected format:
+//   {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+//   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
+// Returns nil if the line is not a tool_call event or cannot be parsed.
+func ParseToolEvent(jsonLine string) *ToolEvent {
+	if jsonLine == "" {
+		return nil
+	}
+
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonLine), &event); err != nil {
+		return nil
+	}
+
+	eventType, _ := event["type"].(string)
+	if eventType != "tool_call" {
+		return nil
+	}
+
+	name, _ := event["name"].(string)
+	if name == "" {
+		return nil
+	}
+
+	subtype, _ := event["subtype"].(string)
+	started := subtype == "started"
+
+	attrs := make(map[string]string)
+
+	// Extract attributes from arguments object
+	if args, ok := event["arguments"].(map[string]interface{}); ok {
+		for k, v := range args {
+			// Convert values to strings
+			var strVal string
+			switch val := v.(type) {
+			case string:
+				strVal = val
+			case float64:
+				strVal = fmt.Sprintf("%.0f", val)
+			case bool:
+				strVal = fmt.Sprintf("%t", val)
+			default:
+				strVal = fmt.Sprintf("%v", val)
+			}
+
+			// Map common argument names to standard attribute names
+			switch k {
+			case "path", "file_path":
+				attrs["file_path"] = strVal
+			case "command":
+				attrs["command"] = strVal
+			case "query", "pattern":
+				if _, exists := attrs["query"]; !exists {
+					attrs["query"] = strVal
+				}
+			default:
+				attrs[k] = strVal
+			}
+		}
+	}
+
+	// Extract other top-level fields as attributes
+	for k, v := range event {
+		if k == "type" || k == "subtype" || k == "name" {
+			continue
+		}
+		if _, exists := attrs[k]; !exists {
+			var strVal string
+			switch val := v.(type) {
+			case string:
+				strVal = val
+			case float64:
+				strVal = fmt.Sprintf("%.0f", val)
+			case bool:
+				strVal = fmt.Sprintf("%t", val)
+			default:
+				strVal = fmt.Sprintf("%v", val)
+			}
+			attrs[k] = strVal
+		}
+	}
+
+	return &ToolEvent{
+		Name:       name,
+		Started:    started,
+		Timestamp:  time.Now(),
+		Attributes: attrs,
+	}
 }
 
 // parseAgentResultEvent parses the agent's stdout for the final "result" event
