@@ -46,21 +46,35 @@ func MergeBranches(repoPath, targetBranch, sourceBranch string, disableHooks boo
 	}
 	currentBranch := strings.TrimSpace(string(currentBranchOut))
 
-	// Checkout target branch
-	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", targetBranch)
-	var checkoutStderr bytes.Buffer
-	checkoutCmd.Stderr = &checkoutStderr
-	if err := checkoutCmd.Run(); err != nil {
-		msg := strings.TrimSpace(checkoutStderr.String())
-		if msg != "" {
-			return fmt.Errorf("checkout %s: %s: %w", targetBranch, msg, err)
+	// Check if we're already on the target branch
+	needsCheckout := currentBranch != targetBranch
+	if needsCheckout {
+		// Checkout target branch
+		checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", targetBranch)
+		var checkoutStderr bytes.Buffer
+		checkoutCmd.Stderr = &checkoutStderr
+		if err := checkoutCmd.Run(); err != nil {
+			msg := strings.TrimSpace(checkoutStderr.String())
+			// Check if error is because branch is already checked out in another worktree
+			if strings.Contains(msg, "is already used by worktree") {
+				// The target branch is checked out in another worktree.
+				// We can't checkout here, but we can still merge if we're in the right worktree.
+				// However, if we're not on the target branch, we need to find the worktree that has it.
+				// For now, return a clear error message.
+				return fmt.Errorf("checkout %s: branch is already checked out in another worktree. Cannot merge from this worktree. Please merge from the worktree that has %s checked out, or use a different approach", targetBranch, targetBranch)
+			}
+			if msg != "" {
+				return fmt.Errorf("checkout %s: %s: %w", targetBranch, msg, err)
+			}
+			return fmt.Errorf("checkout %s: %w", targetBranch, err)
 		}
-		return fmt.Errorf("checkout %s: %w", targetBranch, err)
 	}
 
-	// Restore original branch on return (best effort)
+	// Restore original branch on return (best effort) - only if we checked out
 	defer func() {
-		_ = exec.Command("git", "-C", repoPath, "checkout", currentBranch).Run()
+		if needsCheckout {
+			_ = exec.Command("git", "-C", repoPath, "checkout", currentBranch).Run()
+		}
 	}()
 
 	// Prepare git command args
@@ -267,9 +281,30 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 
 	// Conflicts detected but were aborted. Re-attempt the merge to get into conflicted state
 	// for agent resolution.
-	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", targetBranch)
-	if checkoutErr := checkoutCmd.Run(); checkoutErr != nil {
-		return fmt.Errorf("checkout %s for conflict resolution: %w", targetBranch, checkoutErr)
+	// Check if we're already on the target branch before checking out
+	currentBranchCmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	currentBranchOut, err := currentBranchCmd.Output()
+	currentBranch := ""
+	if err == nil {
+		currentBranch = strings.TrimSpace(string(currentBranchOut))
+	}
+	if currentBranch != targetBranch {
+		checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", targetBranch)
+		var checkoutStderr bytes.Buffer
+		checkoutCmd.Stderr = &checkoutStderr
+		if checkoutErr := checkoutCmd.Run(); checkoutErr != nil {
+			msg := strings.TrimSpace(checkoutStderr.String())
+			// If branch is already checked out in another worktree, that's okay - we're probably
+			// already in the right worktree (MergeBranches would have failed earlier if not)
+			if strings.Contains(msg, "is already used by worktree") {
+				// Verify we're actually on the target branch (shouldn't happen, but be safe)
+				if currentBranch != targetBranch {
+					return fmt.Errorf("checkout %s for conflict resolution: branch is checked out in another worktree, and we're not on it: %s", targetBranch, msg)
+				}
+			} else {
+				return fmt.Errorf("checkout %s for conflict resolution: %s: %w", targetBranch, msg, checkoutErr)
+			}
+		}
 	}
 
 	mergeCmd := exec.Command("git", "-C", repoPath, "merge", sourceBranch, "--no-edit")
