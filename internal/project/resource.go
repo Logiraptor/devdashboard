@@ -19,11 +19,13 @@ type PaneInfo struct {
 
 // BeadInfo holds a bd issue associated with a resource for display.
 type BeadInfo struct {
-	ID        string // bead identifier (e.g. "devdeploy-abc")
-	Title     string // short summary
-	Status    string // "open", "in_progress", etc.
-	IssueType string // "epic", "task", "bug", etc.
-	IsChild   bool   // true if this bead is a child of an epic
+	ID          string   // bead identifier (e.g. "devdeploy-abc")
+	Title       string   // short summary
+	Description string   // full description text
+	Status      string   // "open", "in_progress", etc.
+	IssueType   string   // "epic", "task", "bug", etc.
+	Labels      []string // issue labels
+	IsChild     bool     // true if this bead is a child of an epic
 }
 
 // Resource unifies repos and PRs as first-class project items.

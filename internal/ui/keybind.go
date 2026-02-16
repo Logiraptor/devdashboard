@@ -91,6 +91,7 @@ func (r *KeybindRegistry) Hints() map[string]string {
 var firstLevelSubmenuLabel = map[string]string{
 	"p": "Project",
 	"s": "Shell",
+	"b": "Bead",
 }
 
 // LeaderHints returns hints for SPC-prefixed bindings, filtered by mode.

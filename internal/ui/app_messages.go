@@ -124,6 +124,9 @@ type RefreshMsg struct{}
 // RefreshBeadsMsg triggers a refresh of beads for all resources in the current project detail view.
 type RefreshBeadsMsg struct{}
 
+// CloseBeadMsg triggers closing the currently selected bead.
+type CloseBeadMsg struct{}
+
 // RemoveResourceMsg is sent when user confirms removal of a resource.
 // Kills associated panes and removes the worktree.
 type RemoveResourceMsg struct {

@@ -12,14 +12,15 @@ import (
 
 // Bead represents a bd issue associated with a project resource.
 type Bead struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	Priority  int       `json:"priority"`
-	Labels    []string  `json:"labels"`
-	CreatedAt time.Time `json:"created_at"`
-	IssueType string    `json:"issue_type"` // "epic", "task", "bug", etc.
-	ParentID  string    `json:"parent_id"`  // parent epic ID (from parent-child dependency)
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"`
+	Priority    int       `json:"priority"`
+	Labels      []string  `json:"labels"`
+	CreatedAt   time.Time `json:"created_at"`
+	IssueType   string    `json:"issue_type"` // "epic", "task", "bug", etc.
+	ParentID    string    `json:"parent_id"`  // parent epic ID (from parent-child dependency)
 }
 
 // bdDependency mirrors a single dependency entry in bd list JSON output.
@@ -33,6 +34,7 @@ type bdDependency struct {
 type bdListEntry struct {
 	ID           string         `json:"id"`
 	Title        string         `json:"title"`
+	Description  string         `json:"description"`
 	Status       string         `json:"status"`
 	Priority     int            `json:"priority"`
 	Labels       []string       `json:"labels"`
@@ -98,14 +100,15 @@ func parseBeads(data []byte) []Bead {
 			continue
 		}
 		result = append(result, Bead{
-			ID:        e.ID,
-			Title:     e.Title,
-			Status:    e.Status,
-			Priority:  e.Priority,
-			Labels:    e.Labels,
-			CreatedAt: e.CreatedAt,
-			IssueType: e.IssueType,
-			ParentID:  extractParentID(e.Dependencies),
+			ID:          e.ID,
+			Title:       e.Title,
+			Description: e.Description,
+			Status:      e.Status,
+			Priority:    e.Priority,
+			Labels:      e.Labels,
+			CreatedAt:   e.CreatedAt,
+			IssueType:   e.IssueType,
+			ParentID:    extractParentID(e.Dependencies),
 		})
 	}
 	return result

@@ -145,11 +145,13 @@ func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.
 				beadInfos := make([]project.BeadInfo, len(bdBeads))
 				for j, b := range bdBeads {
 					beadInfos[j] = project.BeadInfo{
-						ID:        b.ID,
-						Title:     b.Title,
-						Status:    b.Status,
-						IssueType: b.IssueType,
-						IsChild:   b.ParentID != "",
+						ID:          b.ID,
+						Title:       b.Title,
+						Description: b.Description,
+						Status:      b.Status,
+						IssueType:   b.IssueType,
+						Labels:      b.Labels,
+						IsChild:     b.ParentID != "",
 					}
 				}
 				mu.Lock()
