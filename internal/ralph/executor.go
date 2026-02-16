@@ -76,7 +76,14 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 
 	// Capture stdout: tee to live writer + buffer.
 	var stdoutBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
+	stdoutWriter := cfg.stdoutWriter
+	if cfg.observer != nil {
+		stdoutWriter = &toolEventWriter{
+			inner:    cfg.stdoutWriter,
+			observer: cfg.observer,
+		}
+	}
+	cmd.Stdout = io.MultiWriter(&stdoutBuf, stdoutWriter)
 
 	// Capture stderr into a buffer.
 	var stderrBuf bytes.Buffer
@@ -129,6 +136,7 @@ type options struct {
 	commandFactory CommandFactory
 	stdoutWriter   io.Writer
 	model          string
+	observer       ProgressObserver
 }
 
 // Option configures RunAgent behaviour.
@@ -153,6 +161,11 @@ func WithStdoutWriter(w io.Writer) Option {
 // WithModel overrides the default agent model.
 func WithModel(model string) Option {
 	return func(o *options) { o.model = model }
+}
+
+// WithObserver sets an observer to receive tool events during execution.
+func WithObserver(obs ProgressObserver) Option {
+	return func(o *options) { o.observer = obs }
 }
 
 // RunAgentOpus runs an opus model agent for verification passes.
