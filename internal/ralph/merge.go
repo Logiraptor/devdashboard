@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -340,6 +341,8 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 	if agentTimeout > 0 {
 		opts = append(opts, WithTimeout(agentTimeout))
 	}
+	// Suppress stdout to avoid interfering with bubbletea. The agent's work is captured in the result buffer.
+	opts = append(opts, WithStdoutWriter(io.Discard))
 	result, agentErr := RunAgent(ctx, repoPath, prompt, opts...)
 	if agentErr != nil {
 		// Agent failed to run - abort merge and create question bead
