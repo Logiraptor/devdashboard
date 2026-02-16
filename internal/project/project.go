@@ -1,3 +1,5 @@
+// Package project provides project management functionality for devdeploy.
+// It handles project CRUD operations, worktree management, and PR resource tracking.
 package project
 
 import (

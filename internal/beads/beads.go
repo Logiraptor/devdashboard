@@ -1,3 +1,5 @@
+// Package beads provides functionality for querying and managing bd (beads) issues.
+// It handles parsing bead data from bd commands and hierarchical sorting.
 package beads
 
 import (

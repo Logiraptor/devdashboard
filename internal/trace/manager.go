@@ -1,3 +1,5 @@
+// Package trace provides tracing functionality for agent execution.
+// It manages spans, traces, and OTLP export for observability.
 package trace
 
 import (
