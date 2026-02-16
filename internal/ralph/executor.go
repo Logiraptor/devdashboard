@@ -177,9 +177,15 @@ func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Op
 }
 
 // ParseToolEvent parses a tool_call event from a JSON line.
-// Expected format:
-//   {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
-//   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
+// Expected format (new agent CLI format):
+//
+//	{"type":"tool_call","subtype":"started","call_id":"...","tool_call":{"shellToolCall":{"args":{"command":"ls"}}}}
+//	{"type":"tool_call","subtype":"completed","call_id":"...","tool_call":{"shellToolCall":{"args":{"command":"ls"},"result":{...}}}}
+//
+// Also supports legacy format:
+//
+//	{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+//
 // Returns nil if the line is not a tool_call event or cannot be parsed.
 func ParseToolEvent(jsonLine string) *ToolEvent {
 	if jsonLine == "" {
@@ -196,71 +202,51 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 		return nil
 	}
 
-	name, _ := event["name"].(string)
-	if name == "" {
-		return nil
-	}
-
 	subtype, _ := event["subtype"].(string)
+	// New format uses "started" and "completed", legacy uses "started" and "ended"
 	started := subtype == "started"
 
+	var name string
 	attrs := make(map[string]string)
 
-	// Extract attributes from arguments object
-	if args, ok := event["arguments"].(map[string]interface{}); ok {
-		for k, v := range args {
-			// Convert values to strings
-			var strVal string
-			switch val := v.(type) {
-			case string:
-				strVal = val
-			case float64:
-				strVal = fmt.Sprintf("%.0f", val)
-			case bool:
-				strVal = fmt.Sprintf("%t", val)
-			default:
-				strVal = fmt.Sprintf("%v", val)
-			}
+	// Try new format first: tool_call object with typed tool call
+	if toolCall, ok := event["tool_call"].(map[string]interface{}); ok {
+		name, attrs = parseNewToolCallFormat(toolCall)
+	}
 
-			// Map common argument names to standard attribute names
-			switch k {
-			case "path", "file_path":
-				attrs["file_path"] = strVal
-			case "command":
-				attrs["command"] = strVal
-			case "query", "pattern":
-				if _, exists := attrs["query"]; !exists {
-					attrs["query"] = strVal
+	// Fall back to legacy format: name and arguments at top level
+	if name == "" {
+		name, _ = event["name"].(string)
+		if args, ok := event["arguments"].(map[string]interface{}); ok {
+			attrs = extractArgsAsAttrs(args)
+		}
+		// For legacy format, also extract other top-level fields as attributes
+		for k, v := range event {
+			if k == "type" || k == "subtype" || k == "name" || k == "arguments" || k == "call_id" {
+				continue
+			}
+			if _, exists := attrs[k]; !exists {
+				var strVal string
+				switch val := v.(type) {
+				case string:
+					strVal = val
+				case float64:
+					strVal = fmt.Sprintf("%.0f", val)
+				case bool:
+					strVal = fmt.Sprintf("%t", val)
+				default:
+					strVal = fmt.Sprintf("%v", val)
 				}
-			default:
 				attrs[k] = strVal
 			}
 		}
 	}
 
-	// Extract other top-level fields as attributes
-	for k, v := range event {
-		if k == "type" || k == "subtype" || k == "name" {
-			continue
-		}
-		if _, exists := attrs[k]; !exists {
-			var strVal string
-			switch val := v.(type) {
-			case string:
-				strVal = val
-			case float64:
-				strVal = fmt.Sprintf("%.0f", val)
-			case bool:
-				strVal = fmt.Sprintf("%t", val)
-			default:
-				strVal = fmt.Sprintf("%v", val)
-			}
-			attrs[k] = strVal
-		}
+	if name == "" {
+		return nil
 	}
 
-	// Generate or extract ID for matching start/end events
-	// Check if the JSON event has a call_id field
+	// Extract call_id for matching start/end events
 	var id string
 	if callID, ok := event["call_id"].(string); ok && callID != "" {
 		id = callID
@@ -276,6 +262,77 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 		Timestamp:  time.Now(),
 		Attributes: attrs,
 	}
+}
+
+// parseNewToolCallFormat extracts tool name and attributes from the new agent CLI format.
+// The tool_call object contains typed tool calls like shellToolCall, readToolCall, etc.
+func parseNewToolCallFormat(toolCall map[string]interface{}) (string, map[string]string) {
+	attrs := make(map[string]string)
+
+	// Map of tool call types to canonical tool names
+	toolTypeMap := map[string]string{
+		"shellToolCall":          "Shell",
+		"readToolCall":           "Read",
+		"writeToolCall":          "Write",
+		"editToolCall":           "StrReplace",
+		"strReplaceToolCall":     "StrReplace",
+		"grepToolCall":           "Grep",
+		"globToolCall":           "Glob",
+		"semanticSearchToolCall": "SemanticSearch",
+		"deleteToolCall":         "Delete",
+		"webFetchToolCall":       "WebFetch",
+		"todoWriteToolCall":      "TodoWrite",
+	}
+
+	for toolType, canonicalName := range toolTypeMap {
+		if toolData, ok := toolCall[toolType].(map[string]interface{}); ok {
+			// Extract args from the tool call
+			if args, ok := toolData["args"].(map[string]interface{}); ok {
+				attrs = extractArgsAsAttrs(args)
+			}
+			return canonicalName, attrs
+		}
+	}
+
+	return "", attrs
+}
+
+// extractArgsAsAttrs converts tool arguments to string attributes.
+func extractArgsAsAttrs(args map[string]interface{}) map[string]string {
+	attrs := make(map[string]string)
+
+	for k, v := range args {
+		// Convert values to strings
+		var strVal string
+		switch val := v.(type) {
+		case string:
+			strVal = val
+		case float64:
+			strVal = fmt.Sprintf("%.0f", val)
+		case bool:
+			strVal = fmt.Sprintf("%t", val)
+		default:
+			strVal = fmt.Sprintf("%v", val)
+		}
+
+		// Map common argument names to standard attribute names
+		switch k {
+		case "path", "file_path", "filePath":
+			attrs["file_path"] = strVal
+		case "command":
+			attrs["command"] = strVal
+		case "query", "pattern":
+			if _, exists := attrs["query"]; !exists {
+				attrs["query"] = strVal
+			}
+		case "glob_pattern", "globPattern":
+			attrs["glob_pattern"] = strVal
+		default:
+			attrs[k] = strVal
+		}
+	}
+
+	return attrs
 }
 
 // toolEventWriter wraps a writer and parses tool events from JSON lines.

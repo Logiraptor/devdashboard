@@ -434,6 +434,84 @@ func TestParseToolEvent_GenericAttributes(t *testing.T) {
 	}
 }
 
+// Tests for new agent CLI format (tool_call with typed tool calls)
+
+func TestParseToolEvent_NewFormatShell(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"tool_abc123","tool_call":{"shellToolCall":{"args":{"command":"ls -la"}}}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "Shell" {
+		t.Errorf("Name = %q, want %q", event.Name, "Shell")
+	}
+	if !event.Started {
+		t.Error("Started = false, want true")
+	}
+	if event.ID != "tool_abc123" {
+		t.Errorf("ID = %q, want %q", event.ID, "tool_abc123")
+	}
+	if event.Attributes["command"] != "ls -la" {
+		t.Errorf("Attributes[command] = %q, want %q", event.Attributes["command"], "ls -la")
+	}
+}
+
+func TestParseToolEvent_NewFormatRead(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"tool_xyz789","tool_call":{"readToolCall":{"args":{"path":"/some/file.go"}}}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "Read" {
+		t.Errorf("Name = %q, want %q", event.Name, "Read")
+	}
+	if event.Attributes["file_path"] != "/some/file.go" {
+		t.Errorf("Attributes[file_path] = %q, want %q", event.Attributes["file_path"], "/some/file.go")
+	}
+}
+
+func TestParseToolEvent_NewFormatCompleted(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"completed","call_id":"tool_abc123","tool_call":{"shellToolCall":{"args":{"command":"ls"},"result":{"success":{}}}}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "Shell" {
+		t.Errorf("Name = %q, want %q", event.Name, "Shell")
+	}
+	if event.Started {
+		t.Error("Started = true, want false (completed)")
+	}
+}
+
+func TestParseToolEvent_NewFormatGrep(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"grep_1","tool_call":{"grepToolCall":{"args":{"pattern":"func main","path":"./"}}}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "Grep" {
+		t.Errorf("Name = %q, want %q", event.Name, "Grep")
+	}
+	if event.Attributes["query"] != "func main" {
+		t.Errorf("Attributes[query] = %q, want %q", event.Attributes["query"], "func main")
+	}
+}
+
+func TestParseToolEvent_NewFormatGlob(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"glob_1","tool_call":{"globToolCall":{"args":{"glob_pattern":"**/*.go"}}}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "Glob" {
+		t.Errorf("Name = %q, want %q", event.Name, "Glob")
+	}
+	if event.Attributes["glob_pattern"] != "**/*.go" {
+		t.Errorf("Attributes[glob_pattern] = %q, want %q", event.Attributes["glob_pattern"], "**/*.go")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // toolEventWriter tests
 // ---------------------------------------------------------------------------
