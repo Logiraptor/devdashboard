@@ -197,66 +197,83 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 		results := c.executeParallel(ctx, wtMgr, batch, out)
 
 		// 3. Process results and merge back
-		for _, r := range results {
-			switch r.Outcome {
-			case OutcomeSuccess:
-				result.Succeeded++
-			case OutcomeQuestion:
-				result.Questions++
-			case OutcomeFailure:
-				result.Failed++
-			case OutcomeTimeout:
-				result.TimedOut++
-			}
-
-			// Merge successful work back if using worktrees
-			if r.WorktreePath != "" && r.Outcome == OutcomeSuccess && r.BranchName != "" {
-				// Create worktree manager on-demand if we don't have one
-				// This handles cases where MaxParallel was 1 but worktrees were created anyway
-				mergeWtMgr := wtMgr
-				if mergeWtMgr == nil {
-					var err error
-					mergeWtMgr, err = NewWorktreeManager(c.WorkDir)
-					if err != nil {
-						writef(out, "[%s] ERROR: failed to create worktree manager for merge: %v\n", r.BeadID, err)
-						result.Failed++
-						continue
-					}
-				}
-				writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, mergeWtMgr.Branch())
-				if err := c.mergeBack(ctx, mergeWtMgr, r); err != nil {
-					writef(out, "[%s] ERROR: merge failed: %v\n", r.BeadID, err)
-					// Don't fail the entire run, but make the error visible
-					result.Failed++
-				} else {
-					writef(out, "[%s] ✓ merged successfully\n", r.BeadID)
-				}
-			} else if r.BranchName != "" && r.Outcome == OutcomeSuccess {
-				// Branch was created but worktree wasn't (shouldn't happen, but handle it)
-				writef(out, "[%s] WARNING: branch %s exists but no worktree was created - merge skipped\n", r.BeadID, r.BranchName)
-			}
-
-			// Clean up worktree
-			if r.WorktreePath != "" {
-				cleanupWtMgr := wtMgr
-				if cleanupWtMgr == nil {
-					var err error
-					cleanupWtMgr, err = NewWorktreeManager(c.WorkDir)
-					if err != nil {
-						writef(out, "  warning: failed to create worktree manager for cleanup: %v\n", err)
-						continue
-					}
-				}
-				if err := cleanupWtMgr.RemoveWorktree(r.WorktreePath); err != nil {
-					writef(out, "  warning: failed to remove worktree: %v\n", err)
-				}
-			}
-		}
+		c.processBeadResults(ctx, wtMgr, results, result, out)
 	}
 
 	result.Duration = time.Since(start)
 
 	// Print summary
+	c.logSummary(result, out)
+
+	// Notify observer of loop end
+	if c.Observer != nil {
+		c.Observer.OnLoopEnd(result)
+	}
+
+	return result, nil
+}
+
+// processBeadResults processes execution results, updates counters, merges worktrees, and cleans up.
+func (c *Core) processBeadResults(ctx context.Context, wtMgr *WorktreeManager, results []beadExecResult, result *CoreResult, out io.Writer) {
+	for _, r := range results {
+		switch r.Outcome {
+		case OutcomeSuccess:
+			result.Succeeded++
+		case OutcomeQuestion:
+			result.Questions++
+		case OutcomeFailure:
+			result.Failed++
+		case OutcomeTimeout:
+			result.TimedOut++
+		}
+
+		// Merge successful work back if using worktrees
+		if r.WorktreePath != "" && r.Outcome == OutcomeSuccess && r.BranchName != "" {
+			// Create worktree manager on-demand if we don't have one
+			// This handles cases where MaxParallel was 1 but worktrees were created anyway
+			mergeWtMgr := wtMgr
+			if mergeWtMgr == nil {
+				var err error
+				mergeWtMgr, err = NewWorktreeManager(c.WorkDir)
+				if err != nil {
+					writef(out, "[%s] ERROR: failed to create worktree manager for merge: %v\n", r.BeadID, err)
+					result.Failed++
+					continue
+				}
+			}
+			writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, mergeWtMgr.Branch())
+			if err := c.mergeBack(ctx, mergeWtMgr, r); err != nil {
+				writef(out, "[%s] ERROR: merge failed: %v\n", r.BeadID, err)
+				// Don't fail the entire run, but make the error visible
+				result.Failed++
+			} else {
+				writef(out, "[%s] ✓ merged successfully\n", r.BeadID)
+			}
+		} else if r.BranchName != "" && r.Outcome == OutcomeSuccess {
+			// Branch was created but worktree wasn't (shouldn't happen, but handle it)
+			writef(out, "[%s] WARNING: branch %s exists but no worktree was created - merge skipped\n", r.BeadID, r.BranchName)
+		}
+
+		// Clean up worktree
+		if r.WorktreePath != "" {
+			cleanupWtMgr := wtMgr
+			if cleanupWtMgr == nil {
+				var err error
+				cleanupWtMgr, err = NewWorktreeManager(c.WorkDir)
+				if err != nil {
+					writef(out, "  warning: failed to create worktree manager for cleanup: %v\n", err)
+					continue
+				}
+			}
+			if err := cleanupWtMgr.RemoveWorktree(r.WorktreePath); err != nil {
+				writef(out, "  warning: failed to remove worktree: %v\n", err)
+			}
+		}
+	}
+}
+
+// logSummary logs the completion summary to the output writer.
+func (c *Core) logSummary(result *CoreResult, out io.Writer) {
 	writef(out, "\nCore loop complete:\n")
 	if result.Succeeded > 0 {
 		writef(out, "  ✓ %d beads completed\n", result.Succeeded)
@@ -271,13 +288,6 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 		writef(out, "  ⏱ %d timeouts\n", result.TimedOut)
 	}
 	writef(out, "  Duration: %s\n", FormatDuration(result.Duration))
-
-	// Notify observer of loop end
-	if c.Observer != nil {
-		c.Observer.OnLoopEnd(result)
-	}
-
-	return result, nil
 }
 
 // beadExecResult holds the outcome of executing a single bead.
