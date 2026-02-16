@@ -494,6 +494,8 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	reg.BindWithDesc("SPC p l", func() tea.Msg { return ShowProjectSwitcherMsg{} }, "Switch project")
 	// SPC r: refresh beads for all resources in project detail view
 	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
+	// SPC b: bead operations
+	reg.BindWithDescForMode("SPC b r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
 	// SPC 1-9: focus pane by index
 	for i := 1; i <= 9; i++ {
 		num := i

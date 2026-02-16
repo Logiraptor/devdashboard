@@ -81,6 +81,14 @@ Pressing `/` activates vim-style search mode for filtering and jumping to lines 
 
 In project detail view, `SPC r` reloads beads for all resources without reloading repos or PRs. Useful when beads are updated externally (e.g., via CLI `bd close`).
 
+## SPC b — Bead Operations
+
+| Sequence | Action | Context |
+|----------|--------|---------|
+| `SPC b r` | Refresh beads for all resources | Project detail only |
+
+Bead-related operations. `SPC b r` is an alias for `SPC r` (refresh beads).
+
 ## SPC 1-9 — Focus Panes
 
 | Sequence | Action | Context |
