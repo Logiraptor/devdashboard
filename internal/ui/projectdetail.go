@@ -17,6 +17,14 @@ import (
 // (status bar, keybind hints, etc.) that appear outside the detail view.
 const reservedChromeLines = 4
 
+// Fixed heights for bottom sections to prevent layout jumping when selection changes.
+// These sections always render with the same height, padded with empty lines if needed.
+const (
+	activePanesHeight  = 5 // "Active Panes" header + up to 4 pane entries
+	beadDetailsHeight  = 7 // "Bead Details" header + title + status + 3 desc lines + labels
+	headerHeight       = 3 // Project title + blank line + "Resources" header
+)
+
 // cursorDelegate is a custom list delegate that adds '▸' cursor prefix for selected items.
 type cursorDelegate struct {
 	list.DefaultDelegate
@@ -333,7 +341,8 @@ func (p *ProjectDetailView) viewHeight() int {
 	if p.termHeight <= 0 {
 		return 0
 	}
-	h := p.termHeight - reservedChromeLines - 3 // Reserve space for header
+	// Reserve space for: chrome, header, active panes section, bead details section
+	h := p.termHeight - reservedChromeLines - headerHeight - activePanesHeight - beadDetailsHeight
 	if h < 5 {
 		h = 5
 	}
@@ -475,29 +484,69 @@ func (p *ProjectDetailView) View() string {
 
 	b.WriteString(p.list.View())
 
-	// Add Active Panes section - show global panes if available, otherwise project-only panes
+	// Render fixed-height bottom sections to prevent layout jumping
+	b.WriteString(p.renderActivePanesSection())
+	b.WriteString(p.renderBeadDetailsSection())
+
+	return b.String()
+}
+
+// renderActivePanesSection renders the Active Panes section with a fixed height.
+// Always occupies activePanesHeight lines, padded with empty lines if needed.
+func (p *ProjectDetailView) renderActivePanesSection() string {
+	width := p.termWidth
+	if width <= 0 {
+		width = 80
+	}
+
+	var content strings.Builder
+	content.WriteString(Styles.Section.Render("Active Panes") + "\n")
+
 	var activePanes []project.PaneInfo
 	if p.getGlobalPanes != nil {
 		activePanes = p.getGlobalPanes()
 	} else {
 		activePanes = p.getOrderedActivePanes()
 	}
-	if len(activePanes) > 0 {
-		b.WriteString("\n" + Styles.Section.Render("Active Panes") + "\n")
+
+	if len(activePanes) == 0 {
+		content.WriteString("  " + Styles.Muted.Render("(none)") + "\n")
+	} else {
+		maxPanes := activePanesHeight - 1 // -1 for header
+		if maxPanes > 9 {
+			maxPanes = 9
+		}
 		for i, pane := range activePanes {
-			if i >= 9 {
-				break // Limit to 9 panes
+			if i >= maxPanes {
+				break
 			}
 			paneName := p.getPaneDisplayName(pane, i+1)
-			b.WriteString("  " + paneName + "\n")
+			content.WriteString("  " + paneName + "\n")
 		}
 	}
 
-	// Add Bead Details section if a bead is selected
-	if bead := p.SelectedBead(); bead != nil {
-		b.WriteString("\n" + Styles.Section.Render("Bead Details") + "\n")
-		b.WriteString("  " + Styles.Normal.Render(bead.ID+"  "+bead.Title) + "\n")
-		
+	// Pad to fixed height using lipgloss.Place
+	rendered := content.String()
+	return "\n" + lipgloss.Place(width, activePanesHeight, lipgloss.Left, lipgloss.Top, rendered)
+}
+
+// renderBeadDetailsSection renders the Bead Details section with a fixed height.
+// Always occupies beadDetailsHeight lines, showing empty placeholder when no bead is selected.
+func (p *ProjectDetailView) renderBeadDetailsSection() string {
+	width := p.termWidth
+	if width <= 0 {
+		width = 80
+	}
+
+	var content strings.Builder
+	content.WriteString(Styles.Section.Render("Bead Details") + "\n")
+
+	bead := p.SelectedBead()
+	if bead == nil {
+		content.WriteString("  " + Styles.Muted.Render("(select a bead to see details)") + "\n")
+	} else {
+		content.WriteString("  " + Styles.Normal.Render(bead.ID+"  "+bead.Title) + "\n")
+
 		// Status and issue type
 		statusParts := []string{}
 		if bead.Status != "" {
@@ -507,26 +556,38 @@ func (p *ProjectDetailView) View() string {
 			statusParts = append(statusParts, bead.IssueType)
 		}
 		if len(statusParts) > 0 {
-			b.WriteString("  " + Styles.Status.Render(strings.Join(statusParts, "  ")) + "\n")
+			content.WriteString("  " + Styles.Status.Render(strings.Join(statusParts, "  ")) + "\n")
 		}
-		
-		// Description (if present)
+
+		// Description (truncate to fit, max 2 lines)
 		if bead.Description != "" {
-			// Wrap description to fit terminal width, preserving indentation
 			descLines := strings.Split(bead.Description, "\n")
-			for _, line := range descLines {
-				b.WriteString("  " + Styles.Normal.Render(line) + "\n")
+			maxDescLines := 2
+			for i, line := range descLines {
+				if i >= maxDescLines {
+					break
+				}
+				// Truncate long lines
+				if len(line) > width-4 {
+					line = line[:width-7] + "..."
+				}
+				content.WriteString("  " + Styles.Normal.Render(line) + "\n")
 			}
 		}
-		
+
 		// Labels (if any)
 		if len(bead.Labels) > 0 {
 			labelsStr := strings.Join(bead.Labels, ", ")
-			b.WriteString("  " + Styles.Muted.Render(labelsStr) + "\n")
+			if len(labelsStr) > width-4 {
+				labelsStr = labelsStr[:width-7] + "..."
+			}
+			content.WriteString("  " + Styles.Muted.Render(labelsStr) + "\n")
 		}
 	}
 
-	return b.String()
+	// Pad to fixed height using lipgloss.Place
+	rendered := content.String()
+	return "\n" + lipgloss.Place(width, beadDetailsHeight, lipgloss.Left, lipgloss.Top, rendered)
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").
