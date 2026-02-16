@@ -68,150 +68,162 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 
 	// Handle start events - create span immediately for live viewing
 	if event.Type == EventLoopStart || event.Type == EventIterationStart || event.Type == EventToolStart {
-		// Store start event in pendingSpans (for duration calculation later)
-		m.pendingSpans[event.SpanID] = &event
-
-		// Create span immediately with Duration=0 (indicates in-progress)
-		span := &Span{
-			TraceID:    event.TraceID,
-			SpanID:     event.SpanID,
-			ParentID:   event.ParentID,
-			Name:       event.Name,
-			StartTime:  event.Timestamp,
-			Duration:   0, // In-progress
-			Attributes: make(map[string]string),
-			Children:   make([]*Span, 0),
-		}
-		if event.Attributes != nil {
-			for k, v := range event.Attributes {
-				span.Attributes[k] = v
-			}
-		}
-
-		// If loop_start, create/update trace and set as RootSpan
-		if event.Type == EventLoopStart {
-			if exists {
-				// Trace already exists, update it
-				trace.StartTime = event.Timestamp
-				trace.Status = "running"
-				trace.RootSpan = span
-			} else {
-				// Create new trace with RootSpan
-				trace = &Trace{
-					ID:        traceID,
-					StartTime: event.Timestamp,
-					Status:    "running",
-					RootSpan:  span,
-				}
-				m.traces[traceID] = trace
-				m.addToRecentIDs(traceID)
-			}
-			// Attach any orphaned children waiting for the loop span
-			m.attachOrphanedChildren(span)
-			m.callOnChange()
-			return trace
-		}
-
-		// For iteration/tool start, attach to parent
-		if trace == nil {
-			// Trace doesn't exist yet, create it
-			trace = &Trace{
-				ID:        traceID,
-				StartTime: event.Timestamp,
-				Status:    "running",
-			}
-			m.traces[traceID] = trace
-			m.addToRecentIDs(traceID)
-		}
-
-		// Find parent and attach
-		if event.ParentID != "" {
-			if trace.RootSpan != nil {
-				parent := m.findSpanByID(trace.RootSpan, event.ParentID)
-				if parent != nil {
-					parent.Children = append(parent.Children, span)
-				} else {
-					// Parent not found yet, store as orphaned
-					m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
-				}
-			} else {
-				// RootSpan doesn't exist yet, store as orphaned
-				m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
-			}
-		} else {
-			// No ParentID - this is a root-level span
-			if trace.RootSpan == nil {
-				trace.RootSpan = span
-				m.attachOrphanedChildren(span)
-			}
-		}
-
-		m.callOnChange()
-		return trace
+		return m.handleStartEvent(event, trace, traceID, exists)
 	}
 
 	// Handle end events - find existing span and update Duration
 	if event.Type == EventLoopEnd || event.Type == EventIterationEnd || event.Type == EventToolEnd {
-		// Find matching start event
-		startEvent, found := m.pendingSpans[event.SpanID]
-		if !found {
-			// No matching start event found, ignore
-			return nil
+		return m.handleEndEvent(event, trace)
+	}
+
+	return nil
+}
+
+// handleStartEvent processes loop/iteration/tool start events
+// Must be called with m.mu.Lock() held
+func (m *Manager) handleStartEvent(event TraceEvent, trace *Trace, traceID string, exists bool) *Trace {
+	// Store start event in pendingSpans (for duration calculation later)
+	m.pendingSpans[event.SpanID] = &event
+
+	// Create span immediately with Duration=0 (indicates in-progress)
+	span := &Span{
+		TraceID:    event.TraceID,
+		SpanID:     event.SpanID,
+		ParentID:   event.ParentID,
+		Name:       event.Name,
+		StartTime:  event.Timestamp,
+		Duration:   0, // In-progress
+		Attributes: make(map[string]string),
+		Children:   make([]*Span, 0),
+	}
+	if event.Attributes != nil {
+		for k, v := range event.Attributes {
+			span.Attributes[k] = v
 		}
+	}
 
-		// Compute duration
-		duration := event.Timestamp.Sub(startEvent.Timestamp)
-
-		// Remove from pending
-		delete(m.pendingSpans, event.SpanID)
-
-		// Find the existing span in the tree and update it
-		if trace != nil && trace.RootSpan != nil {
-			var span *Span
-			if trace.RootSpan.SpanID == event.SpanID {
-				span = trace.RootSpan
-			} else {
-				span = m.findSpanByID(trace.RootSpan, event.SpanID)
+	// If loop_start, create/update trace and set as RootSpan
+	if event.Type == EventLoopStart {
+		if exists {
+			// Trace already exists, update it
+			trace.StartTime = event.Timestamp
+			trace.Status = "running"
+			trace.RootSpan = span
+		} else {
+			// Create new trace with RootSpan
+			trace = &Trace{
+				ID:        traceID,
+				StartTime: event.Timestamp,
+				Status:    "running",
+				RootSpan:  span,
 			}
-
-			if span != nil {
-				// Update span with duration and end event attributes
-				span.Duration = duration
-				if event.Attributes != nil {
-					for k, v := range event.Attributes {
-						span.Attributes[k] = v
-					}
-				}
-			}
+			m.traces[traceID] = trace
+			m.addToRecentIDs(traceID)
 		}
-
-		// Handle loop_end
-		if event.Type == EventLoopEnd {
-			if trace != nil {
-				trace.EndTime = event.Timestamp
-				trace.Status = "completed"
-				// Export to OTLP synchronously - this is the final event and we must
-				// ensure the trace is exported before the process exits
-				if m.exporter != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					if err := m.exporter.ExportTrace(ctx, trace); err != nil {
-						// TODO: Surface export errors through observer pattern (OnError callback)
-						// or store in TraceManager for later retrieval. log.Printf interferes
-						// with bubbletea rendering.
-						_ = err // Silently ignore for now
-					}
-					cancel()
-				}
-			}
-			m.callOnChange()
-			return trace
-		}
-
+		// Attach any orphaned children waiting for the loop span
+		m.attachOrphanedChildren(span)
 		m.callOnChange()
 		return trace
 	}
 
-	return nil
+	// For iteration/tool start, attach to parent
+	if trace == nil {
+		// Trace doesn't exist yet, create it
+		trace = &Trace{
+			ID:        traceID,
+			StartTime: event.Timestamp,
+			Status:    "running",
+		}
+		m.traces[traceID] = trace
+		m.addToRecentIDs(traceID)
+	}
+
+	// Find parent and attach
+	if event.ParentID != "" {
+		if trace.RootSpan != nil {
+			parent := m.findSpanByID(trace.RootSpan, event.ParentID)
+			if parent != nil {
+				parent.Children = append(parent.Children, span)
+			} else {
+				// Parent not found yet, store as orphaned
+				m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
+			}
+		} else {
+			// RootSpan doesn't exist yet, store as orphaned
+			m.orphanedSpans[event.ParentID] = append(m.orphanedSpans[event.ParentID], span)
+		}
+	} else {
+		// No ParentID - this is a root-level span
+		if trace.RootSpan == nil {
+			trace.RootSpan = span
+			m.attachOrphanedChildren(span)
+		}
+	}
+
+	m.callOnChange()
+	return trace
+}
+
+// handleEndEvent processes loop/iteration/tool end events
+// Must be called with m.mu.Lock() held
+func (m *Manager) handleEndEvent(event TraceEvent, trace *Trace) *Trace {
+	// Find matching start event
+	startEvent, found := m.pendingSpans[event.SpanID]
+	if !found {
+		// No matching start event found, ignore
+		return nil
+	}
+
+	// Compute duration
+	duration := event.Timestamp.Sub(startEvent.Timestamp)
+
+	// Remove from pending
+	delete(m.pendingSpans, event.SpanID)
+
+	// Find the existing span in the tree and update it
+	if trace != nil && trace.RootSpan != nil {
+		var span *Span
+		if trace.RootSpan.SpanID == event.SpanID {
+			span = trace.RootSpan
+		} else {
+			span = m.findSpanByID(trace.RootSpan, event.SpanID)
+		}
+
+		if span != nil {
+			// Update span with duration and end event attributes
+			span.Duration = duration
+			if event.Attributes != nil {
+				for k, v := range event.Attributes {
+					span.Attributes[k] = v
+				}
+			}
+		}
+	}
+
+	// Handle loop_end
+	if event.Type == EventLoopEnd {
+		if trace != nil {
+			trace.EndTime = event.Timestamp
+			trace.Status = "completed"
+			// Export to OTLP synchronously - this is the final event and we must
+			// ensure the trace is exported before the process exits
+			if m.exporter != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if err := m.exporter.ExportTrace(ctx, trace); err != nil {
+					// TODO: Surface export errors through observer pattern (OnError callback)
+					// or store in TraceManager for later retrieval. log.Printf interferes
+					// with bubbletea rendering.
+					_ = err // Silently ignore for now
+				}
+				cancel()
+			}
+		}
+		m.callOnChange()
+		return trace
+	}
+
+	m.callOnChange()
+	return trace
 }
 
 // findSpanByID recursively searches for a span by ID in the trace tree
