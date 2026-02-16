@@ -18,6 +18,8 @@ import (
 type ToolEvent struct {
 	ID         string            // Unique identifier for this tool call
 	Name       string            // Tool name
+	Started    bool              // True for start events, false for end events
+	Timestamp  time.Time         // When the event occurred
 	Attributes map[string]string // Tool attributes
 }
 
