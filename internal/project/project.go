@@ -894,14 +894,10 @@ func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
 	return ""
 }
 
-// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
-// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
+// buildResourcesFromReposAndPRs builds a flat []Resource from repos and PRs.
 // Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
-// Use this for dashboard/bead counting where merged PRs are not needed.
-func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
-	repos, _ := m.ListProjectRepos(projectName)
-	projDir := m.projectDir(projectName)
-
+// prsByRepo maps repo names to their PRs (may be empty for repos with no PRs).
+func (m *Manager) buildResourcesFromReposAndPRs(repos []string, projDir string, prsByRepo map[string][]PRInfo) []Resource {
 	// Pre-allocate repo resources (filesystem-only, no network calls).
 	resources := make([]Resource, 0, len(repos))
 	for _, repoName := range repos {
@@ -912,6 +908,37 @@ func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
 			WorktreePath: worktreePath,
 		})
 	}
+
+	// Append PR resources in repo order (matching the repo resource order).
+	for _, repoName := range repos {
+		prs := prsByRepo[repoName]
+		for i := range prs {
+			pr := &prs[i]
+			// Check if a PR worktree already exists on disk.
+			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
+			var wtPath string
+			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+				wtPath = prWT
+			}
+			resources = append(resources, Resource{
+				Kind:         ResourcePR,
+				RepoName:     repoName,
+				PR:           pr,
+				WorktreePath: wtPath,
+			})
+		}
+	}
+
+	return resources
+}
+
+// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
+// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
+// Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
+// Use this for dashboard/bead counting where merged PRs are not needed.
+func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
+	repos, _ := m.ListProjectRepos(projectName)
+	projDir := m.projectDir(projectName)
 
 	// Fetch open PRs concurrently across repos.
 	type repoResult struct {
@@ -947,27 +974,7 @@ func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
 		repoPRs[result.repoName] = result.prs
 	}
 
-	// Append PR resources in repo order (matching the repo resource order).
-	for _, repoName := range repos {
-		prs := repoPRs[repoName]
-		for i := range prs {
-			pr := &prs[i]
-			// Check if a PR worktree already exists on disk.
-			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
-			var wtPath string
-			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-				wtPath = prWT
-			}
-			resources = append(resources, Resource{
-				Kind:         ResourcePR,
-				RepoName:     repoName,
-				PR:           pr,
-				WorktreePath: wtPath,
-			})
-		}
-	}
-
-	return resources
+	return m.buildResourcesFromReposAndPRs(repos, projDir, repoPRs)
 }
 
 // ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
@@ -984,29 +991,5 @@ func (m *Manager) ListProjectResources(projectName string) []Resource {
 	}
 
 	projDir := m.projectDir(projectName)
-	var resources []Resource
-	for _, repoName := range repos {
-		worktreePath := filepath.Join(projDir, repoName)
-		resources = append(resources, Resource{
-			Kind:         ResourceRepo,
-			RepoName:     repoName,
-			WorktreePath: worktreePath,
-		})
-		for i := range prMap[repoName] {
-			pr := &prMap[repoName][i]
-			// Check if a PR worktree already exists on disk.
-			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
-			var wtPath string
-			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-				wtPath = prWT
-			}
-			resources = append(resources, Resource{
-				Kind:         ResourcePR,
-				RepoName:     repoName,
-				PR:           pr,
-				WorktreePath: wtPath,
-			})
-		}
-	}
-	return resources
+	return m.buildResourcesFromReposAndPRs(repos, projDir, prMap)
 }
