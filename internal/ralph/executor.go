@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"devdeploy/internal/trace"
 )
 
 // DefaultTimeout is the per-agent execution timeout.
@@ -34,31 +36,7 @@ type AgentResult struct {
 	ErrorMessage string
 }
 
-// ToolEvent represents a parsed tool call event from the agent's JSON stream.
-// Tool events are emitted when tools are called (read, write, shell, search, etc.)
-// and can represent either the start or end of a tool call.
-//
-// The agent outputs tool events in JSON format:
-//   - Start: {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
-//   - End:   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
-type ToolEvent struct {
-	// Name is the tool name (e.g., "read", "write", "shell", "search", "grep").
-	Name string
-
-	// Started is true for start events (subtype="started"), false for end events (subtype="ended").
-	Started bool
-
-	// Timestamp is when the event occurred, parsed from the event or set during parsing.
-	Timestamp time.Time
-
-	// Attributes contains tool-specific attributes extracted from the event.
-	// Common attributes include:
-	//   - For read/write/edit: "file_path" (from arguments.path)
-	//   - For shell: "command" (from arguments.command)
-	//   - For search/grep: "query" or "pattern"
-	//   - Other fields from the event's "arguments" object
-	Attributes map[string]string
-}
+// ToolEvent is defined in core.go
 // CommandFactory builds an *exec.Cmd for the given context, working directory,
 // and arguments. The default factory uses exec.CommandContext with "agent" as
 // the binary. Tests can inject a factory that invokes a helper process instead.
@@ -266,7 +244,18 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 		}
 	}
 
+	// Generate or extract ID for matching start/end events
+	// Check if the JSON event has a call_id field
+	var id string
+	if callID, ok := event["call_id"].(string); ok && callID != "" {
+		id = callID
+	} else {
+		// Generate a unique ID if not present
+		id = trace.NewSpanID()
+	}
+
 	return &ToolEvent{
+		ID:         id,
 		Name:       name,
 		Started:    started,
 		Timestamp:  time.Now(),
