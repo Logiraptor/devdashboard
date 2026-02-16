@@ -280,6 +280,76 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 	}
 }
 
+// toolEventWriter wraps a writer and parses tool events from JSON lines.
+// It accumulates partial lines in a buffer and parses complete JSON lines
+// to extract tool_call events, calling observer methods as events are detected.
+type toolEventWriter struct {
+	inner    io.Writer
+	observer ProgressObserver
+	buf      bytes.Buffer // accumulates partial lines
+}
+
+// newToolEventWriter creates a new toolEventWriter that wraps the given writer
+// and calls the observer for tool events.
+func newToolEventWriter(inner io.Writer, observer ProgressObserver) *toolEventWriter {
+	return &toolEventWriter{
+		inner:    inner,
+		observer: observer,
+	}
+}
+
+// Write writes data to the inner writer and parses complete JSON lines
+// to extract tool_call events. Partial lines are buffered until a newline
+// is received.
+func (w *toolEventWriter) Write(p []byte) (n int, err error) {
+	// Write to inner writer first
+	n, err = w.inner.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Accumulate in buffer
+	w.buf.Write(p)
+
+	// Process complete lines
+	for {
+		// Find the first newline in the buffer
+		bufBytes := w.buf.Bytes()
+		newlineIdx := bytes.IndexByte(bufBytes, '\n')
+		if newlineIdx == -1 {
+			// No complete line yet
+			break
+		}
+
+		// Extract the line (including newline)
+		lineBytes := make([]byte, newlineIdx+1)
+		copy(lineBytes, bufBytes[:newlineIdx+1])
+		w.buf.Next(newlineIdx + 1)
+
+		// Remove newline
+		line := strings.TrimSuffix(string(lineBytes), "\n")
+		if line == "" {
+			continue
+		}
+
+		// Parse tool event using ParseToolEvent
+		te := ParseToolEvent(line)
+		if te == nil {
+			continue
+		}
+
+		// Call observer
+		if w.observer != nil {
+			if te.Started {
+				w.observer.OnToolStart(*te)
+			} else {
+				w.observer.OnToolEnd(*te)
+			}
+		}
+	}
+
+	return n, nil
+}
 // parseAgentResultEvent parses the agent's stdout for the final "result" event
 // and extracts chatId and error message.
 // The agent outputs JSON lines, and the result event has the format:

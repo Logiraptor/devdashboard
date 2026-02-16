@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"devdeploy/internal/beads"
 )
 
 // ---------------------------------------------------------------------------
@@ -299,6 +301,7 @@ more garbage`
 		t.Errorf("errorMsg = %q, want empty", errMsg)
 	}
 }
+<<<<<<< HEAD
 
 // ---------------------------------------------------------------------------
 // ParseToolEvent tests
@@ -424,5 +427,232 @@ func TestParseToolEvent_GenericAttributes(t *testing.T) {
 	}
 	if event.Attributes["extra_field"] != "extra_value" {
 		t.Errorf("Attributes[extra_field] = %q, want %q", event.Attributes["extra_field"], "extra_value")
+	}
+}
+// ---------------------------------------------------------------------------
+// toolEventWriter tests
+// ---------------------------------------------------------------------------
+
+type testToolObserver struct {
+	starts []ToolEvent
+	ends   []ToolEvent
+}
+
+func (o *testToolObserver) OnToolStart(event ToolEvent) {
+	o.starts = append(o.starts, event)
+}
+
+func (o *testToolObserver) OnToolEnd(event ToolEvent) {
+	o.ends = append(o.ends, event)
+}
+
+func (o *testToolObserver) OnLoopStart(string)            {}
+func (o *testToolObserver) OnBeadStart(beads.Bead)         {}
+func (o *testToolObserver) OnBeadComplete(BeadResult)     {}
+func (o *testToolObserver) OnLoopEnd(*CoreResult)         {}
+
+func TestToolEventWriter_ToolStart(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `{"type":"tool_call","subtype":"started","name":"read_file","arguments":{"path":"foo.go"}}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(observer.starts) != 1 {
+		t.Fatalf("expected 1 start event, got %d", len(observer.starts))
+	}
+	if observer.starts[0].Name != "read_file" {
+		t.Errorf("name = %q, want %q", observer.starts[0].Name, "read_file")
+	}
+	if path := observer.starts[0].Attributes["file_path"]; path != "foo.go" {
+		t.Errorf("Attributes[file_path] = %q, want %q", path, "foo.go")
+	}
+	if len(observer.ends) != 0 {
+		t.Errorf("expected 0 end events, got %d", len(observer.ends))
+	}
+	if inner.String() != input {
+		t.Errorf("inner writer = %q, want %q", inner.String(), input)
+	}
+}
+
+func TestToolEventWriter_ToolEnd(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `{"type":"tool_call","subtype":"ended","name":"read_file","arguments":{"path":"foo.go"},"duration_ms":150}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(observer.ends) != 1 {
+		t.Fatalf("expected 1 end event, got %d", len(observer.ends))
+	}
+	if observer.ends[0].Name != "read_file" {
+		t.Errorf("name = %q, want %q", observer.ends[0].Name, "read_file")
+	}
+	if durationMs := observer.ends[0].Attributes["duration_ms"]; durationMs != "150" {
+		t.Errorf("Attributes[duration_ms] = %q, want %q", durationMs, "150")
+	}
+	if len(observer.starts) != 0 {
+		t.Errorf("expected 0 start events, got %d", len(observer.starts))
+	}
+	if inner.String() != input {
+		t.Errorf("inner writer = %q, want %q", inner.String(), input)
+	}
+}
+
+func TestToolEventWriter_PartialLines(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	// Write partial line
+	_, err := writer.Write([]byte(`{"type":"tool_call","subtype":"started","name":"read_file","arguments":{"path":"foo.go"}}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No events yet (no newline)
+	if len(observer.starts) != 0 {
+		t.Errorf("expected 0 start events before newline, got %d", len(observer.starts))
+	}
+
+	// Complete the line
+	_, err = writer.Write([]byte("\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Now should have the event
+	if len(observer.starts) != 1 {
+		t.Fatalf("expected 1 start event after newline, got %d", len(observer.starts))
+	}
+}
+
+func TestToolEventWriter_MultipleLines(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `{"type":"tool_call","subtype":"started","name":"read_file","arguments":{"path":"foo.go"}}
+{"type":"tool_call","subtype":"ended","name":"read_file","arguments":{"path":"foo.go"},"duration_ms":150}
+{"type":"tool_call","subtype":"started","name":"edit_file","arguments":{"path":"bar.go"}}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(observer.starts) != 2 {
+		t.Errorf("expected 2 start events, got %d", len(observer.starts))
+	}
+	if len(observer.ends) != 1 {
+		t.Errorf("expected 1 end event, got %d", len(observer.ends))
+	}
+}
+
+func TestToolEventWriter_NonToolCallEvents(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `{"type":"system","content":"system prompt"}
+{"type":"result","chatId":"chat-123"}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should ignore non-tool_call events
+	if len(observer.starts) != 0 {
+		t.Errorf("expected 0 start events, got %d", len(observer.starts))
+	}
+	if len(observer.ends) != 0 {
+		t.Errorf("expected 0 end events, got %d", len(observer.ends))
+	}
+}
+
+func TestToolEventWriter_InvalidJSON(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `not json
+{"type":"tool_call","subtype":"started","name":"read_file","arguments":{"path":"foo.go"}}
+more garbage
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should parse the valid JSON line and ignore invalid ones
+	if len(observer.starts) != 1 {
+		t.Errorf("expected 1 start event, got %d", len(observer.starts))
+	}
+}
+
+func TestToolEventWriter_NoObserver(t *testing.T) {
+	var inner bytes.Buffer
+	writer := newToolEventWriter(&inner, nil)
+
+	input := `{"type":"tool_call","subtype":"started","name":"read_file","arguments":{"path":"foo.go"}}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not panic with nil observer
+	if inner.String() != input {
+		t.Errorf("inner writer = %q, want %q", inner.String(), input)
+	}
+}
+
+func TestToolEventWriter_NonStartedOrEndedSubtype(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `{"type":"tool_call","subtype":"other","name":"read_file","arguments":{"path":"foo.go"}}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should ignore subtypes other than "started" or "ended"
+	if len(observer.starts) != 0 {
+		t.Errorf("expected 0 start events, got %d", len(observer.starts))
+	}
+	if len(observer.ends) != 0 {
+		t.Errorf("expected 0 end events, got %d", len(observer.ends))
+	}
+}
+
+func TestToolEventWriter_MissingName(t *testing.T) {
+	var inner bytes.Buffer
+	observer := &testToolObserver{}
+	writer := newToolEventWriter(&inner, observer)
+
+	input := `{"type":"tool_call","subtype":"started","arguments":{"path":"foo.go"}}
+`
+	_, err := writer.Write([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should ignore events without name
+	if len(observer.starts) != 0 {
+		t.Errorf("expected 0 start events, got %d", len(observer.starts))
 	}
 }
