@@ -37,7 +37,7 @@ type ProgressObserver interface {
 	// OnLoopEnd is called when the loop completes.
 	OnLoopEnd(result *CoreResult)
 
-	// OnToolStart is called when a tool call begins.
+	// OnToolStart is called when a tool call starts.
 	OnToolStart(event ToolEvent)
 
 	// OnToolEnd is called when a tool call ends.
