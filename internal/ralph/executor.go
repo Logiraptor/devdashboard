@@ -158,133 +158,121 @@ func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Op
 	return runAgentInternal(ctx, workDir, prompt, "claude-4.5-opus-high-thinking", opts...)
 }
 
-// ToolEventObserver receives notifications about tool call events from agent stdout.
-// All methods are optional — implement only what you need.
-type ToolEventObserver interface {
-	// OnToolStart is called when a tool call starts.
-	OnToolStart(name string, arguments map[string]interface{})
-
-	// OnToolEnd is called when a tool call completes.
-	OnToolEnd(name string, arguments map[string]interface{}, durationMs int64)
-}
-
-// NoopToolEventObserver is a ToolEventObserver that does nothing.
-// Embed this in your observer to avoid implementing unused methods.
-type NoopToolEventObserver struct{}
-
-func (NoopToolEventObserver) OnToolStart(string, map[string]interface{}) {}
-func (NoopToolEventObserver) OnToolEnd(string, map[string]interface{}, int64) {}
-
-// ToolEvent represents a parsed tool call event from agent stdout.
+// ToolEvent represents a parsed tool call event from the agent's JSON stream.
+// Tool events are emitted when tools are called (read, write, shell, search, etc.)
+// and can represent either the start or end of a tool call.
+//
+// The agent outputs tool events in JSON format:
+//   - Start: {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+//   - End:   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
 type ToolEvent struct {
-	Name       string
-	Subtype    string // "started" or "ended"
-	Arguments  map[string]interface{}
-	DurationMs int64 // Only present for "ended" events
+	// Name is the tool name (e.g., "read", "write", "shell", "search", "grep").
+	Name string
+
+	// Started is true for start events (subtype="started"), false for end events (subtype="ended").
+	Started bool
+
+	// Timestamp is when the event occurred, parsed from the event or set during parsing.
+	Timestamp time.Time
+
+	// Attributes contains tool-specific attributes extracted from the event.
+	// Common attributes include:
+	//   - For read/write/edit: "file_path" (from arguments.path)
+	//   - For shell: "command" (from arguments.command)
+	//   - For search/grep: "query" or "pattern"
+	//   - Other fields from the event's "arguments" object
+	Attributes map[string]string
 }
 
-// toolEventWriter wraps a writer and parses tool events from JSON lines.
-// It accumulates partial lines in a buffer and parses complete JSON lines
-// to extract tool_call events, calling observer methods as events are detected.
-type toolEventWriter struct {
-	inner    io.Writer
-	observer ToolEventObserver
-	buf      bytes.Buffer // accumulates partial lines
-}
-
-// newToolEventWriter creates a new toolEventWriter that wraps the given writer
-// and calls the observer for tool events.
-func newToolEventWriter(inner io.Writer, observer ToolEventObserver) *toolEventWriter {
-	return &toolEventWriter{
-		inner:    inner,
-		observer: observer,
-	}
-}
-
-// Write writes data to the inner writer and parses complete JSON lines
-// to extract tool_call events. Partial lines are buffered until a newline
-// is received.
-func (w *toolEventWriter) Write(p []byte) (n int, err error) {
-	// Write to inner writer first
-	n, err = w.inner.Write(p)
-	if err != nil {
-		return n, err
+// ParseToolEvent parses a tool_call event from a JSON line.
+// Expected format:
+//   {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+//   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
+// Returns nil if the line is not a tool_call event or cannot be parsed.
+func ParseToolEvent(jsonLine string) *ToolEvent {
+	if jsonLine == "" {
+		return nil
 	}
 
-	// Accumulate in buffer
-	w.buf.Write(p)
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonLine), &event); err != nil {
+		return nil
+	}
 
-	// Process complete lines
-	for {
-		// Find the first newline in the buffer
-		bufBytes := w.buf.Bytes()
-		newlineIdx := bytes.IndexByte(bufBytes, '\n')
-		if newlineIdx == -1 {
-			// No complete line yet
-			break
-		}
+	eventType, _ := event["type"].(string)
+	if eventType != "tool_call" {
+		return nil
+	}
 
-		// Extract the line (including newline)
-		lineBytes := make([]byte, newlineIdx+1)
-		copy(lineBytes, bufBytes[:newlineIdx+1])
-		w.buf.Next(newlineIdx + 1)
+	name, _ := event["name"].(string)
+	if name == "" {
+		return nil
+	}
 
-		// Remove newline
-		line := strings.TrimSuffix(string(lineBytes), "\n")
-		if line == "" {
-			continue
-		}
+	subtype, _ := event["subtype"].(string)
+	started := subtype == "started"
 
-		// Try to parse as JSON
-		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			// Not JSON or invalid JSON - ignore gracefully
-			continue
-		}
+	attrs := make(map[string]string)
 
-		// Check if it's a tool_call event
-		eventType, _ := event["type"].(string)
-		if eventType != "tool_call" {
-			continue
-		}
-
-		// Extract subtype
-		subtype, _ := event["subtype"].(string)
-		if subtype != "started" && subtype != "ended" {
-			continue
-		}
-
-		// Extract tool name
-		name, _ := event["name"].(string)
-		if name == "" {
-			continue
-		}
-
-		// Extract arguments
-		arguments := make(map[string]interface{})
-		if args, ok := event["arguments"].(map[string]interface{}); ok {
-			arguments = args
-		}
-
-		// Extract duration_ms for ended events
-		var durationMs int64
-		if subtype == "ended" {
-			if dur, ok := event["duration_ms"].(float64); ok {
-				durationMs = int64(dur)
+	// Extract attributes from arguments object
+	if args, ok := event["arguments"].(map[string]interface{}); ok {
+		for k, v := range args {
+			// Convert values to strings
+			var strVal string
+			switch val := v.(type) {
+			case string:
+				strVal = val
+			case float64:
+				strVal = fmt.Sprintf("%.0f", val)
+			case bool:
+				strVal = fmt.Sprintf("%t", val)
+			default:
+				strVal = fmt.Sprintf("%v", val)
 			}
-		}
 
-		// Call observer
-		if w.observer != nil {
-			if subtype == "started" {
-				w.observer.OnToolStart(name, arguments)
-			} else if subtype == "ended" {
-				w.observer.OnToolEnd(name, arguments, durationMs)
+			// Map common argument names to standard attribute names
+			switch k {
+			case "path", "file_path":
+				attrs["file_path"] = strVal
+			case "command":
+				attrs["command"] = strVal
+			case "query", "pattern":
+				if _, exists := attrs["query"]; !exists {
+					attrs["query"] = strVal
+				}
+			default:
+				attrs[k] = strVal
 			}
 		}
 	}
 
-	return n, nil
+	// Extract other top-level fields as attributes
+	for k, v := range event {
+		if k == "type" || k == "subtype" || k == "name" {
+			continue
+		}
+		if _, exists := attrs[k]; !exists {
+			var strVal string
+			switch val := v.(type) {
+			case string:
+				strVal = val
+			case float64:
+				strVal = fmt.Sprintf("%.0f", val)
+			case bool:
+				strVal = fmt.Sprintf("%t", val)
+			default:
+				strVal = fmt.Sprintf("%v", val)
+			}
+			attrs[k] = strVal
+		}
+	}
+
+	return &ToolEvent{
+		Name:       name,
+		Started:    started,
+		Timestamp:  time.Now(),
+		Attributes: attrs,
+	}
 }
 
 // toolEventWriter wraps a writer and parses tool events from JSON lines.
