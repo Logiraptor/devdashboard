@@ -191,15 +191,14 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 			if trace != nil {
 				trace.EndTime = event.Timestamp
 				trace.Status = "completed"
-				// Export to OTLP if exporter is configured
+				// Export to OTLP synchronously - this is the final event and we must
+				// ensure the trace is exported before the process exits
 				if m.exporter != nil {
-					go func() {
-						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-						defer cancel()
-						if err := m.exporter.ExportTrace(ctx, trace); err != nil {
-							log.Printf("Failed to export trace to OTLP: %v", err)
-						}
-					}()
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if err := m.exporter.ExportTrace(ctx, trace); err != nil {
+						log.Printf("Failed to export trace to OTLP: %v", err)
+					}
+					cancel()
 				}
 			}
 			m.callOnChange()
@@ -311,4 +310,17 @@ func (m *Manager) SetOnChange(fn func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onChange = fn
+}
+
+// Shutdown flushes pending exports and closes the OTLP exporter.
+// Must be called before process exit to ensure traces are exported.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	m.mu.Lock()
+	exporter := m.exporter
+	m.mu.Unlock()
+
+	if exporter != nil {
+		return exporter.Shutdown(ctx)
+	}
+	return nil
 }
