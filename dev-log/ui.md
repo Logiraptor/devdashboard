@@ -1,7 +1,7 @@
 # UI Abstraction and Layout
 
 **Status**: accepted  
-**Last updated**: 2026-02-08
+**Last updated**: 2026-02-16
 
 ## Core Abstractions
 
@@ -100,6 +100,26 @@ Resources
 ```
 
 **Dashboard** — bead count shown per project alongside repo/PR counts.
+
+### Bead Details Section
+
+The project detail view includes a **Bead Details** section at the bottom that displays additional information about the currently selected bead.
+
+**Behavior**:
+- Shows when the cursor is positioned on a bead item (not a resource header)
+- Displays placeholder text `(select a bead to see details)` when no bead is selected
+- Fixed height (7 lines) to prevent layout jumping when selection changes
+
+**Content displayed**:
+- **Title**: Bead ID and title (e.g., `devdeploy-abc  Fix the thing`)
+- **Status**: Status and issue type (e.g., `in_progress  task`)
+- **Description**: Full description text, truncated to fit width (max 2 lines)
+- **Labels**: Comma-separated list of labels, truncated if too long
+
+**Implementation**:
+- `BeadInfo` struct (`internal/project/resource.go`) includes `Description` and `Labels` fields
+- Rendered by `renderBeadDetailsSection()` in `internal/ui/projectdetail.go`
+- Uses `SelectedBead()` to determine which bead to display
 
 ### History
 
