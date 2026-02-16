@@ -390,9 +390,12 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 
 // mergeBack merges a worktree branch back into the main branch.
 func (c *Core) mergeBack(ctx context.Context, wtMgr *WorktreeManager, r beadExecResult) error {
+	// Find the correct repository path for merging.
+	// Use the worktree that has the target branch checked out, not the main repo.
+	mergeRepo := wtMgr.MergeRepo(wtMgr.Branch())
 	return MergeWithAgentResolution(
 		ctx,
-		wtMgr.SrcRepo(),
+		mergeRepo,
 		wtMgr.Branch(),
 		r.BranchName,
 		r.BeadID,
