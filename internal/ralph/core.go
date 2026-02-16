@@ -29,6 +29,12 @@ type ProgressObserver interface {
 
 	// OnLoopEnd is called when the loop completes.
 	OnLoopEnd(result *CoreResult)
+
+	// OnToolStart is called when a tool call starts.
+	OnToolStart(event ToolEvent)
+
+	// OnToolEnd is called when a tool call ends.
+	OnToolEnd(event ToolEvent)
 }
 
 // NoopObserver is a ProgressObserver that does nothing.
@@ -39,6 +45,8 @@ func (NoopObserver) OnLoopStart(string)            {}
 func (NoopObserver) OnBeadStart(beads.Bead)        {}
 func (NoopObserver) OnBeadComplete(BeadResult)     {}
 func (NoopObserver) OnLoopEnd(*CoreResult)         {}
+func (NoopObserver) OnToolStart(ToolEvent)         {}
+func (NoopObserver) OnToolEnd(ToolEvent)           {}
 
 // Core orchestrates parallel agent execution for a bead tree.
 type Core struct {
