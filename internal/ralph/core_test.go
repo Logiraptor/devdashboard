@@ -190,11 +190,13 @@ func TestCore_Run_ContextCancellation(t *testing.T) {
 // testObserver records all observer callbacks for verification.
 type testObserver struct {
 	NoopObserver
-	loopStartCalls   int
-	beadStartCalls   int
+	loopStartCalls    int
+	beadStartCalls    int
 	beadCompleteCalls int
-	loopEndCalls     int
-	lastBeadResult   *BeadResult
+	loopEndCalls      int
+	lastBeadResult    *BeadResult
+	onToolStartFn     func(ToolEvent)
+	onToolEndFn       func(ToolEvent)
 }
 
 func (o *testObserver) OnLoopStart(rootBead string) {
@@ -212,6 +214,18 @@ func (o *testObserver) OnBeadComplete(result BeadResult) {
 
 func (o *testObserver) OnLoopEnd(result *CoreResult) {
 	o.loopEndCalls++
+}
+
+func (o *testObserver) OnToolStart(event ToolEvent) {
+	if o.onToolStartFn != nil {
+		o.onToolStartFn(event)
+	}
+}
+
+func (o *testObserver) OnToolEnd(event ToolEvent) {
+	if o.onToolEndFn != nil {
+		o.onToolEndFn(event)
+	}
 }
 
 func TestCore_Run_Observer(t *testing.T) {
@@ -395,6 +409,50 @@ func TestNoopObserver(t *testing.T) {
 	obs.OnToolStart(ToolEvent{})
 	obs.OnToolEnd(ToolEvent{})
 	// If we get here, the test passes
+}
+
+func TestBeadContextObserver(t *testing.T) {
+	// Test that beadContextObserver properly tags tool events with bead ID
+	var receivedStart, receivedEnd ToolEvent
+
+	inner := &testObserver{
+		onToolStartFn: func(e ToolEvent) { receivedStart = e },
+		onToolEndFn:   func(e ToolEvent) { receivedEnd = e },
+	}
+
+	beadID := "test-bead-123"
+	wrapped := newBeadContextObserver(inner, beadID)
+
+	// Send a tool start event without BeadID
+	wrapped.OnToolStart(ToolEvent{
+		ID:   "tool-1",
+		Name: "Read",
+	})
+
+	if receivedStart.BeadID != beadID {
+		t.Errorf("OnToolStart: expected BeadID %q, got %q", beadID, receivedStart.BeadID)
+	}
+	if receivedStart.Name != "Read" {
+		t.Errorf("OnToolStart: expected Name %q, got %q", "Read", receivedStart.Name)
+	}
+
+	// Send a tool end event without BeadID
+	wrapped.OnToolEnd(ToolEvent{
+		ID:   "tool-1",
+		Name: "Read",
+	})
+
+	if receivedEnd.BeadID != beadID {
+		t.Errorf("OnToolEnd: expected BeadID %q, got %q", beadID, receivedEnd.BeadID)
+	}
+}
+
+func TestBeadContextObserver_NilInner(t *testing.T) {
+	// Verify that newBeadContextObserver returns nil for nil inner
+	wrapped := newBeadContextObserver(nil, "test-bead")
+	if wrapped != nil {
+		t.Error("expected nil for nil inner observer")
+	}
 }
 
 // TestCore_Run_SingleBeadFallback verifies that when RootBead has no children,

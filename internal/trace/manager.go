@@ -2,7 +2,6 @@ package trace
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 )
@@ -196,7 +195,10 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 				if m.exporter != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					if err := m.exporter.ExportTrace(ctx, trace); err != nil {
-						log.Printf("Failed to export trace to OTLP: %v", err)
+						// TODO: Surface export errors through observer pattern (OnError callback)
+						// or store in TraceManager for later retrieval. log.Printf interferes
+						// with bubbletea rendering.
+						_ = err // Silently ignore for now
 					}
 					cancel()
 				}

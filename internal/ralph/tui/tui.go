@@ -31,10 +31,6 @@ type Model struct {
 	cancel         context.CancelFunc
 	loopStart      time.Time
 
-	// Track which bead each tool call belongs to
-	toolToBeadMap map[string]string // tool call ID → bead ID
-	currentBead   string            // Most recently started bead
-
 	// Failure tracking for display
 	lastFailure *ralph.BeadResult
 
@@ -125,7 +121,6 @@ func NewModel(core *ralph.Core) *Model {
 		core:           core,
 		multiAgentView: NewMultiAgentView(),
 		styles:         styles,
-		toolToBeadMap:  make(map[string]string),
 	}
 }
 
@@ -232,7 +227,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case beadStartMsg:
 		m.mu.Lock()
-		m.currentBead = msg.Bead.ID
 		m.status = fmt.Sprintf("Working on %s: %s", msg.Bead.ID, msg.Bead.Title)
 		m.mu.Unlock()
 
@@ -255,11 +249,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.summary.Questions++
 		}
 		m.summary.Iterations++
-
-		// Clear current bead if this was it
-		if m.currentBead == r.Bead.ID {
-			m.currentBead = ""
-		}
 		m.mu.Unlock()
 
 		// Update the agent view
@@ -275,24 +264,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.multiAgentView.CompleteAgent(r.Bead.ID, status)
 
 	case toolEventMsg:
-		// Route tool event to the appropriate agent
-		m.mu.Lock()
-		beadID := m.currentBead
-		if beadID == "" {
-			// Fall back to looking up from tool ID
-			beadID = m.toolToBeadMap[msg.Event.ID]
-		}
-		if msg.Started && beadID != "" {
-			// Track this tool call for the end event
-			m.toolToBeadMap[msg.Event.ID] = beadID
-		} else if !msg.Started {
-			// Clean up tracking
-			delete(m.toolToBeadMap, msg.Event.ID)
-		}
-		m.mu.Unlock()
-
-		if beadID != "" {
-			m.multiAgentView.AddToolEvent(beadID, msg.Event.Name, msg.Started, msg.Event.Attributes)
+		// Route tool event to the appropriate agent using BeadID (set by beadContextObserver)
+		if msg.Event.BeadID != "" {
+			m.multiAgentView.AddToolEvent(msg.Event.BeadID, msg.Event.Name, msg.Started, msg.Event.Attributes)
 		}
 
 	case loopEndMsg:
