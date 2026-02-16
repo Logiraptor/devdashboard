@@ -493,6 +493,39 @@ func (p *ProjectDetailView) View() string {
 		}
 	}
 
+	// Add Bead Details section if a bead is selected
+	if bead := p.SelectedBead(); bead != nil {
+		b.WriteString("\n" + Styles.Section.Render("Bead Details") + "\n")
+		b.WriteString("  " + Styles.Normal.Render(bead.ID+"  "+bead.Title) + "\n")
+		
+		// Status and issue type
+		statusParts := []string{}
+		if bead.Status != "" {
+			statusParts = append(statusParts, bead.Status)
+		}
+		if bead.IssueType != "" {
+			statusParts = append(statusParts, bead.IssueType)
+		}
+		if len(statusParts) > 0 {
+			b.WriteString("  " + Styles.Status.Render(strings.Join(statusParts, "  ")) + "\n")
+		}
+		
+		// Description (if present)
+		if bead.Description != "" {
+			// Wrap description to fit terminal width, preserving indentation
+			descLines := strings.Split(bead.Description, "\n")
+			for _, line := range descLines {
+				b.WriteString("  " + Styles.Normal.Render(line) + "\n")
+			}
+		}
+		
+		// Labels (if any)
+		if len(bead.Labels) > 0 {
+			labelsStr := strings.Join(bead.Labels, ", ")
+			b.WriteString("  " + Styles.Muted.Render(labelsStr) + "\n")
+		}
+	}
+
 	return b.String()
 }
 
