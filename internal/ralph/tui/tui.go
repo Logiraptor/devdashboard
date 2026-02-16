@@ -72,6 +72,9 @@ type Observer struct {
 	program *tea.Program
 }
 
+// Ensure Observer implements ProgressObserver.
+var _ ralph.ProgressObserver = (*Observer)(nil)
+
 // OnLoopStart is called when the loop begins.
 func (o *Observer) OnLoopStart(rootBead string) {
 	if o.program != nil {

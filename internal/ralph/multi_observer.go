@@ -10,6 +10,9 @@ type MultiObserver struct {
 	observers []ProgressObserver
 }
 
+// Ensure MultiObserver implements ProgressObserver.
+var _ ProgressObserver = (*MultiObserver)(nil)
+
 // NewMultiObserver creates a MultiObserver that forwards calls to all provided observers.
 // Nil observers are filtered out and not included in the list.
 func NewMultiObserver(observers ...ProgressObserver) *MultiObserver {
