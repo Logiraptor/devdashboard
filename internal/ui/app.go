@@ -449,7 +449,7 @@ func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 		return "", fmt.Errorf("no project manager available")
 	}
 	if r.PR.HeadRefName == "" {
-		return "", fmt.Errorf("PR #%d has no branch name", r.PR.Number)
+		return "", fmt.Errorf("pr #%d has no branch name", r.PR.Number)
 	}
 	wtPath, err := a.ProjectManager.EnsurePRWorktree(
 		a.Detail.ProjectName, r.RepoName, r.PR.Number, r.PR.HeadRefName,
