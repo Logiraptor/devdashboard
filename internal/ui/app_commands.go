@@ -134,13 +134,19 @@ func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.
 			go func(resIdx int) {
 				defer wg.Done()
 				var bdBeads []beads.Bead
+				var err error
 				switch resources[resIdx].Kind {
 				case project.ResourceRepo:
-					bdBeads = beads.ListForRepo(resources[resIdx].WorktreePath, projectName)
+					bdBeads, err = beads.ListForRepo(resources[resIdx].WorktreePath, projectName)
 				case project.ResourcePR:
 					if resources[resIdx].PR != nil {
-						bdBeads = beads.ListForPR(resources[resIdx].WorktreePath, projectName, resources[resIdx].PR.Number)
+						bdBeads, err = beads.ListForPR(resources[resIdx].WorktreePath, projectName, resources[resIdx].PR.Number)
 					}
+				}
+				if err != nil {
+					// Silently ignore errors - TUI should continue functioning
+					// Errors are now returned instead of logged, preventing TUI interference
+					return
 				}
 				beadInfos := make([]project.BeadInfo, len(bdBeads))
 				for j, b := range bdBeads {
@@ -195,14 +201,24 @@ func countBeadsFromResources(resources []project.Resource, projectName string) i
 		go func(resource project.Resource) {
 			defer wg.Done()
 			var count int
+			var err error
 			switch resource.Kind {
 			case project.ResourceRepo:
-				count = len(beads.ListForRepo(resource.WorktreePath, projectName))
+				var bdBeads []beads.Bead
+				bdBeads, err = beads.ListForRepo(resource.WorktreePath, projectName)
+				if err == nil {
+					count = len(bdBeads)
+				}
 			case project.ResourcePR:
 				if resource.PR != nil {
-					count = len(beads.ListForPR(resource.WorktreePath, projectName, resource.PR.Number))
+					var bdBeads []beads.Bead
+					bdBeads, err = beads.ListForPR(resource.WorktreePath, projectName, resource.PR.Number)
+					if err == nil {
+						count = len(bdBeads)
+					}
 				}
 			}
+			// Silently ignore errors - TUI should continue functioning
 			mu.Lock()
 			totalCount += count
 			mu.Unlock()

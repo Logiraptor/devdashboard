@@ -5,7 +5,6 @@ package beads
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
@@ -53,17 +52,19 @@ var runBD = bd.Run
 // ListForRepo runs `bd list --json` in the given worktree directory.
 // Returns all beads in the repo, excluding any with a pr:<n> label
 // (those belong to PR resources).
-func ListForRepo(worktreeDir, projectName string) []Bead {
+func ListForRepo(worktreeDir, projectName string) ([]Bead, error) {
 	out, err := runBD(worktreeDir,
 		"list",
 		"--json",
 		"--limit", "0",
 	)
 	if err != nil {
-		log.Printf("beads.ListForRepo: failed to run bd list in %q: %v", worktreeDir, err)
-		return nil
+		return nil, fmt.Errorf("beads.ListForRepo: failed to run bd list in %q: %w", worktreeDir, err)
 	}
-	all := parseBeads(out)
+	all, err := parseBeads(out)
+	if err != nil {
+		return nil, err
+	}
 
 	// Exclude beads that have any pr:* label — those belong to PR resources.
 	result := make([]Bead, 0, len(all))
@@ -72,12 +73,12 @@ func ListForRepo(worktreeDir, projectName string) []Bead {
 			result = append(result, b)
 		}
 	}
-	return SortHierarchically(result)
+	return SortHierarchically(result), nil
 }
 
 // ListForPR runs `bd list --label pr:<number> --json` in the given worktree
 // directory. Returns beads associated with this specific PR.
-func ListForPR(worktreeDir, projectName string, prNumber int) []Bead {
+func ListForPR(worktreeDir, projectName string, prNumber int) ([]Bead, error) {
 	out, err := runBD(worktreeDir,
 		"list",
 		"--label", fmt.Sprintf("pr:%d", prNumber),
@@ -85,19 +86,21 @@ func ListForPR(worktreeDir, projectName string, prNumber int) []Bead {
 		"--limit", "0",
 	)
 	if err != nil {
-		log.Printf("beads.ListForPR: failed to run bd list for pr:%d in %q: %v", prNumber, worktreeDir, err)
-		return nil
+		return nil, fmt.Errorf("beads.ListForPR: failed to run bd list for pr:%d in %q: %w", prNumber, worktreeDir, err)
 	}
-	return SortHierarchically(parseBeads(out))
+	beads, err := parseBeads(out)
+	if err != nil {
+		return nil, err
+	}
+	return SortHierarchically(beads), nil
 }
 
 // parseBeads decodes JSON output from bd list into Bead slice.
 // Filters to open/in_progress by default (closed beads are noise).
-func parseBeads(data []byte) []Bead {
+func parseBeads(data []byte) ([]Bead, error) {
 	var entries []bdListEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		log.Printf("beads.parseBeads: failed to unmarshal JSON: %v", err)
-		return nil
+		return nil, fmt.Errorf("beads.parseBeads: failed to unmarshal JSON: %w", err)
 	}
 
 	result := make([]Bead, 0, len(entries))
@@ -117,7 +120,7 @@ func parseBeads(data []byte) []Bead {
 			ParentID:    extractParentID(e.Dependencies),
 		})
 	}
-	return result
+	return result, nil
 }
 
 // extractParentID returns the parent epic ID from a parent-child dependency,
