@@ -299,3 +299,130 @@ more garbage`
 		t.Errorf("errorMsg = %q, want empty", errMsg)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ParseToolEvent tests
+// ---------------------------------------------------------------------------
+
+func TestParseToolEvent_Started(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "read" {
+		t.Errorf("Name = %q, want %q", event.Name, "read")
+	}
+	if !event.Started {
+		t.Error("Started = false, want true")
+	}
+	if event.Attributes["file_path"] != "foo.go" {
+		t.Errorf("Attributes[file_path] = %q, want %q", event.Attributes["file_path"], "foo.go")
+	}
+}
+
+func TestParseToolEvent_Ended(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "read" {
+		t.Errorf("Name = %q, want %q", event.Name, "read")
+	}
+	if event.Started {
+		t.Error("Started = true, want false")
+	}
+	if event.Attributes["duration_ms"] != "123" {
+		t.Errorf("Attributes[duration_ms] = %q, want %q", event.Attributes["duration_ms"], "123")
+	}
+}
+
+func TestParseToolEvent_ShellCommand(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"shell","arguments":{"command":"ls -la"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "shell" {
+		t.Errorf("Name = %q, want %q", event.Name, "shell")
+	}
+	if event.Attributes["command"] != "ls -la" {
+		t.Errorf("Attributes[command] = %q, want %q", event.Attributes["command"], "ls -la")
+	}
+}
+
+func TestParseToolEvent_SearchQuery(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"search","arguments":{"query":"find function"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "search" {
+		t.Errorf("Name = %q, want %q", event.Name, "search")
+	}
+	if event.Attributes["query"] != "find function" {
+		t.Errorf("Attributes[query] = %q, want %q", event.Attributes["query"], "find function")
+	}
+}
+
+func TestParseToolEvent_WriteFile(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"write","arguments":{"path":"bar.go","file_path":"bar.go"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "write" {
+		t.Errorf("Name = %q, want %q", event.Name, "write")
+	}
+	if event.Attributes["file_path"] != "bar.go" {
+		t.Errorf("Attributes[file_path] = %q, want %q", event.Attributes["file_path"], "bar.go")
+	}
+}
+
+func TestParseToolEvent_NotToolCall(t *testing.T) {
+	jsonLine := `{"type":"result","chatId":"chat-123"}`
+	event := ParseToolEvent(jsonLine)
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_EmptyString(t *testing.T) {
+	event := ParseToolEvent("")
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_InvalidJSON(t *testing.T) {
+	event := ParseToolEvent("not json")
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_MissingName(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started"}`
+	event := ParseToolEvent(jsonLine)
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_GenericAttributes(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"custom_tool","arguments":{"arg1":"value1","arg2":"value2"},"extra_field":"extra_value"}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Attributes["arg1"] != "value1" {
+		t.Errorf("Attributes[arg1] = %q, want %q", event.Attributes["arg1"], "value1")
+	}
+	if event.Attributes["arg2"] != "value2" {
+		t.Errorf("Attributes[arg2] = %q, want %q", event.Attributes["arg2"], "value2")
+	}
+	if event.Attributes["extra_field"] != "extra_value" {
+		t.Errorf("Attributes[extra_field] = %q, want %q", event.Attributes["extra_field"], "extra_value")
+	}
+}
