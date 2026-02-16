@@ -1,7 +1,7 @@
 # DevDeploy Architecture
 
 **Status**: accepted  
-**Last updated**: 2026-02-08
+**Last updated**: 2026-02-16
 
 ## Vision
 
@@ -25,8 +25,11 @@ DevDeploy aids engineers in their day-to-day workflow of designing, writing, rev
 
 ```
 devdeploy/
-├── cmd/devdeploy/     # Entrypoint
+├── cmd/devdeploy/     # Main TUI entrypoint
+├── cmd/ralph/         # Standalone headless CLI for autonomous agent loops
 ├── internal/          # Private packages
+│   ├── trace/         # OTLP trace export for ralph CLI
+│   └── ralph/         # Core execution engine and TUI
 ├── dev-log/           # Architecture decision records
 ├── contrib/           # Tmux config, etc.
 ├── go.mod
@@ -58,6 +61,49 @@ devdeploy/
 **Phase 9 — Resource-based project workflow**: Projects contain resources (repos from ~/workspace, PRs from gh). Two actions: open shell, launch agent (`agent`). devdeploy manages worktrees, tmux panes, and sessions. Resources display associated **beads** (bd issues) inline via label-based scoping. See `devdeploy-7uj` and `devdeploy-lvr` epics.
 
 **Phase 10 — Automated agent loop (Ralph)**: Ralph loop (`SPC s r`) launches an agent with a canned prompt to pick work and implement it. Worktrees automatically receive `.cursor/rules/` (beads.mdc, devdeploy.mdc) and `dev-log/` directory injected via `.git/info/exclude` (git-silent, never committed). Rule injection is idempotent and happens automatically when worktrees are created or ensured. See `devdeploy-j4n` epic.
+
+### cmd/ralph — Standalone Headless CLI
+
+`cmd/ralph` is a standalone Go CLI binary for autonomous agent work loops. It can be run independently of the devdeploy TUI, making it suitable for headless execution, CI/CD pipelines, or background processing.
+
+**Usage**:
+```bash
+ralph --workdir=<path> --bead=<id> [flags]
+```
+
+**Key features**:
+- **Parallel execution**: Processes multiple beads concurrently (configurable via `--max-parallel`, default 4)
+- **TUI mode**: Interactive display showing multiple agent blocks with live tool event streaming (see [ui.md](ui.md#multi-agent-parallel-tui))
+- **OTLP tracing**: Exports traces via OpenTelemetry Protocol for observability (see `internal/trace` package)
+- **Timeout handling**: Per-agent execution timeout (default 10 minutes, configurable via `--agent-timeout`)
+- **Graceful shutdown**: Handles SIGINT for clean termination
+
+**Exit codes**:
+- `0`: Normal completion (all beads processed)
+- `1`: Runtime error
+- `5`: Interrupted (SIGINT)
+
+The CLI uses the same `ralph.Core` execution engine as the TUI integration, ensuring consistent behavior. See `dev-log/agent-workflow.md` for details on the ProgressObserver interface and tool event streaming.
+
+### internal/trace — OTLP Trace Export
+
+The `internal/trace` package provides OpenTelemetry Protocol (OTLP) trace export for ralph execution. It's used by `cmd/ralph` to export structured traces for observability.
+
+**Components**:
+- **`Manager`**: Manages trace spans and exports completed traces via OTLP
+- **`OTLPExporter`**: Handles OTLP HTTP/gRPC export to configured endpoint
+- **`TracingObserver`**: Implements `ralph.ProgressObserver` to capture loop/bead/tool events as trace spans
+
+**Configuration**:
+- Set `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable (e.g., `"http://localhost:4318"`)
+- If not configured, tracing operates as a no-op (no export occurs)
+
+**Trace structure**:
+- **Loop span**: Root span for entire execution loop
+- **Iteration spans**: Child spans for each bead execution
+- **Tool spans**: Child spans for individual tool calls, parented to iteration spans
+
+See `internal/ralph/trace_observer.go` for implementation details.
 
 ## Core Concept
 
