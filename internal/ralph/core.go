@@ -4,6 +4,7 @@ package ralph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -247,6 +248,8 @@ type beadExecResult struct {
 }
 
 // readyBeads fetches beads that are ready to work on.
+// If RootBead is set, returns ready children of that bead.
+// If no children are found, checks if RootBead itself is ready (for single-bead targeting).
 func (c *Core) readyBeads() ([]beads.Bead, error) {
 	runner := c.RunBD
 	if runner == nil {
@@ -263,7 +266,65 @@ func (c *Core) readyBeads() ([]beads.Bead, error) {
 		return nil, err
 	}
 
-	return parseReadyBeads(out)
+	ready, err := parseReadyBeads(out)
+	if err != nil {
+		return nil, err
+	}
+
+	// If we have children, return them
+	if len(ready) > 0 {
+		return ready, nil
+	}
+
+	// No children - check if RootBead itself is ready (single-bead targeting)
+	if c.RootBead != "" {
+		return c.getBeadIfReady(runner, c.RootBead)
+	}
+
+	return nil, nil
+}
+
+// getBeadIfReady returns the bead as a single-item slice if it's ready to work on.
+// A bead is ready if status is "open" and it has no blocking dependencies.
+func (c *Core) getBeadIfReady(runner BDRunner, beadID string) ([]beads.Bead, error) {
+	out, err := runner(c.WorkDir, "show", beadID, "--json")
+	if err != nil {
+		return nil, fmt.Errorf("bd show %s: %w", beadID, err)
+	}
+
+	var entries []struct {
+		ID              string    `json:"id"`
+		Title           string    `json:"title"`
+		Description     string    `json:"description"`
+		Status          string    `json:"status"`
+		Priority        int       `json:"priority"`
+		Labels          []string  `json:"labels"`
+		CreatedAt       time.Time `json:"created_at"`
+		IssueType       string    `json:"issue_type"`
+		DependencyCount int       `json:"dependency_count"`
+	}
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return nil, fmt.Errorf("parsing bd show output: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	e := entries[0]
+
+	// Bead is ready if open and has no blockers
+	if e.Status != "open" || e.DependencyCount > 0 {
+		return nil, nil
+	}
+
+	return []beads.Bead{{
+		ID:        e.ID,
+		Title:     e.Title,
+		Status:    e.Status,
+		Priority:  e.Priority,
+		Labels:    e.Labels,
+		CreatedAt: e.CreatedAt,
+	}}, nil
 }
 
 // executeParallel runs agents for a batch of beads concurrently.

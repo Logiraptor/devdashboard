@@ -214,20 +214,6 @@ func hexToTraceID(hexStr string) (oteltrace.TraceID, error) {
 	return traceID, nil
 }
 
-// hexToSpanID converts a 16-character hex string to trace.SpanID
-func hexToSpanID(hexStr string) (oteltrace.SpanID, error) {
-	bytes, err := hex.DecodeString(hexStr)
-	if err != nil {
-		return oteltrace.SpanID{}, err
-	}
-	if len(bytes) != 8 {
-		return oteltrace.SpanID{}, err
-	}
-	var spanID oteltrace.SpanID
-	copy(spanID[:], bytes)
-	return spanID, nil
-}
-
 // Shutdown flushes and closes the exporter
 func (e *OTLPExporter) Shutdown(ctx context.Context) error {
 	if e == nil {

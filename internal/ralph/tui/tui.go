@@ -74,7 +74,6 @@ type toolEventMsg struct {
 type Observer struct {
 	ralph.NoopObserver
 	program *tea.Program
-	mu      sync.Mutex
 }
 
 // OnLoopStart is called when the loop begins.

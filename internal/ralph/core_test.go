@@ -397,6 +397,132 @@ func TestNoopObserver(t *testing.T) {
 	// If we get here, the test passes
 }
 
+// TestCore_Run_SingleBeadFallback verifies that when RootBead has no children,
+// the bead itself is executed if it's ready.
+func TestCore_Run_SingleBeadFallback(t *testing.T) {
+	execute, prompts := mockExecute()
+
+	// Track whether the bead has been executed (simulates it being closed after work)
+	var executed atomic.Bool
+
+	// Mock that returns empty for "bd ready --parent X" but returns the bead for "bd show X"
+	mockBD := func(dir string, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "ready" {
+			// No children - return empty array
+			return []byte("[]"), nil
+		}
+		if len(args) >= 3 && args[0] == "show" {
+			// After first execution, bead is no longer ready (closed)
+			status := "open"
+			if executed.Load() {
+				status = "closed"
+			}
+			return json.Marshal([]struct {
+				ID              string `json:"id"`
+				Title           string `json:"title"`
+				Status          string `json:"status"`
+				Priority        int    `json:"priority"`
+				DependencyCount int    `json:"dependency_count"`
+			}{{
+				ID:              "single-task",
+				Title:           "Single Task",
+				Status:          status,
+				Priority:        2,
+				DependencyCount: 0,
+			}})
+		}
+		return []byte("[]"), nil
+	}
+
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:     "/tmp/test",
+		RootBead:    "single-task",
+		MaxParallel: 1,
+		Output:      &out,
+		RunBD:       mockBD,
+		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Single Task"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt for " + data.ID, nil
+		},
+		Execute: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
+			executed.Store(true) // Mark as executed so next readyBeads returns empty
+			return execute(ctx, workDir, prompt)
+		},
+		AssessFn: mockAssess(OutcomeSuccess),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Succeeded != 1 {
+		t.Errorf("expected 1 succeeded (single bead fallback), got %d", result.Succeeded)
+	}
+	if len(*prompts) != 1 {
+		t.Errorf("expected 1 execute call, got %d", len(*prompts))
+	}
+}
+
+// TestCore_Run_SingleBeadNotReady verifies that when RootBead has no children
+// and the bead itself is not ready, nothing is executed.
+func TestCore_Run_SingleBeadNotReady(t *testing.T) {
+	execute, prompts := mockExecute()
+
+	mockBD := func(dir string, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "ready" {
+			return []byte("[]"), nil
+		}
+		if len(args) >= 3 && args[0] == "show" {
+			// Return the bead as not ready (has dependencies)
+			return json.Marshal([]struct {
+				ID              string `json:"id"`
+				Title           string `json:"title"`
+				Status          string `json:"status"`
+				DependencyCount int    `json:"dependency_count"`
+			}{{
+				ID:              "blocked-task",
+				Title:           "Blocked Task",
+				Status:          "open",
+				DependencyCount: 1, // Has a blocker
+			}})
+		}
+		return []byte("[]"), nil
+	}
+
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:     "/tmp/test",
+		RootBead:    "blocked-task",
+		MaxParallel: 1,
+		Output:      &out,
+		RunBD:       mockBD,
+		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "prompt", nil
+		},
+		Execute:  execute,
+		AssessFn: mockAssess(OutcomeSuccess),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Succeeded != 0 {
+		t.Errorf("expected 0 succeeded (bead not ready), got %d", result.Succeeded)
+	}
+	if len(*prompts) != 0 {
+		t.Errorf("expected 0 execute calls, got %d", len(*prompts))
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
