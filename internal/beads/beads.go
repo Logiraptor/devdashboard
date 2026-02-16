@@ -3,6 +3,7 @@ package beads
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,7 @@ func ListForRepo(worktreeDir, projectName string) []Bead {
 		"--limit", "0",
 	)
 	if err != nil {
+		log.Printf("beads.ListForRepo: failed to run bd list in %q: %v", worktreeDir, err)
 		return nil
 	}
 	all := parseBeads(out)
@@ -81,6 +83,7 @@ func ListForPR(worktreeDir, projectName string, prNumber int) []Bead {
 		"--limit", "0",
 	)
 	if err != nil {
+		log.Printf("beads.ListForPR: failed to run bd list for pr:%d in %q: %v", prNumber, worktreeDir, err)
 		return nil
 	}
 	return SortHierarchically(parseBeads(out))
@@ -91,6 +94,7 @@ func ListForPR(worktreeDir, projectName string, prNumber int) []Bead {
 func parseBeads(data []byte) []Bead {
 	var entries []bdListEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
+		log.Printf("beads.parseBeads: failed to unmarshal JSON: %v", err)
 		return nil
 	}
 
