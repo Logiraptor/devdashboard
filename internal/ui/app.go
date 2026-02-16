@@ -80,6 +80,8 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleResourceBeadsLoaded(msg)
 	case RefreshBeadsMsg:
 		return a.handleRefreshBeads()
+	case CloseBeadMsg:
+		return a.handleCloseBead()
 	case CreateProjectMsg:
 		return a.handleCreateProject(msg)
 	case DeleteProjectMsg:
@@ -496,6 +498,7 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
 	// SPC b: bead operations
 	reg.BindWithDescForMode("SPC b r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
+	reg.BindWithDescForMode("SPC b c", func() tea.Msg { return CloseBeadMsg{} }, "Close bead", []AppMode{ModeProjectDetail})
 	// SPC 1-9: focus pane by index
 	for i := 1; i <= 9; i++ {
 		num := i
