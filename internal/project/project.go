@@ -44,11 +44,14 @@ const alnumChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 // prWorktreePattern matches PR worktree directory names: <repo>-pr-<number>.
 var prWorktreePattern = regexp.MustCompile(`^.+-pr-\d+$`)
 
+// seededRand is a seeded random number generator for branch naming.
+var seededRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 // randAlnum returns n random alphanumeric (lowercase) characters.
 func randAlnum(n int) string {
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = alnumChars[rand.Intn(len(alnumChars))]
+		b[i] = alnumChars[seededRand.Intn(len(alnumChars))]
 	}
 	return string(b)
 }
