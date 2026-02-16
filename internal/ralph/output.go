@@ -12,11 +12,6 @@ func writef(w io.Writer, format string, args ...interface{}) {
 	_, _ = fmt.Fprintf(w, format, args...)
 }
 
-// writeln writes a line, ignoring errors.
-func writeln(w io.Writer, s string) {
-	_, _ = fmt.Fprintln(w, s)
-}
-
 // printVerboseOutput prints verbose agent output (stdout/stderr excerpts).
 func printVerboseOutput(out io.Writer, result *AgentResult) {
 	if result.Stdout != "" {
