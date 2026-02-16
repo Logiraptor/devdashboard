@@ -52,6 +52,9 @@ type ProgressObserver interface {
 // Embed this in your observer to avoid implementing unused methods.
 type NoopObserver struct{}
 
+// Ensure NoopObserver implements ProgressObserver.
+var _ ProgressObserver = (*NoopObserver)(nil)
+
 func (NoopObserver) OnLoopStart(string)            {}
 func (NoopObserver) OnBeadStart(beads.Bead)        {}
 func (NoopObserver) OnBeadComplete(BeadResult)      {}
@@ -65,6 +68,9 @@ type beadContextObserver struct {
 	inner  ProgressObserver
 	beadID string
 }
+
+// Ensure beadContextObserver implements ProgressObserver.
+var _ ProgressObserver = (*beadContextObserver)(nil)
 
 // newBeadContextObserver creates an observer wrapper that tags tool events with the bead ID.
 func newBeadContextObserver(inner ProgressObserver, beadID string) ProgressObserver {
