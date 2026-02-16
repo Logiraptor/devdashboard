@@ -392,6 +392,8 @@ func TestNoopObserver(t *testing.T) {
 	obs.OnBeadStart(beads.Bead{})
 	obs.OnBeadComplete(BeadResult{})
 	obs.OnLoopEnd(&CoreResult{})
+	obs.OnToolStart(ToolEvent{})
+	obs.OnToolEnd(ToolEvent{})
 	// If we get here, the test passes
 }
 

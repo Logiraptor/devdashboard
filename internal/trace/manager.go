@@ -2,6 +2,7 @@ package trace
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 )
@@ -192,7 +193,13 @@ func (m *Manager) HandleEvent(event TraceEvent) *Trace {
 				trace.Status = "completed"
 				// Export to OTLP if exporter is configured
 				if m.exporter != nil {
-					go m.exporter.ExportTrace(context.Background(), trace)
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if err := m.exporter.ExportTrace(ctx, trace); err != nil {
+							log.Printf("Failed to export trace to OTLP: %v", err)
+						}
+					}()
 				}
 			}
 			m.callOnChange()

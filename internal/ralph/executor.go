@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"devdeploy/internal/trace"
 )
 
 // DefaultTimeout is the per-agent execution timeout.
@@ -34,6 +36,7 @@ type AgentResult struct {
 	ErrorMessage string
 }
 
+// ToolEvent is defined in core.go
 // CommandFactory builds an *exec.Cmd for the given context, working directory,
 // and arguments. The default factory uses exec.CommandContext with "agent" as
 // the binary. Tests can inject a factory that invokes a helper process instead.
@@ -73,7 +76,14 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 
 	// Capture stdout: tee to live writer + buffer.
 	var stdoutBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
+	stdoutWriter := cfg.stdoutWriter
+	if cfg.observer != nil {
+		stdoutWriter = &toolEventWriter{
+			inner:    cfg.stdoutWriter,
+			observer: cfg.observer,
+		}
+	}
+	cmd.Stdout = io.MultiWriter(&stdoutBuf, stdoutWriter)
 
 	// Capture stderr into a buffer.
 	var stderrBuf bytes.Buffer
@@ -126,6 +136,7 @@ type options struct {
 	commandFactory CommandFactory
 	stdoutWriter   io.Writer
 	model          string
+	observer       ProgressObserver
 }
 
 // Option configures RunAgent behaviour.
@@ -152,10 +163,178 @@ func WithModel(model string) Option {
 	return func(o *options) { o.model = model }
 }
 
+// WithObserver sets an observer to receive tool events during execution.
+func WithObserver(obs ProgressObserver) Option {
+	return func(o *options) { o.observer = obs }
+}
+
 // RunAgentOpus runs an opus model agent for verification passes.
 // Uses "agent --model claude-4.5-opus-high-thinking --print --force --output-format stream-json".
 func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Option) (*AgentResult, error) {
 	return runAgentInternal(ctx, workDir, prompt, "claude-4.5-opus-high-thinking", opts...)
+}
+
+// ParseToolEvent parses a tool_call event from a JSON line.
+// Expected format:
+//   {"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+//   {"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
+// Returns nil if the line is not a tool_call event or cannot be parsed.
+func ParseToolEvent(jsonLine string) *ToolEvent {
+	if jsonLine == "" {
+		return nil
+	}
+
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonLine), &event); err != nil {
+		return nil
+	}
+
+	eventType, _ := event["type"].(string)
+	if eventType != "tool_call" {
+		return nil
+	}
+
+	name, _ := event["name"].(string)
+	if name == "" {
+		return nil
+	}
+
+	subtype, _ := event["subtype"].(string)
+	started := subtype == "started"
+
+	attrs := make(map[string]string)
+
+	// Extract attributes from arguments object
+	if args, ok := event["arguments"].(map[string]interface{}); ok {
+		for k, v := range args {
+			// Convert values to strings
+			var strVal string
+			switch val := v.(type) {
+			case string:
+				strVal = val
+			case float64:
+				strVal = fmt.Sprintf("%.0f", val)
+			case bool:
+				strVal = fmt.Sprintf("%t", val)
+			default:
+				strVal = fmt.Sprintf("%v", val)
+			}
+
+			// Map common argument names to standard attribute names
+			switch k {
+			case "path", "file_path":
+				attrs["file_path"] = strVal
+			case "command":
+				attrs["command"] = strVal
+			case "query", "pattern":
+				if _, exists := attrs["query"]; !exists {
+					attrs["query"] = strVal
+				}
+			default:
+				attrs[k] = strVal
+			}
+		}
+	}
+
+	// Extract other top-level fields as attributes
+	for k, v := range event {
+		if k == "type" || k == "subtype" || k == "name" {
+			continue
+		}
+		if _, exists := attrs[k]; !exists {
+			var strVal string
+			switch val := v.(type) {
+			case string:
+				strVal = val
+			case float64:
+				strVal = fmt.Sprintf("%.0f", val)
+			case bool:
+				strVal = fmt.Sprintf("%t", val)
+			default:
+				strVal = fmt.Sprintf("%v", val)
+			}
+			attrs[k] = strVal
+		}
+	}
+
+	// Generate or extract ID for matching start/end events
+	// Check if the JSON event has a call_id field
+	var id string
+	if callID, ok := event["call_id"].(string); ok && callID != "" {
+		id = callID
+	} else {
+		// Generate a unique ID if not present
+		id = trace.NewSpanID()
+	}
+
+	return &ToolEvent{
+		ID:         id,
+		Name:       name,
+		Started:    started,
+		Timestamp:  time.Now(),
+		Attributes: attrs,
+	}
+}
+
+// toolEventWriter wraps a writer and parses tool events from JSON lines.
+// It accumulates partial lines in a buffer and calls observer methods
+// when tool_call events are detected.
+type toolEventWriter struct {
+	inner    io.Writer
+	observer ProgressObserver
+	buf      bytes.Buffer // accumulates partial lines
+}
+
+// NewToolEventWriter creates a new toolEventWriter that wraps the given writer
+// and calls observer methods for tool events parsed from JSON lines.
+func NewToolEventWriter(inner io.Writer, observer ProgressObserver) io.Writer {
+	if observer == nil {
+		return inner // no observer, no need to wrap
+	}
+	return &toolEventWriter{
+		inner:    inner,
+		observer: observer,
+	}
+}
+
+// Write writes data to the inner writer and parses complete JSON lines
+// to detect tool_call events. Partial lines are buffered until a newline
+// is encountered.
+func (w *toolEventWriter) Write(p []byte) (n int, err error) {
+	// Write to inner writer first
+	n, err = w.inner.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Append to buffer
+	w.buf.Write(p)
+
+	// Process complete lines
+	for {
+		line, err := w.buf.ReadString('\n')
+		if err != nil {
+			// No complete line yet, put it back
+			w.buf.WriteString(line)
+			break
+		}
+
+		// Remove trailing newline
+		line = strings.TrimSuffix(line, "\n")
+
+		// Try to parse as tool event
+		event := ParseToolEvent(line)
+		if event != nil {
+			if event.Started {
+				w.observer.OnToolStart(*event)
+			} else {
+				w.observer.OnToolEnd(*event)
+			}
+		}
+		// Ignore non-JSON lines and non-tool_call events gracefully
+	}
+
+	return n, nil
 }
 
 // parseAgentResultEvent parses the agent's stdout for the final "result" event

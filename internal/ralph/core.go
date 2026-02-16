@@ -14,6 +14,15 @@ import (
 	"devdeploy/internal/beads"
 )
 
+// ToolEvent represents a tool call event.
+type ToolEvent struct {
+	ID         string            // Unique identifier for this tool call
+	Name       string            // Tool name
+	Started    bool              // True for start events, false for end events
+	Timestamp  time.Time         // When the event occurred
+	Attributes map[string]string // Tool attributes
+}
+
 // ProgressObserver receives progress updates from Core execution.
 // All methods are optional — implement only what you need.
 // Methods are called synchronously from the execution goroutine.
@@ -29,6 +38,12 @@ type ProgressObserver interface {
 
 	// OnLoopEnd is called when the loop completes.
 	OnLoopEnd(result *CoreResult)
+
+	// OnToolStart is called when a tool call starts.
+	OnToolStart(event ToolEvent)
+
+	// OnToolEnd is called when a tool call ends.
+	OnToolEnd(event ToolEvent)
 }
 
 // NoopObserver is a ProgressObserver that does nothing.
@@ -37,8 +52,10 @@ type NoopObserver struct{}
 
 func (NoopObserver) OnLoopStart(string)            {}
 func (NoopObserver) OnBeadStart(beads.Bead)        {}
-func (NoopObserver) OnBeadComplete(BeadResult)     {}
+func (NoopObserver) OnBeadComplete(BeadResult)      {}
 func (NoopObserver) OnLoopEnd(*CoreResult)         {}
+func (NoopObserver) OnToolStart(ToolEvent)         {}
+func (NoopObserver) OnToolEnd(ToolEvent)           {}
 
 // Core orchestrates parallel agent execution for a bead tree.
 type Core struct {
@@ -348,6 +365,9 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		var opts []Option
 		if c.AgentTimeout > 0 {
 			opts = append(opts, WithTimeout(c.AgentTimeout))
+		}
+		if c.Observer != nil {
+			opts = append(opts, WithObserver(c.Observer))
 		}
 		agentResult, err = RunAgent(ctx, execDir, prompt, opts...)
 	}

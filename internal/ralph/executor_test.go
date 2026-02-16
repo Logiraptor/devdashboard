@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"devdeploy/internal/beads"
 )
 
 // ---------------------------------------------------------------------------
@@ -49,6 +53,11 @@ func TestHelperProcess(t *testing.T) {
 	case "slow":
 		// Sleep longer than the test timeout to trigger kill.
 		time.Sleep(30 * time.Second)
+	case "tool_calls":
+		// Output tool_call JSON events to stdout
+		fmt.Println(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"test.go"}}`)
+		fmt.Println(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":50}`)
+		fmt.Println(`{"type":"result","chatId":"test-chat-123"}`)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown DD_TEST_MODE")
 		os.Exit(2)
@@ -297,5 +306,466 @@ more garbage`
 	}
 	if errMsg != "" {
 		t.Errorf("errorMsg = %q, want empty", errMsg)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ParseToolEvent tests
+// ---------------------------------------------------------------------------
+
+func TestParseToolEvent_Started(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "read" {
+		t.Errorf("Name = %q, want %q", event.Name, "read")
+	}
+	if !event.Started {
+		t.Error("Started = false, want true")
+	}
+	if event.Attributes["file_path"] != "foo.go" {
+		t.Errorf("Attributes[file_path] = %q, want %q", event.Attributes["file_path"], "foo.go")
+	}
+}
+
+func TestParseToolEvent_Ended(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "read" {
+		t.Errorf("Name = %q, want %q", event.Name, "read")
+	}
+	if event.Started {
+		t.Error("Started = true, want false")
+	}
+	if event.Attributes["duration_ms"] != "123" {
+		t.Errorf("Attributes[duration_ms] = %q, want %q", event.Attributes["duration_ms"], "123")
+	}
+}
+
+func TestParseToolEvent_ShellCommand(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"shell","arguments":{"command":"ls -la"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "shell" {
+		t.Errorf("Name = %q, want %q", event.Name, "shell")
+	}
+	if event.Attributes["command"] != "ls -la" {
+		t.Errorf("Attributes[command] = %q, want %q", event.Attributes["command"], "ls -la")
+	}
+}
+
+func TestParseToolEvent_SearchQuery(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"search","arguments":{"query":"find function"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "search" {
+		t.Errorf("Name = %q, want %q", event.Name, "search")
+	}
+	if event.Attributes["query"] != "find function" {
+		t.Errorf("Attributes[query] = %q, want %q", event.Attributes["query"], "find function")
+	}
+}
+
+func TestParseToolEvent_WriteFile(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"write","arguments":{"path":"bar.go","file_path":"bar.go"}}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Name != "write" {
+		t.Errorf("Name = %q, want %q", event.Name, "write")
+	}
+	if event.Attributes["file_path"] != "bar.go" {
+		t.Errorf("Attributes[file_path] = %q, want %q", event.Attributes["file_path"], "bar.go")
+	}
+}
+
+func TestParseToolEvent_NotToolCall(t *testing.T) {
+	jsonLine := `{"type":"result","chatId":"chat-123"}`
+	event := ParseToolEvent(jsonLine)
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_EmptyString(t *testing.T) {
+	event := ParseToolEvent("")
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_InvalidJSON(t *testing.T) {
+	event := ParseToolEvent("not json")
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_MissingName(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started"}`
+	event := ParseToolEvent(jsonLine)
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+}
+
+func TestParseToolEvent_GenericAttributes(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":"custom_tool","arguments":{"arg1":"value1","arg2":"value2"},"extra_field":"extra_value"}`
+	event := ParseToolEvent(jsonLine)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil")
+	}
+	if event.Attributes["arg1"] != "value1" {
+		t.Errorf("Attributes[arg1] = %q, want %q", event.Attributes["arg1"], "value1")
+	}
+	if event.Attributes["arg2"] != "value2" {
+		t.Errorf("Attributes[arg2] = %q, want %q", event.Attributes["arg2"], "value2")
+	}
+	if event.Attributes["extra_field"] != "extra_value" {
+		t.Errorf("Attributes[extra_field] = %q, want %q", event.Attributes["extra_field"], "extra_value")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// toolEventWriter tests
+// ---------------------------------------------------------------------------
+
+// mockObserver tracks calls to observer methods for testing.
+type mockObserver struct {
+	NoopObserver
+	toolStarts []ToolEvent
+	toolEnds   []ToolEvent
+}
+
+func (m *mockObserver) OnToolStart(event ToolEvent) {
+	m.toolStarts = append(m.toolStarts, event)
+}
+
+func (m *mockObserver) OnToolEnd(event ToolEvent) {
+	m.toolEnds = append(m.toolEnds, event)
+}
+
+func TestToolEventWriter_CompleteLine(t *testing.T) {
+	var inner bytes.Buffer
+	obs := &mockObserver{}
+	writer := NewToolEventWriter(&inner, obs).(*toolEventWriter)
+
+	line := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}` + "\n"
+	n, err := writer.Write([]byte(line))
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(line) {
+		t.Errorf("Write returned %d, want %d", n, len(line))
+	}
+
+	// Inner writer should have received the data
+	if inner.String() != line {
+		t.Errorf("inner writer = %q, want %q", inner.String(), line)
+	}
+
+	// Observer should have been called
+	if len(obs.toolStarts) != 1 {
+		t.Fatalf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+	if obs.toolStarts[0].Name != "read" {
+		t.Errorf("tool name = %q, want %q", obs.toolStarts[0].Name, "read")
+	}
+	if !obs.toolStarts[0].Started {
+		t.Error("Started = false, want true")
+	}
+	if len(obs.toolEnds) != 0 {
+		t.Errorf("OnToolEnd called %d times, want 0", len(obs.toolEnds))
+	}
+}
+
+func TestToolEventWriter_PartialLine(t *testing.T) {
+	var inner bytes.Buffer
+	obs := &mockObserver{}
+	writer := NewToolEventWriter(&inner, obs).(*toolEventWriter)
+
+	// Write partial line (no newline)
+	partial := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}`
+	n, err := writer.Write([]byte(partial))
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(partial) {
+		t.Errorf("Write returned %d, want %d", n, len(partial))
+	}
+
+	// Inner writer should have received the data
+	if inner.String() != partial {
+		t.Errorf("inner writer = %q, want %q", inner.String(), partial)
+	}
+
+	// Observer should NOT have been called yet (no complete line)
+	if len(obs.toolStarts) != 0 {
+		t.Errorf("OnToolStart called %d times, want 0 (partial line)", len(obs.toolStarts))
+	}
+
+	// Complete the line
+	nl := "\n"
+	n, err = writer.Write([]byte(nl))
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(nl) {
+		t.Errorf("Write returned %d, want %d", n, len(nl))
+	}
+
+	// Now observer should have been called
+	if len(obs.toolStarts) != 1 {
+		t.Fatalf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+}
+
+func TestToolEventWriter_MultipleLines(t *testing.T) {
+	var inner bytes.Buffer
+	obs := &mockObserver{}
+	writer := NewToolEventWriter(&inner, obs).(*toolEventWriter)
+
+	lines := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
+{"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}
+{"type":"result","chatId":"chat-123"}
+`
+	n, err := writer.Write([]byte(lines))
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(lines) {
+		t.Errorf("Write returned %d, want %d", n, len(lines))
+	}
+
+	// Should have two tool events
+	if len(obs.toolStarts) != 1 {
+		t.Errorf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+	if len(obs.toolEnds) != 1 {
+		t.Errorf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+
+	// Check start event
+	if obs.toolStarts[0].Name != "read" || !obs.toolStarts[0].Started {
+		t.Errorf("start event = %+v, want name=read, started=true", obs.toolStarts[0])
+	}
+
+	// Check end event
+	if obs.toolEnds[0].Name != "read" || obs.toolEnds[0].Started {
+		t.Errorf("end event = %+v, want name=read, started=false", obs.toolEnds[0])
+	}
+	if obs.toolEnds[0].Attributes["duration_ms"] != "123" {
+		t.Errorf("duration_ms = %q, want %q", obs.toolEnds[0].Attributes["duration_ms"], "123")
+	}
+}
+
+func TestToolEventWriter_NonToolCallIgnored(t *testing.T) {
+	var inner bytes.Buffer
+	obs := &mockObserver{}
+	writer := NewToolEventWriter(&inner, obs).(*toolEventWriter)
+
+	line := `{"type":"result","chatId":"chat-123"}` + "\n"
+	n, err := writer.Write([]byte(line))
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(line) {
+		t.Errorf("Write returned %d, want %d", n, len(line))
+	}
+
+	// Inner writer should have received the data
+	if inner.String() != line {
+		t.Errorf("inner writer = %q, want %q", inner.String(), line)
+	}
+
+	// Observer should NOT have been called
+	if len(obs.toolStarts) != 0 {
+		t.Errorf("OnToolStart called %d times, want 0", len(obs.toolStarts))
+	}
+	if len(obs.toolEnds) != 0 {
+		t.Errorf("OnToolEnd called %d times, want 0", len(obs.toolEnds))
+	}
+}
+
+func TestToolEventWriter_InvalidJSONIgnored(t *testing.T) {
+	var inner bytes.Buffer
+	obs := &mockObserver{}
+	writer := NewToolEventWriter(&inner, obs).(*toolEventWriter)
+
+	line := "not json\n"
+	n, err := writer.Write([]byte(line))
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(line) {
+		t.Errorf("Write returned %d, want %d", n, len(line))
+	}
+
+	// Inner writer should have received the data
+	if inner.String() != line {
+		t.Errorf("inner writer = %q, want %q", inner.String(), line)
+	}
+
+	// Observer should NOT have been called
+	if len(obs.toolStarts) != 0 {
+		t.Errorf("OnToolStart called %d times, want 0", len(obs.toolStarts))
+	}
+}
+
+func TestToolEventWriter_NilObserver(t *testing.T) {
+	var inner bytes.Buffer
+	writer := NewToolEventWriter(&inner, nil)
+
+	// Should return the inner writer directly (not wrapped)
+	// Try to assert as toolEventWriter - should fail if it's the inner writer
+	if _, ok := writer.(*toolEventWriter); ok {
+		t.Error("NewToolEventWriter with nil observer should return inner writer directly, not toolEventWriter")
+	}
+
+	// Verify it's the same writer by writing to it
+	testData := []byte("test")
+	n, err := writer.Write(testData)
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if n != len(testData) {
+		t.Errorf("Write returned %d, want %d", n, len(testData))
+	}
+	if inner.String() != "test" {
+		t.Errorf("inner writer = %q, want %q", inner.String(), "test")
+	}
+}
+
+func TestToolEventWriter_ChunkedWrite(t *testing.T) {
+	var inner bytes.Buffer
+	obs := &mockObserver{}
+	writer := NewToolEventWriter(&inner, obs).(*toolEventWriter)
+
+	// Write line in multiple chunks
+	chunk1 := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}`
+	chunk2 := "\n"
+	chunk3 := `{"type":"tool_call","subtype":"ended","name":"read"}` + "\n"
+
+	writer.Write([]byte(chunk1))
+	if len(obs.toolStarts) != 0 {
+		t.Error("OnToolStart called before complete line")
+	}
+
+	writer.Write([]byte(chunk2))
+	if len(obs.toolStarts) != 1 {
+		t.Errorf("OnToolStart called %d times after newline, want 1", len(obs.toolStarts))
+	}
+
+	writer.Write([]byte(chunk3))
+	if len(obs.toolEnds) != 1 {
+		t.Errorf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+}
+
+// TestToolEventWriter_ParsesToolCalls verifies that toolEventWriter correctly
+// parses tool_call events and calls observer methods.
+func TestToolEventWriter_ParsesToolCalls(t *testing.T) {
+	obs := &mockObserver{}
+	w := NewToolEventWriter(io.Discard, obs).(*toolEventWriter)
+
+	// Write tool_call started
+	w.Write([]byte(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}` + "\n"))
+
+	// Write tool_call ended
+	w.Write([]byte(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":100}` + "\n"))
+
+	// Verify events
+	if len(obs.toolStarts) != 1 {
+		t.Fatalf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+	if len(obs.toolEnds) != 1 {
+		t.Fatalf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+
+	// Check start event
+	if obs.toolStarts[0].Name != "read" {
+		t.Errorf("toolStarts[0].Name = %q, want %q", obs.toolStarts[0].Name, "read")
+	}
+	if !obs.toolStarts[0].Started {
+		t.Error("toolStarts[0].Started = false, want true")
+	}
+	if obs.toolStarts[0].Attributes["file_path"] != "foo.go" {
+		t.Errorf("toolStarts[0].Attributes[file_path] = %q, want %q", obs.toolStarts[0].Attributes["file_path"], "foo.go")
+	}
+
+	// Check end event
+	if obs.toolEnds[0].Name != "read" {
+		t.Errorf("toolEnds[0].Name = %q, want %q", obs.toolEnds[0].Name, "read")
+	}
+	if obs.toolEnds[0].Attributes["duration_ms"] != "100" {
+		t.Errorf("toolEnds[0].Attributes[duration_ms] = %q, want %q", obs.toolEnds[0].Attributes["duration_ms"], "100")
+	}
+}
+
+// TestRunAgent_ToolEventStreaming verifies that tool events flow through
+// the system correctly when using WithCommandFactory with a mock agent.
+func TestRunAgent_ToolEventStreaming(t *testing.T) {
+	var stdoutBuf bytes.Buffer
+	obs := &mockObserver{}
+
+	// Create a tool event writer that wraps stdout and observes tool events
+	toolWriter := NewToolEventWriter(&stdoutBuf, obs)
+
+	result, err := RunAgent(
+		context.Background(),
+		t.TempDir(),
+		"test prompt",
+		WithCommandFactory(helperFactory("tool_calls")),
+		WithStdoutWriter(toolWriter),
+		WithTimeout(5*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit 0, got %d", result.ExitCode)
+	}
+
+	// Verify observer received tool events
+	if len(obs.toolStarts) != 1 {
+		t.Fatalf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+	if len(obs.toolEnds) != 1 {
+		t.Fatalf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+
+	// Verify start event
+	if obs.toolStarts[0].Name != "read" {
+		t.Errorf("toolStarts[0].Name = %q, want %q", obs.toolStarts[0].Name, "read")
+	}
+	if !obs.toolStarts[0].Started {
+		t.Error("toolStarts[0].Started = false, want true")
+	}
+	if obs.toolStarts[0].Attributes["file_path"] != "test.go" {
+		t.Errorf("toolStarts[0].Attributes[file_path] = %q, want %q", obs.toolStarts[0].Attributes["file_path"], "test.go")
+	}
+
+	// Verify end event
+	if obs.toolEnds[0].Name != "read" {
+		t.Errorf("toolEnds[0].Name = %q, want %q", obs.toolEnds[0].Name, "read")
+	}
+	if obs.toolEnds[0].Attributes["duration_ms"] != "50" {
+		t.Errorf("toolEnds[0].Attributes[duration_ms] = %q, want %q", obs.toolEnds[0].Attributes["duration_ms"], "50")
+	}
+
+	// Verify stdout contains the tool_call JSON
+	stdoutStr := stdoutBuf.String()
+	if !strings.Contains(stdoutStr, `"type":"tool_call"`) {
+		t.Error("stdout should contain tool_call JSON")
 	}
 }
