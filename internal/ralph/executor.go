@@ -126,6 +126,7 @@ type options struct {
 	commandFactory CommandFactory
 	stdoutWriter   io.Writer
 	model          string
+	observer       ProgressObserver
 }
 
 // Option configures RunAgent behaviour.
@@ -150,6 +151,11 @@ func WithStdoutWriter(w io.Writer) Option {
 // WithModel overrides the default agent model.
 func WithModel(model string) Option {
 	return func(o *options) { o.model = model }
+}
+
+// WithObserver sets a progress observer for tool events.
+func WithObserver(observer ProgressObserver) Option {
+	return func(o *options) { o.observer = observer }
 }
 
 // RunAgentOpus runs an opus model agent for verification passes.
