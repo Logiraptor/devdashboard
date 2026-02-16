@@ -281,17 +281,20 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 }
 
 // toolEventWriter wraps a writer and parses tool events from JSON lines.
-// It accumulates partial lines in a buffer and parses complete JSON lines
-// to extract tool_call events, calling observer methods as events are detected.
+// It accumulates partial lines in a buffer and calls observer methods
+// when tool_call events are detected.
 type toolEventWriter struct {
 	inner    io.Writer
 	observer ProgressObserver
 	buf      bytes.Buffer // accumulates partial lines
 }
 
-// newToolEventWriter creates a new toolEventWriter that wraps the given writer
-// and calls the observer for tool events.
-func newToolEventWriter(inner io.Writer, observer ProgressObserver) *toolEventWriter {
+// NewToolEventWriter creates a new toolEventWriter that wraps the given writer
+// and calls observer methods for tool events parsed from JSON lines.
+func NewToolEventWriter(inner io.Writer, observer ProgressObserver) io.Writer {
+	if observer == nil {
+		return inner // no observer, no need to wrap
+	}
 	return &toolEventWriter{
 		inner:    inner,
 		observer: observer,
@@ -299,8 +302,8 @@ func newToolEventWriter(inner io.Writer, observer ProgressObserver) *toolEventWr
 }
 
 // Write writes data to the inner writer and parses complete JSON lines
-// to extract tool_call events. Partial lines are buffered until a newline
-// is received.
+// to detect tool_call events. Partial lines are buffered until a newline
+// is encountered.
 func (w *toolEventWriter) Write(p []byte) (n int, err error) {
 	// Write to inner writer first
 	n, err = w.inner.Write(p)
@@ -308,44 +311,31 @@ func (w *toolEventWriter) Write(p []byte) (n int, err error) {
 		return n, err
 	}
 
-	// Accumulate in buffer
+	// Append to buffer
 	w.buf.Write(p)
 
 	// Process complete lines
 	for {
-		// Find the first newline in the buffer
-		bufBytes := w.buf.Bytes()
-		newlineIdx := bytes.IndexByte(bufBytes, '\n')
-		if newlineIdx == -1 {
-			// No complete line yet
+		line, err := w.buf.ReadString('\n')
+		if err != nil {
+			// No complete line yet, put it back
+			w.buf.WriteString(line)
 			break
 		}
 
-		// Extract the line (including newline)
-		lineBytes := make([]byte, newlineIdx+1)
-		copy(lineBytes, bufBytes[:newlineIdx+1])
-		w.buf.Next(newlineIdx + 1)
+		// Remove trailing newline
+		line = strings.TrimSuffix(line, "\n")
 
-		// Remove newline
-		line := strings.TrimSuffix(string(lineBytes), "\n")
-		if line == "" {
-			continue
-		}
-
-		// Parse tool event using ParseToolEvent
-		te := ParseToolEvent(line)
-		if te == nil {
-			continue
-		}
-
-		// Call observer
-		if w.observer != nil {
-			if te.Started {
-				w.observer.OnToolStart(*te)
+		// Try to parse as tool event
+		event := ParseToolEvent(line)
+		if event != nil {
+			if event.Started {
+				w.observer.OnToolStart(*event)
 			} else {
-				w.observer.OnToolEnd(*te)
+				w.observer.OnToolEnd(*event)
 			}
 		}
+		// Ignore non-JSON lines and non-tool_call events gracefully
 	}
 
 	return n, nil
