@@ -145,7 +145,9 @@ func NewModel(core *ralph.Core) *Model {
 
 // Run starts the TUI and runs the Core loop.
 // This is the main entry point for running ralph with a TUI.
-func Run(ctx context.Context, core *ralph.Core) error {
+// If additionalObserver is provided, it will be combined with the TUI observer
+// using MultiObserver so both receive progress updates.
+func Run(ctx context.Context, core *ralph.Core, additionalObserver ralph.ProgressObserver) error {
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -161,11 +163,17 @@ func Run(ctx context.Context, core *ralph.Core) error {
 	m.traceEmitter.SetProgram(p)
 
 	// Set up observer to forward events to TUI
-	observer := &Observer{
+	tuiObserver := &Observer{
 		program:      p,
 		traceEmitter: m.traceEmitter,
 	}
-	core.Observer = observer
+
+	// Combine TUI observer with additional observer if provided
+	if additionalObserver != nil {
+		core.Observer = ralph.NewMultiObserver(additionalObserver, tuiObserver)
+	} else {
+		core.Observer = tuiObserver
+	}
 
 	// Run Core in background goroutine
 	go func() {

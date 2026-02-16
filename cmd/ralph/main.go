@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"devdeploy/internal/ralph"
+	"devdeploy/internal/ralph/tui"
 )
 
 // config holds the parsed CLI configuration for a ralph run.
@@ -72,22 +73,25 @@ func run(cfg config) (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	observer := ralph.NewTracingObserver()
+	// Create tracing observer for OTLP export
+	tracingObserver := ralph.NewTracingObserver()
+
+	// Create core with TUI (observer will be set by tui.Run)
 	core := &ralph.Core{
 		WorkDir:      cfg.workdir,
 		RootBead:     cfg.bead,
 		MaxParallel:  cfg.maxParallel,
 		AgentTimeout: cfg.agentTimeout,
 		Output:       os.Stdout,
-		Observer:     observer,
 	}
 
-	result, err := core.Run(ctx)
+	// Run with TUI, combining tracing observer with TUI observer
+	err = tui.Run(ctx, core, tracingObserver)
 
 	// Flush OTLP traces before exit (give 10s for export to complete)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if shutdownErr := observer.Shutdown(shutdownCtx); shutdownErr != nil {
+	if shutdownErr := tracingObserver.Shutdown(shutdownCtx); shutdownErr != nil {
 		fmt.Fprintf(os.Stderr, "ralph: warning: failed to flush traces: %v\n", shutdownErr)
 	}
 
@@ -102,7 +106,6 @@ func run(cfg config) (int, error) {
 
 	// Consider any failures as partial success (exit 0) since Core
 	// processes all available beads. The summary shows failure counts.
-	_ = result
 	return 0, nil
 }
 
