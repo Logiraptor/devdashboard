@@ -112,7 +112,7 @@ func NewManager(projectsBase, workspace string) *Manager {
 	return &Manager{
 		projectsBase: projectsBase,
 		workspace:    workspace,
-		prCache:      make(map[string]prCacheEntry),
+		// prCache is nil by default; initialized lazily on first use
 	}
 }
 
@@ -429,8 +429,12 @@ func prCacheKey(worktreePath, state string, limit int) string {
 // getCachedPRs returns cached PR data if it exists and is still valid.
 func (m *Manager) getCachedPRs(key string) ([]PRInfo, bool) {
 	m.prCacheMu.RLock()
-	defer m.prCacheMu.RUnlock()
+	if m.prCache == nil {
+		m.prCacheMu.RUnlock()
+		return nil, false
+	}
 	entry, ok := m.prCache[key]
+	m.prCacheMu.RUnlock()
 	if !ok {
 		return nil, false
 	}
@@ -447,6 +451,9 @@ func (m *Manager) getCachedPRs(key string) ([]PRInfo, bool) {
 func (m *Manager) setCachedPRs(key string, prs []PRInfo) {
 	m.prCacheMu.Lock()
 	defer m.prCacheMu.Unlock()
+	if m.prCache == nil {
+		m.prCache = make(map[string]prCacheEntry)
+	}
 	// Store a copy to avoid external mutation
 	cached := make([]PRInfo, len(prs))
 	copy(cached, prs)
@@ -460,7 +467,7 @@ func (m *Manager) setCachedPRs(key string, prs []PRInfo) {
 func (m *Manager) ClearPRCache() {
 	m.prCacheMu.Lock()
 	defer m.prCacheMu.Unlock()
-	m.prCache = make(map[string]prCacheEntry)
+	m.prCache = nil
 }
 
 // ClearPRCacheForProject clears cached PR data for a specific project.
@@ -468,6 +475,9 @@ func (m *Manager) ClearPRCache() {
 func (m *Manager) ClearPRCacheForProject(projectName string) {
 	m.prCacheMu.Lock()
 	defer m.prCacheMu.Unlock()
+	if m.prCache == nil {
+		return
+	}
 	projDir := m.projectDir(projectName)
 	// Remove all cache entries for worktrees in this project
 	for key := range m.prCache {
