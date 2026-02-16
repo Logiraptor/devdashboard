@@ -1,3 +1,5 @@
+// Package project provides project management functionality for devdeploy.
+// It handles project CRUD operations, worktree management, and PR resource tracking.
 package project
 
 import (
@@ -44,11 +46,14 @@ const alnumChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 // prWorktreePattern matches PR worktree directory names: <repo>-pr-<number>.
 var prWorktreePattern = regexp.MustCompile(`^.+-pr-\d+$`)
 
+// seededRand is a seeded random number generator for branch naming.
+var seededRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 // randAlnum returns n random alphanumeric (lowercase) characters.
 func randAlnum(n int) string {
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = alnumChars[rand.Intn(len(alnumChars))]
+		b[i] = alnumChars[seededRand.Intn(len(alnumChars))]
 	}
 	return string(b)
 }
@@ -109,7 +114,7 @@ func NewManager(projectsBase, workspace string) *Manager {
 	return &Manager{
 		projectsBase: projectsBase,
 		workspace:    workspace,
-		prCache:      make(map[string]prCacheEntry),
+		// prCache is nil by default; initialized lazily on first use
 	}
 }
 
@@ -426,8 +431,12 @@ func prCacheKey(worktreePath, state string, limit int) string {
 // getCachedPRs returns cached PR data if it exists and is still valid.
 func (m *Manager) getCachedPRs(key string) ([]PRInfo, bool) {
 	m.prCacheMu.RLock()
-	defer m.prCacheMu.RUnlock()
+	if m.prCache == nil {
+		m.prCacheMu.RUnlock()
+		return nil, false
+	}
 	entry, ok := m.prCache[key]
+	m.prCacheMu.RUnlock()
 	if !ok {
 		return nil, false
 	}
@@ -444,6 +453,9 @@ func (m *Manager) getCachedPRs(key string) ([]PRInfo, bool) {
 func (m *Manager) setCachedPRs(key string, prs []PRInfo) {
 	m.prCacheMu.Lock()
 	defer m.prCacheMu.Unlock()
+	if m.prCache == nil {
+		m.prCache = make(map[string]prCacheEntry)
+	}
 	// Store a copy to avoid external mutation
 	cached := make([]PRInfo, len(prs))
 	copy(cached, prs)
@@ -457,7 +469,7 @@ func (m *Manager) setCachedPRs(key string, prs []PRInfo) {
 func (m *Manager) ClearPRCache() {
 	m.prCacheMu.Lock()
 	defer m.prCacheMu.Unlock()
-	m.prCache = make(map[string]prCacheEntry)
+	m.prCache = nil
 }
 
 // ClearPRCacheForProject clears cached PR data for a specific project.
@@ -465,6 +477,9 @@ func (m *Manager) ClearPRCache() {
 func (m *Manager) ClearPRCacheForProject(projectName string) {
 	m.prCacheMu.Lock()
 	defer m.prCacheMu.Unlock()
+	if m.prCache == nil {
+		return
+	}
 	projDir := m.projectDir(projectName)
 	// Remove all cache entries for worktrees in this project
 	for key := range m.prCache {
@@ -513,14 +528,6 @@ func getRepoOwner(worktreePath string) string {
 		return ""
 	}
 	return strings.TrimSpace(out.String())
-}
-
-// ListFilteredPRsInRepo returns PRs authored by the current user OR
-// requesting review from the reviewTeam. It makes two gh pr list calls
-// and deduplicates the results by PR number.
-// This is exported for use in async loading scenarios.
-func (m *Manager) ListFilteredPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
-	return m.listFilteredPRsInRepo(worktreePath, state, limit)
 }
 
 // listFilteredPRsInRepo returns PRs authored by the current user OR
@@ -894,14 +901,10 @@ func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
 	return ""
 }
 
-// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
-// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
+// buildResourcesFromReposAndPRs builds a flat []Resource from repos and PRs.
 // Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
-// Use this for dashboard/bead counting where merged PRs are not needed.
-func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
-	repos, _ := m.ListProjectRepos(projectName)
-	projDir := m.projectDir(projectName)
-
+// prsByRepo maps repo names to their PRs (may be empty for repos with no PRs).
+func (m *Manager) buildResourcesFromReposAndPRs(repos []string, projDir string, prsByRepo map[string][]PRInfo) []Resource {
 	// Pre-allocate repo resources (filesystem-only, no network calls).
 	resources := make([]Resource, 0, len(repos))
 	for _, repoName := range repos {
@@ -912,6 +915,37 @@ func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
 			WorktreePath: worktreePath,
 		})
 	}
+
+	// Append PR resources in repo order (matching the repo resource order).
+	for _, repoName := range repos {
+		prs := prsByRepo[repoName]
+		for i := range prs {
+			pr := &prs[i]
+			// Check if a PR worktree already exists on disk.
+			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
+			var wtPath string
+			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
+				wtPath = prWT
+			}
+			resources = append(resources, Resource{
+				Kind:         ResourcePR,
+				RepoName:     repoName,
+				PR:           pr,
+				WorktreePath: wtPath,
+			})
+		}
+	}
+
+	return resources
+}
+
+// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
+// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
+// Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
+// Use this for dashboard/bead counting where merged PRs are not needed.
+func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
+	repos, _ := m.ListProjectRepos(projectName)
+	projDir := m.projectDir(projectName)
 
 	// Fetch open PRs concurrently across repos.
 	type repoResult struct {
@@ -947,27 +981,7 @@ func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
 		repoPRs[result.repoName] = result.prs
 	}
 
-	// Append PR resources in repo order (matching the repo resource order).
-	for _, repoName := range repos {
-		prs := repoPRs[repoName]
-		for i := range prs {
-			pr := &prs[i]
-			// Check if a PR worktree already exists on disk.
-			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
-			var wtPath string
-			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-				wtPath = prWT
-			}
-			resources = append(resources, Resource{
-				Kind:         ResourcePR,
-				RepoName:     repoName,
-				PR:           pr,
-				WorktreePath: wtPath,
-			})
-		}
-	}
-
-	return resources
+	return m.buildResourcesFromReposAndPRs(repos, projDir, repoPRs)
 }
 
 // ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
@@ -984,29 +998,5 @@ func (m *Manager) ListProjectResources(projectName string) []Resource {
 	}
 
 	projDir := m.projectDir(projectName)
-	var resources []Resource
-	for _, repoName := range repos {
-		worktreePath := filepath.Join(projDir, repoName)
-		resources = append(resources, Resource{
-			Kind:         ResourceRepo,
-			RepoName:     repoName,
-			WorktreePath: worktreePath,
-		})
-		for i := range prMap[repoName] {
-			pr := &prMap[repoName][i]
-			// Check if a PR worktree already exists on disk.
-			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
-			var wtPath string
-			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-				wtPath = prWT
-			}
-			resources = append(resources, Resource{
-				Kind:         ResourcePR,
-				RepoName:     repoName,
-				PR:           pr,
-				WorktreePath: wtPath,
-			})
-		}
-	}
-	return resources
+	return m.buildResourcesFromReposAndPRs(repos, projDir, prMap)
 }

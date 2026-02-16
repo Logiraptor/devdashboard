@@ -103,18 +103,18 @@ func Assess(workDir string, beadID string, result *AgentResult, bdShow BDShowFun
 	out, err := bdShow(workDir, beadID)
 	if err != nil {
 		// Can't determine bead state — treat as failure.
-		return OutcomeFailure, fmt.Errorf(
-			"failed to query bead %s (agent exit code %d): %w",
+		return OutcomeFailure, fmt.Sprintf(
+			"failed to query bead %s (agent exit code %d): %v",
 			beadID, result.ExitCode, err,
-		).Error()
+		)
 	}
 
 	entry, err := parseBDShow(out)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf(
-			"failed to parse bd show output for %s: %w",
+		return OutcomeFailure, fmt.Sprintf(
+			"failed to parse bd show output for %s: %v",
 			beadID, err,
-		).Error()
+		)
 	}
 
 	// 3. Success: bead is now closed.

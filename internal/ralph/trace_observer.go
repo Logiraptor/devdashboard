@@ -24,6 +24,9 @@ type TracingObserver struct {
 	toolSpans    map[string]string // tool call ID → span ID
 }
 
+// Ensure TracingObserver implements ProgressObserver.
+var _ ProgressObserver = (*TracingObserver)(nil)
+
 // NewTracingObserver creates a TracingObserver that exports to OTLP.
 // Set OTEL_EXPORTER_OTLP_ENDPOINT to enable export (e.g., "http://localhost:4318").
 // Returns a no-op observer if OTLP is not configured.

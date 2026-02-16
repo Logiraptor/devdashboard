@@ -235,7 +235,7 @@ func testToolEventParsing(t *testing.T, observer *traceObserver) {
 
 	// Verify events were parsed and forwarded
 	// The observer should have created spans
-	trace := observer.manager.GetActiveTrace()
+	trace := observer.manager.ActiveTrace()
 	if trace == nil {
 		t.Fatal("Expected active trace after tool events")
 	}
@@ -309,7 +309,7 @@ func testSpanCreation(t *testing.T, manager *Manager) {
 	manager.HandleEvent(toolEnd)
 
 	// Verify span was created with correct attributes
-	trace := manager.GetTrace(traceID)
+	trace := manager.Trace(traceID)
 	if trace == nil {
 		t.Fatal("Expected trace to exist")
 	}
@@ -463,7 +463,7 @@ func testTUITraceView(t *testing.T, manager *Manager) {
 	manager.HandleEvent(loopStart)
 
 	// Verify active trace exists
-	activeTrace := manager.GetActiveTrace()
+	activeTrace := manager.ActiveTrace()
 	if activeTrace == nil {
 		t.Fatal("Expected active trace after loop start")
 	}
@@ -501,7 +501,7 @@ func testTUITraceView(t *testing.T, manager *Manager) {
 	manager.HandleEvent(toolStart1)
 
 	// Verify tool span exists with Duration=0 (in-progress)
-	checkTrace := manager.GetTrace(traceID)
+	checkTrace := manager.Trace(traceID)
 	if checkTrace == nil {
 		t.Fatal("Expected trace to exist")
 	}
@@ -529,7 +529,7 @@ func testTUITraceView(t *testing.T, manager *Manager) {
 	manager.HandleEvent(toolStart2)
 
 	// Verify both tool spans exist
-	updatedTrace2 := manager.GetTrace(traceID)
+	updatedTrace2 := manager.Trace(traceID)
 	if updatedTrace2 == nil {
 		t.Fatal("Expected trace to exist")
 	}
@@ -550,7 +550,7 @@ func testTUITraceView(t *testing.T, manager *Manager) {
 	manager.HandleEvent(toolEnd1)
 
 	// Verify first tool span has duration
-	updatedTrace := manager.GetTrace(traceID)
+	updatedTrace := manager.Trace(traceID)
 	if updatedTrace == nil {
 		t.Fatal("Expected trace to exist")
 	}
@@ -583,7 +583,7 @@ func testProgressObserverIntegration(t *testing.T, observer *traceObserver, mana
 	observer.OnToolStart(toolStartEvent)
 
 	// Verify trace was created
-	trace := manager.GetActiveTrace()
+	trace := manager.ActiveTrace()
 	if trace == nil {
 		t.Fatal("Expected active trace after OnToolStart")
 	}
@@ -623,7 +623,7 @@ func testProgressObserverIntegration(t *testing.T, observer *traceObserver, mana
 	observer.OnToolEnd(toolEndEvent)
 
 	// Verify tool span has duration
-	finalTrace := manager.GetTrace(observer.traceID)
+	finalTrace := manager.Trace(observer.traceID)
 	if finalTrace == nil {
 		t.Fatal("Expected trace to exist")
 	}
@@ -797,7 +797,7 @@ func testEndToEndFlow(t *testing.T, observer *traceObserver, manager *Manager) {
 	}
 
 	// Verify trace is in recent traces
-	recentTraces := manager.GetRecentTraces()
+	recentTraces := manager.RecentTraces()
 	if len(recentTraces) == 0 {
 		t.Fatal("Expected trace in recent traces")
 	}
