@@ -150,9 +150,21 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 			}
 
 			// Merge successful work back if using worktrees
-			if r.WorktreePath != "" && r.Outcome == OutcomeSuccess && wtMgr != nil {
-				writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, wtMgr.Branch())
-				if err := c.mergeBack(ctx, wtMgr, r); err != nil {
+			if r.WorktreePath != "" && r.Outcome == OutcomeSuccess && r.BranchName != "" {
+				// Create worktree manager on-demand if we don't have one
+				// This handles cases where MaxParallel was 1 but worktrees were created anyway
+				mergeWtMgr := wtMgr
+				if mergeWtMgr == nil {
+					var err error
+					mergeWtMgr, err = NewWorktreeManager(c.WorkDir)
+					if err != nil {
+						writef(out, "[%s] ERROR: failed to create worktree manager for merge: %v\n", r.BeadID, err)
+						result.Failed++
+						continue
+					}
+				}
+				writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, mergeWtMgr.Branch())
+				if err := c.mergeBack(ctx, mergeWtMgr, r); err != nil {
 					writef(out, "[%s] ERROR: merge failed: %v\n", r.BeadID, err)
 					// Don't fail the entire run, but make the error visible
 					result.Failed++
@@ -165,8 +177,17 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 			}
 
 			// Clean up worktree
-			if r.WorktreePath != "" && wtMgr != nil {
-				if err := wtMgr.RemoveWorktree(r.WorktreePath); err != nil {
+			if r.WorktreePath != "" {
+				cleanupWtMgr := wtMgr
+				if cleanupWtMgr == nil {
+					var err error
+					cleanupWtMgr, err = NewWorktreeManager(c.WorkDir)
+					if err != nil {
+						writef(out, "  warning: failed to create worktree manager for cleanup: %v\n", err)
+						continue
+					}
+				}
+				if err := cleanupWtMgr.RemoveWorktree(r.WorktreePath); err != nil {
 					writef(out, "  warning: failed to remove worktree: %v\n", err)
 				}
 			}
