@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,6 +51,11 @@ func TestHelperProcess(t *testing.T) {
 	case "slow":
 		// Sleep longer than the test timeout to trigger kill.
 		time.Sleep(30 * time.Second)
+	case "tool_calls":
+		// Output tool_call JSON events to stdout
+		fmt.Println(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"test.go"}}`)
+		fmt.Println(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":50}`)
+		fmt.Println(`{"type":"result","chatId":"test-chat-123"}`)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown DD_TEST_MODE")
 		os.Exit(2)
@@ -660,5 +667,103 @@ func TestToolEventWriter_ChunkedWrite(t *testing.T) {
 	writer.Write([]byte(chunk3))
 	if len(obs.toolEnds) != 1 {
 		t.Errorf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+}
+
+// TestToolEventWriter_ParsesToolCalls verifies that toolEventWriter correctly
+// parses tool_call events and calls observer methods.
+func TestToolEventWriter_ParsesToolCalls(t *testing.T) {
+	obs := &mockObserver{}
+	w := NewToolEventWriter(io.Discard, obs).(*toolEventWriter)
+
+	// Write tool_call started
+	w.Write([]byte(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}` + "\n"))
+
+	// Write tool_call ended
+	w.Write([]byte(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":100}` + "\n"))
+
+	// Verify events
+	if len(obs.toolStarts) != 1 {
+		t.Fatalf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+	if len(obs.toolEnds) != 1 {
+		t.Fatalf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+
+	// Check start event
+	if obs.toolStarts[0].Name != "read" {
+		t.Errorf("toolStarts[0].Name = %q, want %q", obs.toolStarts[0].Name, "read")
+	}
+	if !obs.toolStarts[0].Started {
+		t.Error("toolStarts[0].Started = false, want true")
+	}
+	if obs.toolStarts[0].Attributes["file_path"] != "foo.go" {
+		t.Errorf("toolStarts[0].Attributes[file_path] = %q, want %q", obs.toolStarts[0].Attributes["file_path"], "foo.go")
+	}
+
+	// Check end event
+	if obs.toolEnds[0].Name != "read" {
+		t.Errorf("toolEnds[0].Name = %q, want %q", obs.toolEnds[0].Name, "read")
+	}
+	if obs.toolEnds[0].Attributes["duration_ms"] != "100" {
+		t.Errorf("toolEnds[0].Attributes[duration_ms] = %q, want %q", obs.toolEnds[0].Attributes["duration_ms"], "100")
+	}
+}
+
+// TestRunAgent_ToolEventStreaming verifies that tool events flow through
+// the system correctly when using WithCommandFactory with a mock agent.
+func TestRunAgent_ToolEventStreaming(t *testing.T) {
+	var stdoutBuf bytes.Buffer
+	obs := &mockObserver{}
+
+	// Create a tool event writer that wraps stdout and observes tool events
+	toolWriter := NewToolEventWriter(&stdoutBuf, obs)
+
+	result, err := RunAgent(
+		context.Background(),
+		t.TempDir(),
+		"test prompt",
+		WithCommandFactory(helperFactory("tool_calls")),
+		WithStdoutWriter(toolWriter),
+		WithTimeout(5*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit 0, got %d", result.ExitCode)
+	}
+
+	// Verify observer received tool events
+	if len(obs.toolStarts) != 1 {
+		t.Fatalf("OnToolStart called %d times, want 1", len(obs.toolStarts))
+	}
+	if len(obs.toolEnds) != 1 {
+		t.Fatalf("OnToolEnd called %d times, want 1", len(obs.toolEnds))
+	}
+
+	// Verify start event
+	if obs.toolStarts[0].Name != "read" {
+		t.Errorf("toolStarts[0].Name = %q, want %q", obs.toolStarts[0].Name, "read")
+	}
+	if !obs.toolStarts[0].Started {
+		t.Error("toolStarts[0].Started = false, want true")
+	}
+	if obs.toolStarts[0].Attributes["file_path"] != "test.go" {
+		t.Errorf("toolStarts[0].Attributes[file_path] = %q, want %q", obs.toolStarts[0].Attributes["file_path"], "test.go")
+	}
+
+	// Verify end event
+	if obs.toolEnds[0].Name != "read" {
+		t.Errorf("toolEnds[0].Name = %q, want %q", obs.toolEnds[0].Name, "read")
+	}
+	if obs.toolEnds[0].Attributes["duration_ms"] != "50" {
+		t.Errorf("toolEnds[0].Attributes[duration_ms] = %q, want %q", obs.toolEnds[0].Attributes["duration_ms"], "50")
+	}
+
+	// Verify stdout contains the tool_call JSON
+	stdoutStr := stdoutBuf.String()
+	if !strings.Contains(stdoutStr, `"type":"tool_call"`) {
+		t.Error("stdout should contain tool_call JSON")
 	}
 }
