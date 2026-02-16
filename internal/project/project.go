@@ -515,14 +515,6 @@ func getRepoOwner(worktreePath string) string {
 	return strings.TrimSpace(out.String())
 }
 
-// ListFilteredPRsInRepo returns PRs authored by the current user OR
-// requesting review from the reviewTeam. It makes two gh pr list calls
-// and deduplicates the results by PR number.
-// This is exported for use in async loading scenarios.
-func (m *Manager) ListFilteredPRsInRepo(worktreePath string, state string, limit int) ([]PRInfo, error) {
-	return m.listFilteredPRsInRepo(worktreePath, state, limit)
-}
-
 // listFilteredPRsInRepo returns PRs authored by the current user OR
 // requesting review from the reviewTeam. It makes two gh pr list calls
 // and deduplicates the results by PR number.
