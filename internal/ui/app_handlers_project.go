@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"devdeploy/internal/bd"
 	"devdeploy/internal/project"
 	"devdeploy/internal/tmux"
 
@@ -295,4 +296,49 @@ func (a *appModelAdapter) handleRefreshBeads() (tea.Model, tea.Cmd) {
 		)
 	}
 	return a, nil
+}
+
+// handleCloseBead handles CloseBeadMsg by closing the currently selected bead.
+func (a *appModelAdapter) handleCloseBead() (tea.Model, tea.Cmd) {
+	if a.Mode != ModeProjectDetail || a.Detail == nil {
+		return a, nil
+	}
+
+	// Get selected bead
+	bead := a.Detail.SelectedBead()
+	if bead == nil {
+		a.Status = "No bead selected (cursor on resource header)"
+		a.StatusIsError = true
+		return a, nil
+	}
+
+	// Get selected resource to access worktree path
+	resource := a.Detail.SelectedResource()
+	if resource == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+
+	// Get worktree path
+	worktreePath := resource.WorktreePath
+	if worktreePath == "" {
+		a.Status = fmt.Sprintf("No worktree for resource %s", resource.RepoName)
+		a.StatusIsError = true
+		return a, nil
+	}
+
+	// Run bd close command
+	_, err := bd.Run(worktreePath, "close", bead.ID)
+	if err != nil {
+		a.Status = fmt.Sprintf("Close bead %s: %v", bead.ID, err)
+		a.StatusIsError = true
+		return a, nil
+	}
+
+	// Success - show message and trigger refresh
+	a.Status = fmt.Sprintf("Closed bead %s", bead.ID)
+	a.StatusIsError = false
+	// Trigger refresh to update UI
+	return a, func() tea.Msg { return RefreshBeadsMsg{} }
 }
