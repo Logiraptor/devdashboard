@@ -14,6 +14,13 @@ import (
 	"devdeploy/internal/beads"
 )
 
+// ToolEvent represents a tool call event.
+type ToolEvent struct {
+	ID         string            // Unique identifier for this tool call
+	Name       string            // Tool name
+	Attributes map[string]string // Tool attributes
+}
+
 // ProgressObserver receives progress updates from Core execution.
 // All methods are optional — implement only what you need.
 // Methods are called synchronously from the execution goroutine.
@@ -43,7 +50,7 @@ type NoopObserver struct{}
 
 func (NoopObserver) OnLoopStart(string)            {}
 func (NoopObserver) OnBeadStart(beads.Bead)        {}
-func (NoopObserver) OnBeadComplete(BeadResult)     {}
+func (NoopObserver) OnBeadComplete(BeadResult)      {}
 func (NoopObserver) OnLoopEnd(*CoreResult)         {}
 func (NoopObserver) OnToolStart(ToolEvent)         {}
 func (NoopObserver) OnToolEnd(ToolEvent)           {}
