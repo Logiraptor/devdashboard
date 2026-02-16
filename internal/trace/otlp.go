@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -76,8 +75,6 @@ func NewOTLPExporter(ctx context.Context) (*OTLPExporter, error) {
 	if serviceName == "" {
 		serviceName = "devdeploy"
 	}
-
-	log.Printf("OTLP exporter configured: endpoint=%s, path=%s, service=%s", endpointHost, urlPath, serviceName)
 
 	res := resource.NewWithAttributes(
 		semconv.SchemaURL,
