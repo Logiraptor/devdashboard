@@ -22,6 +22,7 @@ type ToolEvent struct {
 	Started    bool              // True for start events, false for end events
 	Timestamp  time.Time         // When the event occurred
 	Attributes map[string]string // Tool attributes
+	BeadID     string            // ID of the bead this event belongs to (set by context wrapper)
 }
 
 // ProgressObserver receives progress updates from Core execution.
@@ -57,6 +58,47 @@ func (NoopObserver) OnBeadComplete(BeadResult)      {}
 func (NoopObserver) OnLoopEnd(*CoreResult)         {}
 func (NoopObserver) OnToolStart(ToolEvent)         {}
 func (NoopObserver) OnToolEnd(ToolEvent)           {}
+
+// beadContextObserver wraps an observer to tag tool events with a bead ID.
+// This enables correct routing of events in parallel execution scenarios.
+type beadContextObserver struct {
+	inner  ProgressObserver
+	beadID string
+}
+
+// newBeadContextObserver creates an observer wrapper that tags tool events with the bead ID.
+func newBeadContextObserver(inner ProgressObserver, beadID string) ProgressObserver {
+	if inner == nil {
+		return nil
+	}
+	return &beadContextObserver{inner: inner, beadID: beadID}
+}
+
+func (o *beadContextObserver) OnLoopStart(rootBead string) {
+	o.inner.OnLoopStart(rootBead)
+}
+
+func (o *beadContextObserver) OnBeadStart(bead beads.Bead) {
+	o.inner.OnBeadStart(bead)
+}
+
+func (o *beadContextObserver) OnBeadComplete(result BeadResult) {
+	o.inner.OnBeadComplete(result)
+}
+
+func (o *beadContextObserver) OnLoopEnd(result *CoreResult) {
+	o.inner.OnLoopEnd(result)
+}
+
+func (o *beadContextObserver) OnToolStart(event ToolEvent) {
+	event.BeadID = o.beadID
+	o.inner.OnToolStart(event)
+}
+
+func (o *beadContextObserver) OnToolEnd(event ToolEvent) {
+	event.BeadID = o.beadID
+	o.inner.OnToolEnd(event)
+}
 
 // Core orchestrates parallel agent execution for a bead tree.
 type Core struct {
@@ -428,7 +470,10 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 			opts = append(opts, WithTimeout(c.AgentTimeout))
 		}
 		if c.Observer != nil {
-			opts = append(opts, WithObserver(c.Observer))
+			// Wrap observer with bead context so tool events can be routed correctly
+			// in parallel execution scenarios
+			beadObserver := newBeadContextObserver(c.Observer, bead.ID)
+			opts = append(opts, WithObserver(beadObserver))
 			// Suppress stdout when observer is present (TUI mode) to avoid
 			// interfering with bubbletea. The observer handles tool events,
 			// and stdout is still captured in the buffer for parsing.

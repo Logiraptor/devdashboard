@@ -23,9 +23,6 @@ func TestModel_Init(t *testing.T) {
 	if model.multiAgentView == nil {
 		t.Error("multiAgentView should be initialized")
 	}
-	if model.toolToBeadMap == nil {
-		t.Error("toolToBeadMap should be initialized")
-	}
 }
 
 func TestModel_HandleLoopStarted(t *testing.T) {
@@ -276,9 +273,6 @@ func TestModel_HandleBeadStart(t *testing.T) {
 	// Verify agent was added to the multi-agent view
 	if m.multiAgentView.TotalCount() != 1 {
 		t.Errorf("multiAgentView should have 1 agent, got %d", m.multiAgentView.TotalCount())
-	}
-	if m.currentBead != "bead-123" {
-		t.Errorf("currentBead should be 'bead-123', got %q", m.currentBead)
 	}
 }
 
