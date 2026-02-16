@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"testing"
 	"time"
+
+	"devdeploy/internal/trace"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -49,6 +55,10 @@ func TestHelperProcess(t *testing.T) {
 	case "slow":
 		// Sleep longer than the test timeout to trigger kill.
 		time.Sleep(30 * time.Second)
+	case "tool_calls":
+		// Output tool_call JSON lines
+		fmt.Println(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"test.go"}}`)
+		fmt.Println(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":42}`)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown DD_TEST_MODE")
 		os.Exit(2)
@@ -298,4 +308,257 @@ more garbage`
 	if errMsg != "" {
 		t.Errorf("errorMsg = %q, want empty", errMsg)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// toolEventWriter tests
+// ---------------------------------------------------------------------------
+
+// mockObserver implements ToolEventObserver for testing
+type mockObserver struct {
+	onToolStart func(ToolEvent)
+	onToolEnd   func(ToolEvent)
+}
+
+func (m *mockObserver) OnToolStart(event ToolEvent) {
+	if m.onToolStart != nil {
+		m.onToolStart(event)
+	}
+}
+
+func (m *mockObserver) OnToolEnd(event ToolEvent) {
+	if m.onToolEnd != nil {
+		m.onToolEnd(event)
+	}
+}
+
+func TestToolEventWriter_ParsesToolCalls(t *testing.T) {
+	var events []ToolEvent
+	obs := &mockObserver{
+		onToolStart: func(e ToolEvent) { events = append(events, e) },
+		onToolEnd:   func(e ToolEvent) { events = append(events, e) },
+	}
+
+	w := &toolEventWriter{inner: io.Discard, observer: obs}
+
+	// Write tool_call started
+	w.Write([]byte(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}` + "\n"))
+
+	// Write tool_call ended
+	w.Write([]byte(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":100}` + "\n"))
+
+	// Verify events
+	require.Len(t, events, 2)
+	assert.Equal(t, "read", events[0].Name)
+	assert.True(t, events[0].Started)
+	assert.Equal(t, "foo.go", events[0].Attributes["path"])
+	assert.Equal(t, "read", events[1].Name)
+	assert.False(t, events[1].Started)
+	assert.Equal(t, int64(100), events[1].DurationMs)
+}
+
+func TestToolEventWriter_PartialLineHandling(t *testing.T) {
+	var events []ToolEvent
+	obs := &mockObserver{
+		onToolStart: func(e ToolEvent) { events = append(events, e) },
+		onToolEnd:   func(e ToolEvent) { events = append(events, e) },
+	}
+
+	w := &toolEventWriter{inner: io.Discard, observer: obs}
+
+	// Write partial line (split across JSON boundary)
+	line1 := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}`
+	line2 := `}` + "\n"
+	
+	w.Write([]byte(line1))
+	require.Len(t, events, 0) // No events yet, line incomplete
+
+	w.Write([]byte(line2))
+	require.Len(t, events, 1) // Now we have the complete event
+	assert.Equal(t, "read", events[0].Name)
+	assert.True(t, events[0].Started)
+
+	// Write another partial line split differently
+	events = events[:0]
+	part1 := `{"type":"tool_call","subtype":"ended","name":"write","duration_ms":50`
+	part2 := `}` + "\n"
+	
+	w.Write([]byte(part1))
+	require.Len(t, events, 0) // No events yet
+
+	w.Write([]byte(part2))
+	require.Len(t, events, 1) // Complete event
+	assert.Equal(t, "write", events[0].Name)
+	assert.False(t, events[0].Started)
+	assert.Equal(t, int64(50), events[0].DurationMs)
+}
+
+func TestToolEventWriter_IntegrationWithMockAgent(t *testing.T) {
+	var events []ToolEvent
+	obs := &mockObserver{
+		onToolStart: func(e ToolEvent) { events = append(events, e) },
+		onToolEnd:   func(e ToolEvent) { events = append(events, e) },
+	}
+
+	var live bytes.Buffer
+	result, err := RunAgent(
+		context.Background(),
+		t.TempDir(),
+		"test",
+		WithCommandFactory(helperFactory("tool_calls")),
+		WithStdoutWriter(&live),
+		WithToolEventObserver(obs),
+		WithTimeout(5*time.Second),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, 0, result.ExitCode)
+	require.Len(t, events, 2)
+	assert.Equal(t, "read", events[0].Name)
+	assert.True(t, events[0].Started)
+	assert.Equal(t, "test.go", events[0].Attributes["path"])
+	assert.Equal(t, "read", events[1].Name)
+	assert.False(t, events[1].Started)
+	assert.Equal(t, int64(42), events[1].DurationMs)
+}
+
+func TestToolEventWriter_TraceManagerReceivesToolSpans(t *testing.T) {
+	// Create trace manager directly (avoiding import cycle with tui)
+	manager := trace.NewManager(10)
+	
+	// Start a loop to establish trace context
+	traceID := trace.NewTraceID()
+	loopSpanID := trace.NewSpanID()
+	loopStartEvent := trace.TraceEvent{
+		TraceID:   traceID,
+		SpanID:   loopSpanID,
+		Type:     trace.EventLoopStart,
+		Name:     "ralph-loop",
+		Timestamp: time.Now(),
+		Attributes: map[string]string{
+			"model":          "composer-1",
+			"epic":           "test-epic",
+			"workdir":        t.TempDir(),
+			"max_iterations": "1",
+		},
+	}
+	manager.HandleEvent(loopStartEvent)
+	
+	// Start an iteration to set parent context
+	iterSpanID := trace.NewSpanID()
+	iterStartEvent := trace.TraceEvent{
+		TraceID:   traceID,
+		SpanID:   iterSpanID,
+		ParentID: loopSpanID,
+		Type:     trace.EventIterationStart,
+		Name:     "iteration-1",
+		Timestamp: time.Now(),
+		Attributes: map[string]string{
+			"bead_id":    "bead-123",
+			"bead_title": "Test Bead",
+			"iteration":  "1",
+		},
+	}
+	manager.HandleEvent(iterStartEvent)
+	
+	// Create observer that forwards tool events to trace manager
+	var toolSpans []string
+	obs := &mockObserver{
+		onToolStart: func(e ToolEvent) {
+			attrs := make(map[string]string)
+			for k, v := range e.Attributes {
+				attrs[k] = v
+			}
+			spanID := trace.NewSpanID()
+			toolSpans = append(toolSpans, spanID)
+			toolStartEvent := trace.TraceEvent{
+				TraceID:    traceID,
+				SpanID:     spanID,
+				ParentID:   iterSpanID,
+				Type:       trace.EventToolStart,
+				Name:       e.Name,
+				Timestamp:  time.Now(),
+				Attributes: attrs,
+			}
+			manager.HandleEvent(toolStartEvent)
+		},
+		onToolEnd: func(e ToolEvent) {
+			if len(toolSpans) > 0 {
+				spanID := toolSpans[len(toolSpans)-1]
+				attrs := make(map[string]string)
+				if e.DurationMs > 0 {
+					attrs["duration_ms"] = fmt.Sprintf("%d", e.DurationMs)
+				}
+				toolEndEvent := trace.TraceEvent{
+					TraceID:    traceID,
+					SpanID:     spanID,
+					ParentID:   iterSpanID,
+					Type:       trace.EventToolEnd,
+					Name:       "tool-end",
+					Timestamp:  time.Now(),
+					Attributes: attrs,
+				}
+				manager.HandleEvent(toolEndEvent)
+			}
+		},
+	}
+
+	// Create writer with observer
+	var live bytes.Buffer
+	w := &toolEventWriter{
+		inner:    &live,
+		observer: obs,
+	}
+
+	// Write tool events
+	w.Write([]byte(`{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}` + "\n"))
+	time.Sleep(10 * time.Millisecond) // Small delay to ensure different timestamps
+	w.Write([]byte(`{"type":"tool_call","subtype":"ended","name":"read","duration_ms":100}` + "\n"))
+	w.Write([]byte(`{"type":"tool_call","subtype":"started","name":"write","arguments":{"path":"bar.go"}}` + "\n"))
+	time.Sleep(10 * time.Millisecond)
+	w.Write([]byte(`{"type":"tool_call","subtype":"ended","name":"write","duration_ms":200}` + "\n"))
+
+	// Verify spans were created
+	require.Len(t, toolSpans, 2)
+	
+	// Verify trace structure
+	activeTrace := manager.GetActiveTrace()
+	require.NotNil(t, activeTrace)
+	require.NotNil(t, activeTrace.RootSpan)
+	
+	// Find iteration span
+	var iterSpan *trace.Span
+	var findIterSpan func(*trace.Span) *trace.Span
+	findIterSpan = func(s *trace.Span) *trace.Span {
+		if s.SpanID == iterSpanID {
+			return s
+		}
+		for _, child := range s.Children {
+			if found := findIterSpan(child); found != nil {
+				return found
+			}
+		}
+		return nil
+	}
+	iterSpan = findIterSpan(activeTrace.RootSpan)
+	require.NotNil(t, iterSpan, "iteration span should exist")
+	
+	// Verify tool spans are children of iteration span
+	require.Len(t, iterSpan.Children, 2, "iteration should have 2 tool children")
+	
+	// Verify first tool span (read)
+	readSpan := iterSpan.Children[0]
+	assert.Equal(t, "read", readSpan.Name)
+	assert.Equal(t, toolSpans[0], readSpan.SpanID)
+	assert.Equal(t, iterSpanID, readSpan.ParentID)
+	assert.Equal(t, "foo.go", readSpan.Attributes["path"])
+	assert.Greater(t, readSpan.Duration, time.Duration(0), "read span should have duration")
+	
+	// Verify second tool span (write)
+	writeSpan := iterSpan.Children[1]
+	assert.Equal(t, "write", writeSpan.Name)
+	assert.Equal(t, toolSpans[1], writeSpan.SpanID)
+	assert.Equal(t, iterSpanID, writeSpan.ParentID)
+	assert.Equal(t, "bar.go", writeSpan.Attributes["path"])
+	assert.Greater(t, writeSpan.Duration, time.Duration(0), "write span should have duration")
 }

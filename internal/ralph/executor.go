@@ -13,6 +13,28 @@ import (
 	"time"
 )
 
+// ToolEvent represents a tool call event from the agent's stream-json output.
+type ToolEvent struct {
+	Name       string            // Tool name (e.g., "read", "write", "grep")
+	Started    bool              // true for "started", false for "ended"
+	DurationMs int64             // Duration in milliseconds (for ended events)
+	Attributes map[string]string // Extracted attributes (e.g., file_path, query)
+}
+
+// ToolEventObserver receives tool call events as they are parsed from the agent output.
+type ToolEventObserver interface {
+	OnToolStart(event ToolEvent)
+	OnToolEnd(event ToolEvent)
+}
+
+// toolEventWriter wraps an io.Writer and parses tool_call JSON lines,
+// calling the observer for each tool event found.
+type toolEventWriter struct {
+	inner    io.Writer
+	observer ToolEventObserver
+	buffer   []byte // Buffer for partial lines
+}
+
 // DefaultTimeout is the per-agent execution timeout.
 // Set to 10 minutes to allow complex tasks while preventing hung agents.
 // Most agent runs complete in 1-5 minutes.
@@ -73,7 +95,17 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 
 	// Capture stdout: tee to live writer + buffer.
 	var stdoutBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
+	stdoutWriter := cfg.stdoutWriter
+	
+	// Wrap with toolEventWriter if observer is provided
+	if cfg.toolEventObserver != nil {
+		stdoutWriter = &toolEventWriter{
+			inner:    cfg.stdoutWriter,
+			observer: cfg.toolEventObserver,
+		}
+	}
+	
+	cmd.Stdout = io.MultiWriter(&stdoutBuf, stdoutWriter)
 
 	// Capture stderr into a buffer.
 	var stderrBuf bytes.Buffer
@@ -122,10 +154,11 @@ func RunAgent(ctx context.Context, workDir string, prompt string, opts ...Option
 
 // options holds optional configuration for RunAgent.
 type options struct {
-	timeout        time.Duration
-	commandFactory CommandFactory
-	stdoutWriter   io.Writer
-	model          string
+	timeout          time.Duration
+	commandFactory   CommandFactory
+	stdoutWriter     io.Writer
+	model            string
+	toolEventObserver ToolEventObserver
 }
 
 // Option configures RunAgent behaviour.
@@ -150,6 +183,113 @@ func WithStdoutWriter(w io.Writer) Option {
 // WithModel overrides the default agent model.
 func WithModel(model string) Option {
 	return func(o *options) { o.model = model }
+}
+
+// WithToolEventObserver injects a tool event observer for parsing tool_call events.
+func WithToolEventObserver(observer ToolEventObserver) Option {
+	return func(o *options) {
+		o.toolEventObserver = observer
+	}
+}
+
+// Write implements io.Writer by buffering partial lines and parsing complete JSON lines.
+func (w *toolEventWriter) Write(p []byte) (int, error) {
+	// Write to inner writer first
+	n, err := w.inner.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Append to buffer
+	w.buffer = append(w.buffer, p...)
+
+	// Process complete lines (lines ending with newline)
+	for {
+		newlineIdx := bytes.IndexByte(w.buffer, '\n')
+		if newlineIdx == -1 {
+			// No complete line yet, keep everything in buffer
+			break
+		}
+
+		// Extract complete line (including newline)
+		line := w.buffer[:newlineIdx+1]
+		// Parse the line (without the newline)
+		w.parseToolEventLine(line[:len(line)-1])
+
+		// Remove processed line from buffer
+		w.buffer = w.buffer[newlineIdx+1:]
+	}
+
+	return n, nil
+}
+
+// parseToolEventLine parses a single JSON line and calls observer if it's a tool_call event.
+func (w *toolEventWriter) parseToolEventLine(line []byte) {
+	if len(line) == 0 {
+		return
+	}
+
+	var event map[string]interface{}
+	if err := json.Unmarshal(line, &event); err != nil {
+		return
+	}
+
+	eventType, _ := event["type"].(string)
+	if eventType != "tool_call" {
+		return
+	}
+
+	subtype, _ := event["subtype"].(string)
+	if subtype != "started" && subtype != "ended" {
+		return
+	}
+
+	// Extract tool name
+	var toolName string
+	if name, ok := event["name"].(string); ok {
+		toolName = name
+	} else if toolCall, ok := event["tool_call"].(map[string]interface{}); ok {
+		// Try to extract name from nested tool_call object
+		for key := range toolCall {
+			toolName = key
+			break // Use first key as tool name
+		}
+	}
+
+	if toolName == "" {
+		return
+	}
+
+	// Extract attributes
+	attrs := make(map[string]string)
+	if arguments, ok := event["arguments"].(map[string]interface{}); ok {
+		for k, v := range arguments {
+			if s, ok := v.(string); ok {
+				attrs[k] = s
+			} else if s := fmt.Sprintf("%v", v); s != "" {
+				attrs[k] = s
+			}
+		}
+	}
+
+	// Extract duration for ended events
+	var durationMs int64
+	if duration, ok := event["duration_ms"].(float64); ok {
+		durationMs = int64(duration)
+	}
+
+	toolEvent := ToolEvent{
+		Name:       toolName,
+		Started:    subtype == "started",
+		DurationMs: durationMs,
+		Attributes: attrs,
+	}
+
+	if toolEvent.Started {
+		w.observer.OnToolStart(toolEvent)
+	} else {
+		w.observer.OnToolEnd(toolEvent)
+	}
 }
 
 // RunAgentOpus runs an opus model agent for verification passes.
