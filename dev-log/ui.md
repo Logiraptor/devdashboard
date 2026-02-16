@@ -104,3 +104,103 @@ Resources
 ### History
 
 The artifact system (plan.md / design.md) was removed in 2026-02-08 (see `devdeploy-lvr` epic). Beads integration replaced it as the primary way to track work items per resource.
+
+## Multi-Agent Parallel TUI
+
+**Status**: accepted  
+**Last updated**: 2026-02-16
+
+The multi-agent parallel TUI displays multiple agent blocks simultaneously, allowing users to monitor concurrent agent activity across multiple beads.
+
+### Components
+
+#### MultiAgentView
+
+`MultiAgentView` (`internal/ralph/tui/multi_agent_view.go`) manages the grid layout of multiple agent blocks:
+
+- **Agent tracking**: Maintains a map of `AgentBlock` instances keyed by bead ID, preserving display order
+- **Thread-safe**: Uses `sync.RWMutex` for concurrent access from agent goroutines
+- **Summary stats**: Tracks counts of succeeded, failed, and question-status agents
+- **Layout**: Automatically switches between single-column and two-column layouts based on terminal width
+
+**Key methods**:
+- `StartAgent(bead)` — Begins tracking a new agent for a bead
+- `CompleteAgent(beadID, status)` — Marks an agent as complete and updates summary stats
+- `AddToolEvent(beadID, toolName, started, attrs)` — Adds tool events to an agent's stream
+- `View()` — Renders the grid layout
+- `Summary()` — Returns formatted summary line (e.g., "2 running | 1 done | 1 failed | 1 questions")
+
+#### AgentBlock
+
+`AgentBlock` (`internal/ralph/tui/agent_block.go`) represents a single agent's status and activity stream:
+
+- **Status tracking**: States include `running`, `success`, `failed`, `timeout`, `question`
+- **Event stream**: Ring buffer of last 4 events (`MaxEvents = 4`) showing tool invocations
+- **Visual indicators**: 
+  - Animated spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) for running agents
+  - Status icons: ✓ (success), ✗ (failed/timeout), ? (question)
+  - Color-coded borders based on status (blue=running, green=success, red=failed, yellow=question)
+- **Tool details**: Extracts and displays relevant details from tool attributes:
+  - File paths for Read/Write operations (shortened)
+  - Commands for Shell/Bash (truncated to 50 chars)
+  - Query/pattern for Grep/Search (truncated to 40 chars)
+- **Duration display**: Shows elapsed time for running agents, final duration for completed ones
+
+**Event rendering**: Each event shows:
+- Tool icon (Unicode symbols: ◀ Read, ▶ Write, ⬢ Shell, ◉ Grep, etc.)
+- Tool name (styled)
+- Detail (file path, command, query, etc.)
+- Duration for completed tools
+
+### Layout Behavior
+
+**Single-column layout** (width ≤ 120):
+- Agent blocks stacked vertically
+- Full terminal width minus 2 chars padding
+- Minimum block width: 50 chars
+
+**Two-column layout** (width > 120):
+- Agent blocks arranged in pairs side-by-side
+- Block width: `(width - 4) / 2`
+- Odd-numbered agents: last block spans full width
+- Uses `lipgloss.JoinHorizontal` for side-by-side rendering
+
+**Block structure**:
+```
+┌─────────────────────────────────────┐
+│ ✓ bead-id  Title text        1m23s │  ← Header: icon, ID, title, duration
+│   ◀ Read  internal/file.go         │  ← Event 1
+│   ▶ Write  config.yaml              │  ← Event 2
+│   ⬢ Shell  git push origin main    │  ← Event 3
+│   ·                                 │  ← Event 4 (placeholder if < 4 events)
+└─────────────────────────────────────┘
+```
+
+### Summary Statistics
+
+The `Summary()` method aggregates and formats agent status:
+
+- **Running**: Count of agents with `status == "running"`
+- **Done**: Count of agents with `status == "success"`
+- **Failed**: Count of agents with `status == "failed"` or `"timeout"`
+- **Questions**: Count of agents with `status == "question"`
+
+Format: `"2 running | 1 done | 1 failed | 1 questions"` (omits zero counts)
+
+### Styling
+
+Uses Catppuccin-inspired color palette:
+- **Borders**: Status-based colors (blue/green/red/yellow)
+- **Bead ID**: Bold mauve (`#cba6f7`)
+- **Title**: Subtext1 (`#bac2de`)
+- **Tool names**: Pink (`#f5c2e7`)
+- **Event details**: Subtext0 (`#a6adc8`)
+- **Icons**: Lavender (`#b4befe`)
+
+### Thread Safety
+
+All public methods use appropriate locking:
+- `SetSize`, `StartAgent`, `CompleteAgent`, `AddToolEvent`, `UpdateDuration` — write lock
+- `View`, `Summary`, `GetActiveBeadID`, `ActiveCount`, `TotalCount` — read lock
+
+This allows safe concurrent updates from multiple agent goroutines while rendering occurs on the main TUI thread.
