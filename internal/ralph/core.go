@@ -25,22 +25,26 @@ type ToolEvent struct {
 	BeadID     string            // ID of the bead this event belongs to (set by context wrapper)
 }
 
-// ProgressObserver receives progress updates from Core execution.
-// All methods are optional — implement only what you need.
-// Methods are called synchronously from the execution goroutine.
-type ProgressObserver interface {
+// LoopObserver receives loop lifecycle updates.
+type LoopObserver interface {
 	// OnLoopStart is called when the loop begins.
 	OnLoopStart(rootBead string)
 
+	// OnLoopEnd is called when the loop completes.
+	OnLoopEnd(result *CoreResult)
+}
+
+// BeadObserver receives bead lifecycle updates.
+type BeadObserver interface {
 	// OnBeadStart is called when work begins on a bead.
 	OnBeadStart(bead beads.Bead)
 
 	// OnBeadComplete is called when a bead finishes (success or failure).
 	OnBeadComplete(result BeadResult)
+}
 
-	// OnLoopEnd is called when the loop completes.
-	OnLoopEnd(result *CoreResult)
-
+// ToolObserver receives tool call lifecycle updates.
+type ToolObserver interface {
 	// OnToolStart is called when a tool call starts.
 	OnToolStart(event ToolEvent)
 
@@ -48,12 +52,28 @@ type ProgressObserver interface {
 	OnToolEnd(event ToolEvent)
 }
 
+// ProgressObserver receives progress updates from Core execution.
+// It composes LoopObserver, BeadObserver, and ToolObserver.
+// All methods are optional — implement only what you need.
+// Methods are called synchronously from the execution goroutine.
+type ProgressObserver interface {
+	LoopObserver
+	BeadObserver
+	ToolObserver
+}
+
 // NoopObserver is a ProgressObserver that does nothing.
 // Embed this in your observer to avoid implementing unused methods.
+// It implements LoopObserver, BeadObserver, and ToolObserver.
 type NoopObserver struct{}
 
-// Ensure NoopObserver implements ProgressObserver.
-var _ ProgressObserver = (*NoopObserver)(nil)
+// Ensure NoopObserver implements all observer interfaces.
+var (
+	_ ProgressObserver = (*NoopObserver)(nil)
+	_ LoopObserver     = (*NoopObserver)(nil)
+	_ BeadObserver     = (*NoopObserver)(nil)
+	_ ToolObserver     = (*NoopObserver)(nil)
+)
 
 func (NoopObserver) OnLoopStart(string)            {}
 func (NoopObserver) OnBeadStart(beads.Bead)        {}
