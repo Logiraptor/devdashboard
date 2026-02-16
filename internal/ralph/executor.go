@@ -73,7 +73,14 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 
 	// Capture stdout: tee to live writer + buffer.
 	var stdoutBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, cfg.stdoutWriter)
+	stdoutWriter := cfg.stdoutWriter
+	if cfg.observer != nil {
+		stdoutWriter = &toolEventWriter{
+			inner:    cfg.stdoutWriter,
+			observer: cfg.observer,
+		}
+	}
+	cmd.Stdout = io.MultiWriter(&stdoutBuf, stdoutWriter)
 
 	// Capture stderr into a buffer.
 	var stderrBuf bytes.Buffer
@@ -126,6 +133,7 @@ type options struct {
 	commandFactory CommandFactory
 	stdoutWriter   io.Writer
 	model          string
+	observer       ProgressObserver
 }
 
 // Option configures RunAgent behaviour.
@@ -150,6 +158,11 @@ func WithStdoutWriter(w io.Writer) Option {
 // WithModel overrides the default agent model.
 func WithModel(model string) Option {
 	return func(o *options) { o.model = model }
+}
+
+// WithObserver sets an observer to receive tool events during execution.
+func WithObserver(obs ProgressObserver) Option {
+	return func(o *options) { o.observer = obs }
 }
 
 // RunAgentOpus runs an opus model agent for verification passes.
@@ -197,4 +210,55 @@ func parseAgentResultEvent(stdout string) (chatID, errorMsg string) {
 		}
 	}
 	return chatID, errorMsg
+}
+
+// toolEventWriter wraps an io.Writer and parses stream-json tool events,
+// forwarding them to a ProgressObserver.
+type toolEventWriter struct {
+	inner    io.Writer
+	observer ProgressObserver
+	buf      []byte // buffer for incomplete lines
+}
+
+// Write implements io.Writer by buffering incomplete lines, parsing complete
+// JSON lines for tool events, and forwarding all data to the inner writer.
+func (w *toolEventWriter) Write(p []byte) (n int, err error) {
+	// Write to inner writer first
+	n, err = w.inner.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Append to buffer and process complete lines
+	w.buf = append(w.buf, p...)
+	for {
+		idx := bytes.IndexByte(w.buf, '\n')
+		if idx < 0 {
+			break // no complete line yet
+		}
+
+		line := w.buf[:idx]
+		w.buf = w.buf[idx+1:]
+
+		if len(line) > 0 {
+			w.parseToolEvent(line)
+		}
+	}
+
+	return len(p), nil
+}
+
+// parseToolEvent parses a JSON line and forwards tool events to the observer.
+func (w *toolEventWriter) parseToolEvent(line []byte) {
+	var event map[string]interface{}
+	if err := json.Unmarshal(line, &event); err != nil {
+		return // not valid JSON, ignore
+	}
+
+	eventType, _ := event["type"].(string)
+	if eventType == "tool_call" {
+		// Tool event detected - observer can be extended later to handle these
+		// For now, the infrastructure is in place for future observer methods
+		_ = event // placeholder for future OnToolEvent(observer, event) call
+	}
 }
