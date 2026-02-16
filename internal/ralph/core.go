@@ -366,6 +366,9 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		if c.AgentTimeout > 0 {
 			opts = append(opts, WithTimeout(c.AgentTimeout))
 		}
+		if c.Observer != nil {
+			opts = append(opts, WithObserver(c.Observer))
+		}
 		agentResult, err = RunAgent(ctx, execDir, prompt, opts...)
 	}
 	if err != nil {
