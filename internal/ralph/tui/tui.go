@@ -65,7 +65,10 @@ type (
 // Observer implements ralph.ProgressObserver and forwards events to the TUI.
 type Observer struct {
 	ralph.NoopObserver
-	program *tea.Program
+	program      *tea.Program
+	traceEmitter *LocalTraceEmitter
+	toolSpans    map[string]string // tool call ID → span ID
+	mu           sync.Mutex
 }
 
 // OnLoopStart is called when the loop begins.
@@ -93,6 +96,39 @@ func (o *Observer) OnBeadComplete(result ralph.BeadResult) {
 func (o *Observer) OnLoopEnd(result *ralph.CoreResult) {
 	if o.program != nil {
 		o.program.Send(loopEndMsg{Result: result})
+	}
+}
+
+// OnToolStart is called when a tool call begins.
+func (o *Observer) OnToolStart(event ralph.ToolEvent) {
+	if o.traceEmitter == nil {
+		return
+	}
+	attrs := event.Attributes // already a map[string]string
+	spanID := o.traceEmitter.StartTool(event.Name, attrs)
+
+	// Track span ID for matching end event
+	o.mu.Lock()
+	if o.toolSpans == nil {
+		o.toolSpans = make(map[string]string)
+	}
+	// Use a key that uniquely identifies this tool call
+	o.toolSpans[event.ID] = spanID
+	o.mu.Unlock()
+}
+
+// OnToolEnd is called when a tool call ends.
+func (o *Observer) OnToolEnd(event ralph.ToolEvent) {
+	if o.traceEmitter == nil {
+		return
+	}
+	o.mu.Lock()
+	spanID := o.toolSpans[event.ID]
+	delete(o.toolSpans, event.ID)
+	o.mu.Unlock()
+
+	if spanID != "" {
+		o.traceEmitter.EndTool(spanID, event.Attributes)
 	}
 }
 
@@ -125,7 +161,10 @@ func Run(ctx context.Context, core *ralph.Core) error {
 	m.traceEmitter.SetProgram(p)
 
 	// Set up observer to forward events to TUI
-	observer := &Observer{program: p}
+	observer := &Observer{
+		program:      p,
+		traceEmitter: m.traceEmitter,
+	}
 	core.Observer = observer
 
 	// Run Core in background goroutine
