@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -21,11 +20,11 @@ func TestModel_Init(t *testing.T) {
 	if model == nil {
 		t.Fatal("NewModel returned nil")
 	}
-	if model.traceView == nil {
-		t.Error("traceView should be initialized")
+	if model.multiAgentView == nil {
+		t.Error("multiAgentView should be initialized")
 	}
-	if model.traceEmitter == nil {
-		t.Error("traceEmitter should be initialized")
+	if model.toolToBeadMap == nil {
+		t.Error("toolToBeadMap should be initialized")
 	}
 }
 
@@ -126,6 +125,12 @@ func TestModel_HandleBeadComplete_StderrFallback(t *testing.T) {
 	core := &ralph.Core{WorkDir: "/tmp/test"}
 	model := NewModel(core)
 
+	// First start the bead so it's tracked in the view
+	startMsg := beadStartMsg{
+		Bead: beads.Bead{ID: "bead-stderr", Title: "Stderr Bead"},
+	}
+	model.Update(startMsg)
+
 	// Send a failure with Stderr but no ErrorMessage
 	msg := beadCompleteMsg{
 		Result: ralph.BeadResult{
@@ -145,20 +150,17 @@ func TestModel_HandleBeadComplete_StderrFallback(t *testing.T) {
 	if m.lastFailure.Stderr == "" {
 		t.Error("Stderr should be preserved")
 	}
-
-	// Verify View includes stderr (shows last 3 lines)
-	view := m.View()
-	if !strings.Contains(view, "Stderr:") {
-		t.Errorf("View should contain 'Stderr:' when ErrorMessage is empty, got: %s", view)
-	}
-	if !strings.Contains(view, "main.main()") {
-		t.Errorf("View should contain stderr content (last 3 lines), got: %s", view)
-	}
 }
 
 func TestModel_HandleBeadComplete_NoErrorInfo(t *testing.T) {
 	core := &ralph.Core{WorkDir: "/tmp/test"}
 	model := NewModel(core)
+
+	// First start the bead so it's tracked in the view
+	startMsg := beadStartMsg{
+		Bead: beads.Bead{ID: "bead-empty", Title: "Empty Error Bead"},
+	}
+	model.Update(startMsg)
 
 	// Send a failure with no error info at all
 	msg := beadCompleteMsg{
@@ -172,9 +174,13 @@ func TestModel_HandleBeadComplete_NoErrorInfo(t *testing.T) {
 	newModel, _ := model.Update(msg)
 
 	m := newModel.(*Model)
-	view := m.View()
-	if !strings.Contains(view, "No error details available") {
-		t.Errorf("View should show 'No error details available' when no error info, got: %s", view)
+	if m.lastFailure == nil {
+		t.Fatal("lastFailure should be set")
+	}
+	// The new TUI displays failures in agent blocks, not in a separate section
+	// Just verify the failure was tracked
+	if m.lastFailure.ExitCode != 1 {
+		t.Errorf("ExitCode should be 1, got %d", m.lastFailure.ExitCode)
 	}
 }
 
@@ -267,8 +273,12 @@ func TestModel_HandleBeadStart(t *testing.T) {
 	if m.status == "" {
 		t.Error("status should be set after bead start")
 	}
-	if m.iterNum != 1 {
-		t.Errorf("iterNum should be 1, got %d", m.iterNum)
+	// Verify agent was added to the multi-agent view
+	if m.multiAgentView.TotalCount() != 1 {
+		t.Errorf("multiAgentView should have 1 agent, got %d", m.multiAgentView.TotalCount())
+	}
+	if m.currentBead != "bead-123" {
+		t.Errorf("currentBead should be 'bead-123', got %q", m.currentBead)
 	}
 }
 

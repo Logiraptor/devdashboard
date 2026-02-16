@@ -16,22 +16,24 @@ import (
 
 // Model is the Bubble Tea model for ralph TUI.
 type Model struct {
-	core         *ralph.Core
-	traceView    *TraceViewModel
-	traceEmitter *LocalTraceEmitter
-	styles       Styles
-	summary      summary
-	status       string
-	err          error
-	loopStarted  bool
-	loopDone     bool
-	width        int
-	height       int
-	program      *tea.Program
-	ctx          context.Context
-	cancel       context.CancelFunc
-	loopStart    time.Time
-	iterNum      int // Current iteration number
+	core           *ralph.Core
+	multiAgentView *MultiAgentView
+	styles         Styles
+	summary        summary
+	status         string
+	err            error
+	loopStarted    bool
+	loopDone       bool
+	width          int
+	height         int
+	program        *tea.Program
+	ctx            context.Context
+	cancel         context.CancelFunc
+	loopStart      time.Time
+
+	// Track which bead each tool call belongs to
+	toolToBeadMap map[string]string // tool call ID → bead ID
+	currentBead   string            // Most recently started bead
 
 	// Failure tracking for display
 	lastFailure *ralph.BeadResult
@@ -62,13 +64,17 @@ type (
 	durationTickMsg  struct{}
 )
 
+// toolEventMsg wraps a tool event for the TUI
+type toolEventMsg struct {
+	Event   ralph.ToolEvent
+	Started bool
+}
+
 // Observer implements ralph.ProgressObserver and forwards events to the TUI.
 type Observer struct {
 	ralph.NoopObserver
-	program      *tea.Program
-	traceEmitter *LocalTraceEmitter
-	toolSpans    map[string]string // tool call ID → span ID
-	mu           sync.Mutex
+	program *tea.Program
+	mu      sync.Mutex
 }
 
 // OnLoopStart is called when the loop begins.
@@ -101,34 +107,15 @@ func (o *Observer) OnLoopEnd(result *ralph.CoreResult) {
 
 // OnToolStart is called when a tool call begins.
 func (o *Observer) OnToolStart(event ralph.ToolEvent) {
-	if o.traceEmitter == nil {
-		return
+	if o.program != nil {
+		o.program.Send(toolEventMsg{Event: event, Started: true})
 	}
-	attrs := event.Attributes // already a map[string]string
-	spanID := o.traceEmitter.StartTool(event.Name, attrs)
-
-	// Track span ID for matching end event
-	o.mu.Lock()
-	if o.toolSpans == nil {
-		o.toolSpans = make(map[string]string)
-	}
-	// Use a key that uniquely identifies this tool call
-	o.toolSpans[event.ID] = spanID
-	o.mu.Unlock()
 }
 
 // OnToolEnd is called when a tool call ends.
 func (o *Observer) OnToolEnd(event ralph.ToolEvent) {
-	if o.traceEmitter == nil {
-		return
-	}
-	o.mu.Lock()
-	spanID := o.toolSpans[event.ID]
-	delete(o.toolSpans, event.ID)
-	o.mu.Unlock()
-
-	if spanID != "" {
-		o.traceEmitter.EndTool(spanID, event.Attributes)
+	if o.program != nil {
+		o.program.Send(toolEventMsg{Event: event, Started: false})
 	}
 }
 
@@ -136,10 +123,10 @@ func (o *Observer) OnToolEnd(event ralph.ToolEvent) {
 func NewModel(core *ralph.Core) *Model {
 	styles := DefaultStyles()
 	return &Model{
-		core:         core,
-		traceView:    NewTraceViewModel(styles),
-		traceEmitter: NewLocalTraceEmitter(),
-		styles:       styles,
+		core:           core,
+		multiAgentView: NewMultiAgentView(),
+		styles:         styles,
+		toolToBeadMap:  make(map[string]string),
 	}
 }
 
@@ -160,12 +147,10 @@ func Run(ctx context.Context, core *ralph.Core, additionalObserver ralph.Progres
 	// Create program
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	m.program = p
-	m.traceEmitter.SetProgram(p)
 
 	// Set up observer to forward events to TUI
 	tuiObserver := &Observer{
-		program:      p,
-		traceEmitter: m.traceEmitter,
+		program: p,
 	}
 
 	// Combine TUI observer with additional observer if provided
@@ -179,8 +164,8 @@ func Run(ctx context.Context, core *ralph.Core, additionalObserver ralph.Progres
 	go func() {
 		m.loopStart = time.Now()
 
-		// Start duration ticker
-		ticker := time.NewTicker(time.Second)
+		// Start duration ticker (faster for smoother animation)
+		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 
 		go func() {
@@ -220,8 +205,6 @@ func (m *Model) Init() tea.Cmd {
 
 // Update implements tea.Model
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -230,24 +213,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel()
 			}
 			return m, tea.Quit
-		case "j", "down":
-			cmds = append(cmds, m.traceView.Update(msg))
-		case "k", "up":
-			cmds = append(cmds, m.traceView.Update(msg))
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		// Reserve space for header/footer
-		traceHeight := msg.Height - 4
-		if traceHeight < 5 {
-			traceHeight = 5
+		viewHeight := msg.Height - 6
+		if viewHeight < 10 {
+			viewHeight = 10
 		}
-		m.traceView.SetSize(msg.Width, traceHeight)
-
-	case TraceUpdateMsg:
-		m.traceView.SetTrace(msg.Trace)
+		m.multiAgentView.SetSize(msg.Width, viewHeight)
 
 	case loopStartedMsg:
 		m.mu.Lock()
@@ -257,12 +233,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case beadStartMsg:
 		m.mu.Lock()
-		m.iterNum++
+		m.currentBead = msg.Bead.ID
 		m.status = fmt.Sprintf("Working on %s: %s", msg.Bead.ID, msg.Bead.Title)
 		m.mu.Unlock()
 
-		// Also update trace emitter
-		m.traceEmitter.StartIteration(msg.Bead.ID, msg.Bead.Title, m.iterNum)
+		// Start tracking this agent in the view
+		m.multiAgentView.StartAgent(msg.Bead)
 
 	case beadCompleteMsg:
 		m.mu.Lock()
@@ -280,18 +256,45 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.summary.Questions++
 		}
 		m.summary.Iterations++
+
+		// Clear current bead if this was it
+		if m.currentBead == r.Bead.ID {
+			m.currentBead = ""
+		}
 		m.mu.Unlock()
 
-		// Update trace emitter
-		attrs := map[string]string{}
-		if r.ChatID != "" {
-			attrs["chat_id"] = r.ChatID
+		// Update the agent view
+		status := "success"
+		switch r.Outcome {
+		case ralph.OutcomeFailure:
+			status = "failed"
+		case ralph.OutcomeTimeout:
+			status = "timeout"
+		case ralph.OutcomeQuestion:
+			status = "question"
 		}
-		if r.ExitCode != 0 {
-			attrs["exit_code"] = fmt.Sprintf("%d", r.ExitCode)
+		m.multiAgentView.CompleteAgent(r.Bead.ID, status)
+
+	case toolEventMsg:
+		// Route tool event to the appropriate agent
+		m.mu.Lock()
+		beadID := m.currentBead
+		if beadID == "" {
+			// Fall back to looking up from tool ID
+			beadID = m.toolToBeadMap[msg.Event.ID]
 		}
-		// Note: We need the spanID from StartIteration, but we don't have it here.
-		// For now, trace emitter handles this internally.
+		if msg.Started && beadID != "" {
+			// Track this tool call for the end event
+			m.toolToBeadMap[msg.Event.ID] = beadID
+		} else if !msg.Started {
+			// Clean up tracking
+			delete(m.toolToBeadMap, msg.Event.ID)
+		}
+		m.mu.Unlock()
+
+		if beadID != "" {
+			m.multiAgentView.AddToolEvent(beadID, msg.Event.Name, msg.Started, msg.Event.Attributes)
+		}
 
 	case loopEndMsg:
 		m.mu.Lock()
@@ -319,10 +322,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mu.Lock()
 			m.summary.Duration = time.Since(m.loopStart)
 			m.mu.Unlock()
+			// Update running agent durations
+			m.multiAgentView.UpdateDuration()
 		}
 	}
 
-	return m, tea.Batch(cmds...)
+	return m, nil
 }
 
 // View implements tea.Model
@@ -333,92 +338,24 @@ func (m *Model) View() string {
 
 	var b strings.Builder
 
-	// Header
-	header := m.styles.Title.Render("Ralph Loop")
-	if m.core.RootBead != "" {
-		header += " " + m.styles.Subtitle.Render(m.core.RootBead)
-	}
+	// Header with logo
+	header := renderHeader(m.styles, m.core.RootBead, m.width)
 	b.WriteString(header)
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 
-	// Trace view
-	b.WriteString(m.traceView.View())
-	b.WriteString("\n")
+	// Multi-agent view
+	b.WriteString(m.multiAgentView.View())
+	b.WriteString("\n\n")
 
 	// Status bar
 	m.mu.Lock()
-	statusParts := make([]string, 0, 5)
-
-	if m.loopDone {
-		statusParts = append(statusParts, m.styles.Success.Render("✓ Completed"))
-	} else if m.loopStarted {
-		statusParts = append(statusParts, m.styles.Status.Render("● Running"))
-	} else {
-		statusParts = append(statusParts, m.styles.Muted.Render("Waiting..."))
-	}
-
-	if m.status != "" {
-		statusParts = append(statusParts, m.styles.Status.Render(m.status))
-	}
-
-	if m.summary.Iterations > 0 {
-		stats := fmt.Sprintf("%d done, %d failed", m.summary.Succeeded, m.summary.Failed)
-		statusParts = append(statusParts, m.styles.Muted.Render(stats))
-	}
-
-	if m.loopStarted && m.summary.Duration > 0 {
-		durationStr := ralph.FormatDuration(m.summary.Duration)
-		statusParts = append(statusParts, m.styles.Muted.Render(durationStr))
-	}
-
-	lastFailure := m.lastFailure
 	loopDone := m.loopDone
+	loopStarted := m.loopStarted
+	duration := m.summary.Duration
 	m.mu.Unlock()
 
-	statusLine := strings.Join(statusParts, " | ")
-	b.WriteString(statusLine)
-
-	// Show failure details if there was a failure
-	if lastFailure != nil && (lastFailure.Outcome == ralph.OutcomeFailure || lastFailure.Outcome == ralph.OutcomeTimeout) {
-		b.WriteString("\n\n")
-		b.WriteString(m.styles.Error.Render("Last Failure:"))
-		b.WriteString("\n")
-
-		b.WriteString(fmt.Sprintf("  Bead: %s", lastFailure.Bead.ID))
-		if lastFailure.ExitCode != 0 {
-			b.WriteString(fmt.Sprintf(" (exit code %d)", lastFailure.ExitCode))
-		}
-		b.WriteString("\n")
-
-		if lastFailure.ChatID != "" {
-			b.WriteString(fmt.Sprintf("  ChatID: %s\n", m.styles.Muted.Render(lastFailure.ChatID)))
-		}
-
-		if lastFailure.ErrorMessage != "" {
-			errMsg := lastFailure.ErrorMessage
-			if len(errMsg) > 100 {
-				errMsg = errMsg[:97] + "..."
-			}
-			b.WriteString(fmt.Sprintf("  Error: %s\n", m.styles.Error.Render(errMsg)))
-		} else if lastFailure.Stderr != "" {
-			stderrLines := strings.Split(strings.TrimSpace(lastFailure.Stderr), "\n")
-			start := len(stderrLines) - 3
-			if start < 0 {
-				start = 0
-			}
-			b.WriteString("  Stderr:\n")
-			for _, line := range stderrLines[start:] {
-				if line = strings.TrimSpace(line); line != "" {
-					if len(line) > 100 {
-						line = line[:97] + "..."
-					}
-					b.WriteString(fmt.Sprintf("    %s\n", m.styles.Error.Render(line)))
-				}
-			}
-		} else {
-			b.WriteString(fmt.Sprintf("  %s\n", m.styles.Muted.Render("No error details available")))
-		}
-	}
+	statusBar := renderStatusBar(m.styles, loopStarted, loopDone, m.multiAgentView.Summary(), duration, m.width)
+	b.WriteString(statusBar)
 
 	// Quit hint
 	if loopDone {
@@ -427,4 +364,42 @@ func (m *Model) View() string {
 	}
 
 	return b.String()
+}
+
+// renderHeader renders the top header
+func renderHeader(styles Styles, rootBead string, width int) string {
+	// Stylized header
+	title := styles.Title.Render("⚡ RALPH")
+	subtitle := ""
+	if rootBead != "" {
+		subtitle = " " + styles.Subtitle.Render("→ "+rootBead)
+	}
+
+	return title + subtitle
+}
+
+// renderStatusBar renders the bottom status bar
+func renderStatusBar(styles Styles, started, done bool, summary string, duration time.Duration, width int) string {
+	var parts []string
+
+	// Status indicator
+	if done {
+		parts = append(parts, styles.Success.Render("✓ Complete"))
+	} else if started {
+		parts = append(parts, styles.Status.Render("● Running"))
+	} else {
+		parts = append(parts, styles.Muted.Render("○ Waiting"))
+	}
+
+	// Summary from multi-agent view
+	if summary != "" {
+		parts = append(parts, styles.Status.Render(summary))
+	}
+
+	// Duration
+	if started && duration > 0 {
+		parts = append(parts, styles.Muted.Render(ralph.FormatDuration(duration)))
+	}
+
+	return strings.Join(parts, " │ ")
 }
