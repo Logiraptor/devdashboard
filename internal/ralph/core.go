@@ -151,9 +151,17 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 
 			// Merge successful work back if using worktrees
 			if r.WorktreePath != "" && r.Outcome == OutcomeSuccess && wtMgr != nil {
+				writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, wtMgr.Branch())
 				if err := c.mergeBack(ctx, wtMgr, r); err != nil {
-					writef(out, "  warning: merge failed for %s: %v\n", r.BeadID, err)
+					writef(out, "[%s] ERROR: merge failed: %v\n", r.BeadID, err)
+					// Don't fail the entire run, but make the error visible
+					result.Failed++
+				} else {
+					writef(out, "[%s] ✓ merged successfully\n", r.BeadID)
 				}
+			} else if r.BranchName != "" && r.Outcome == OutcomeSuccess {
+				// Branch was created but worktree wasn't (shouldn't happen, but handle it)
+				writef(out, "[%s] WARNING: branch %s exists but no worktree was created - merge skipped\n", r.BeadID, r.BranchName)
 			}
 
 			// Clean up worktree

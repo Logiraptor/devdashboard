@@ -154,16 +154,14 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
 
 	// Always run agents in parallel with generous limits
-	cmd += " --max-iterations 50 --max-parallel 10"
+	// Note: --max-parallel must be > 1 for worktrees and merges to work
+	cmd += " --max-parallel 10"
 
 	if selectedBead != nil {
 		escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
-		// If selected bead is an epic, use --epic flag for parallel leaf processing
-		if selectedBead.IssueType == "epic" {
-			cmd += fmt.Sprintf(" --epic '%s'", escapedBead)
-		} else {
-			cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
-		}
+		// Use --bead flag for both regular beads and epics
+		// (epics are handled by filtering ready beads by parent)
+		cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
 	}
 	cmd += "\n"
 	if err := tmux.SendKeys(paneID, cmd); err != nil {
