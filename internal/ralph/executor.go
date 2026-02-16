@@ -287,6 +287,67 @@ func (w *toolEventWriter) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
+// toolEventWriter wraps a writer and parses tool events from JSON lines.
+// It accumulates partial lines in a buffer and calls observer methods
+// when tool_call events are detected.
+type toolEventWriter struct {
+	inner    io.Writer
+	observer ProgressObserver
+	buf      bytes.Buffer // accumulates partial lines
+}
+
+// NewToolEventWriter creates a new toolEventWriter that wraps the given writer
+// and calls observer methods for tool events parsed from JSON lines.
+func NewToolEventWriter(inner io.Writer, observer ProgressObserver) io.Writer {
+	if observer == nil {
+		return inner // no observer, no need to wrap
+	}
+	return &toolEventWriter{
+		inner:    inner,
+		observer: observer,
+	}
+}
+
+// Write writes data to the inner writer and parses complete JSON lines
+// to detect tool_call events. Partial lines are buffered until a newline
+// is encountered.
+func (w *toolEventWriter) Write(p []byte) (n int, err error) {
+	// Write to inner writer first
+	n, err = w.inner.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Append to buffer
+	w.buf.Write(p)
+
+	// Process complete lines
+	for {
+		line, err := w.buf.ReadString('\n')
+		if err != nil {
+			// No complete line yet, put it back
+			w.buf.WriteString(line)
+			break
+		}
+
+		// Remove trailing newline
+		line = strings.TrimSuffix(line, "\n")
+
+		// Try to parse as tool event
+		event := ParseToolEvent(line)
+		if event != nil {
+			if event.Started {
+				w.observer.OnToolStart(*event)
+			} else {
+				w.observer.OnToolEnd(*event)
+			}
+		}
+		// Ignore non-JSON lines and non-tool_call events gracefully
+	}
+
+	return n, nil
+}
+
 // parseAgentResultEvent parses the agent's stdout for the final "result" event
 // and extracts chatId and error message.
 // The agent outputs JSON lines, and the result event has the format:
