@@ -29,7 +29,14 @@ func NewMultiObserver(observers ...ProgressObserver) *MultiObserver {
 func (m *MultiObserver) OnLoopStart(rootBead string) {
 	for _, obs := range m.observers {
 		if obs != nil {
-			obs.OnLoopStart(rootBead)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// One observer failing shouldn't block others
+					}
+				}()
+				obs.OnLoopStart(rootBead)
+			}()
 		}
 	}
 }
@@ -38,7 +45,14 @@ func (m *MultiObserver) OnLoopStart(rootBead string) {
 func (m *MultiObserver) OnBeadStart(bead beads.Bead) {
 	for _, obs := range m.observers {
 		if obs != nil {
-			obs.OnBeadStart(bead)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// One observer failing shouldn't block others
+					}
+				}()
+				obs.OnBeadStart(bead)
+			}()
 		}
 	}
 }
@@ -47,7 +61,14 @@ func (m *MultiObserver) OnBeadStart(bead beads.Bead) {
 func (m *MultiObserver) OnBeadComplete(result BeadResult) {
 	for _, obs := range m.observers {
 		if obs != nil {
-			obs.OnBeadComplete(result)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// One observer failing shouldn't block others
+					}
+				}()
+				obs.OnBeadComplete(result)
+			}()
 		}
 	}
 }
@@ -56,7 +77,14 @@ func (m *MultiObserver) OnBeadComplete(result BeadResult) {
 func (m *MultiObserver) OnLoopEnd(result *CoreResult) {
 	for _, obs := range m.observers {
 		if obs != nil {
-			obs.OnLoopEnd(result)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// One observer failing shouldn't block others
+					}
+				}()
+				obs.OnLoopEnd(result)
+			}()
 		}
 	}
 }
@@ -65,7 +93,14 @@ func (m *MultiObserver) OnLoopEnd(result *CoreResult) {
 func (m *MultiObserver) OnToolStart(event ToolEvent) {
 	for _, obs := range m.observers {
 		if obs != nil {
-			obs.OnToolStart(event)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// One observer failing shouldn't block others
+					}
+				}()
+				obs.OnToolStart(event)
+			}()
 		}
 	}
 }
@@ -74,7 +109,14 @@ func (m *MultiObserver) OnToolStart(event ToolEvent) {
 func (m *MultiObserver) OnToolEnd(event ToolEvent) {
 	for _, obs := range m.observers {
 		if obs != nil {
-			obs.OnToolEnd(event)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// One observer failing shouldn't block others
+					}
+				}()
+				obs.OnToolEnd(event)
+			}()
 		}
 	}
 }

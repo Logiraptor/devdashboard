@@ -264,3 +264,165 @@ func TestMultiObserver_ImplementsInterface(t *testing.T) {
 	// Compile-time check that MultiObserver implements ProgressObserver
 	var _ ProgressObserver = (*MultiObserver)(nil)
 }
+
+// failingObserver panics when called to simulate a failing observer.
+type failingObserver struct {
+	panicked bool
+}
+
+func (f *failingObserver) OnLoopStart(rootBead string) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnBeadStart(bead beads.Bead) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnBeadComplete(result BeadResult) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnLoopEnd(result *CoreResult) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnToolStart(event ToolEvent) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnToolEnd(event ToolEvent) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func TestMultiObserver_OneObserverFailingDoesNotBlockOthers(t *testing.T) {
+	failing := &failingObserver{}
+	obs1 := &multiTestObserver{}
+	obs2 := &multiTestObserver{}
+
+	multi := NewMultiObserver(failing, obs1, obs2)
+
+	// Test OnLoopStart
+	multi.OnLoopStart("test-epic")
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onLoopStartCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onLoopStartCalls))
+	}
+	if len(obs2.onLoopStartCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onLoopStartCalls))
+	}
+
+	// Reset and test OnBeadStart
+	failing.panicked = false
+	obs1.onBeadStartCalls = nil
+	obs2.onBeadStartCalls = nil
+	bead := beads.Bead{ID: "bead-1", Title: "Test"}
+	multi.OnBeadStart(bead)
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onBeadStartCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onBeadStartCalls))
+	}
+	if len(obs2.onBeadStartCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onBeadStartCalls))
+	}
+
+	// Reset and test OnBeadComplete
+	failing.panicked = false
+	obs1.onBeadCompleteCalls = nil
+	obs2.onBeadCompleteCalls = nil
+	result := BeadResult{
+		Bead:     beads.Bead{ID: "bead-1", Title: "Test"},
+		Outcome:  OutcomeSuccess,
+		Duration: 5 * time.Second,
+		ChatID:   "chat-123",
+	}
+	multi.OnBeadComplete(result)
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onBeadCompleteCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onBeadCompleteCalls))
+	}
+	if len(obs2.onBeadCompleteCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onBeadCompleteCalls))
+	}
+
+	// Reset and test OnLoopEnd
+	failing.panicked = false
+	obs1.onLoopEndCalls = nil
+	obs2.onLoopEndCalls = nil
+	coreResult := &CoreResult{
+		Succeeded: 3,
+		Failed:    2,
+		Questions: 1,
+		TimedOut:  0,
+		Duration:  10 * time.Minute,
+	}
+	multi.OnLoopEnd(coreResult)
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onLoopEndCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onLoopEndCalls))
+	}
+	if len(obs2.onLoopEndCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onLoopEndCalls))
+	}
+
+	// Reset and test OnToolStart
+	failing.panicked = false
+	obs1.onToolStartCalls = nil
+	obs2.onToolStartCalls = nil
+	toolEvent := ToolEvent{
+		ID:        "tool-1",
+		Name:      "read",
+		Started:   true,
+		Timestamp: time.Now(),
+		Attributes: map[string]string{
+			"path": "test.go",
+		},
+	}
+	multi.OnToolStart(toolEvent)
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onToolStartCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onToolStartCalls))
+	}
+	if len(obs2.onToolStartCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onToolStartCalls))
+	}
+
+	// Reset and test OnToolEnd
+	failing.panicked = false
+	obs1.onToolEndCalls = nil
+	obs2.onToolEndCalls = nil
+	toolEventEnd := ToolEvent{
+		ID:        "tool-1",
+		Name:      "read",
+		Started:   false,
+		Timestamp: time.Now(),
+		Attributes: map[string]string{
+			"path": "test.go",
+		},
+	}
+	multi.OnToolEnd(toolEventEnd)
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onToolEndCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onToolEndCalls))
+	}
+	if len(obs2.onToolEndCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onToolEndCalls))
+	}
+}
