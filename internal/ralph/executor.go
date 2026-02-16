@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -99,7 +100,8 @@ func runAgentInternal(ctx context.Context, workDir, prompt, defaultModel string,
 	exitCode := 0
 	if err != nil {
 		// Extract exit code from ExitError; otherwise treat as launch failure.
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			return nil, fmt.Errorf("failed to run agent: %w", err)
