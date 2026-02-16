@@ -804,6 +804,8 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 		gitFile := filepath.Join(dstPath, ".git")
 		if _, err := os.Stat(gitFile); err == nil {
 			// Ensure rules are injected (idempotent) even for pre-existing worktrees.
+			// Ignore injection errors: rules are best-effort convenience for existing worktrees.
+			// The worktree is usable even if rule injection fails.
 			_ = InjectWorktreeRules(dstPath)
 			return dstPath, nil // Reusing existing worktree, no cache invalidation needed
 		}
