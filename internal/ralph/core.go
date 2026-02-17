@@ -46,6 +46,12 @@ type ProgressObserver interface {
 
 	// OnToolEnd is called when a tool call ends.
 	OnToolEnd(event ToolEvent)
+
+	// OnMergeStart is called when a worktree merge begins.
+	OnMergeStart(beadID, branchName string)
+
+	// OnMergeComplete is called when a worktree merge finishes.
+	OnMergeComplete(beadID string, success bool, errMsg string)
 }
 
 // NoopObserver is a ProgressObserver that does nothing.
@@ -55,12 +61,14 @@ type NoopObserver struct{}
 // Ensure NoopObserver implements ProgressObserver.
 var _ ProgressObserver = (*NoopObserver)(nil)
 
-func (NoopObserver) OnLoopStart(string)            {}
-func (NoopObserver) OnBeadStart(beads.Bead)        {}
-func (NoopObserver) OnBeadComplete(BeadResult)      {}
-func (NoopObserver) OnLoopEnd(*CoreResult)         {}
-func (NoopObserver) OnToolStart(ToolEvent)         {}
-func (NoopObserver) OnToolEnd(ToolEvent)           {}
+func (NoopObserver) OnLoopStart(string)                     {}
+func (NoopObserver) OnBeadStart(beads.Bead)                 {}
+func (NoopObserver) OnBeadComplete(BeadResult)              {}
+func (NoopObserver) OnLoopEnd(*CoreResult)                  {}
+func (NoopObserver) OnToolStart(ToolEvent)                  {}
+func (NoopObserver) OnToolEnd(ToolEvent)                    {}
+func (NoopObserver) OnMergeStart(string, string)            {}
+func (NoopObserver) OnMergeComplete(string, bool, string)   {}
 
 // beadContextObserver wraps an observer to tag tool events with a bead ID.
 // This enables correct routing of events in parallel execution scenarios.
@@ -108,6 +116,14 @@ func (o *beadContextObserver) OnToolStart(event ToolEvent) {
 
 func (o *beadContextObserver) OnToolEnd(event ToolEvent) {
 	o.inner.OnToolEnd(o.withBeadID(event))
+}
+
+func (o *beadContextObserver) OnMergeStart(beadID, branchName string) {
+	o.inner.OnMergeStart(beadID, branchName)
+}
+
+func (o *beadContextObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
+	o.inner.OnMergeComplete(beadID, success, errMsg)
 }
 
 // Core orchestrates parallel agent execution for a bead tree.
@@ -247,17 +263,29 @@ func (c *Core) processBeadResults(ctx context.Context, wtMgr *WorktreeManager, r
 				mergeWtMgr, err = NewWorktreeManager(c.WorkDir)
 				if err != nil {
 					writef(out, "[%s] ERROR: failed to create worktree manager for merge: %v\n", r.BeadID, err)
+					if c.Observer != nil {
+						c.Observer.OnMergeComplete(r.BeadID, false, err.Error())
+					}
 					result.Failed++
 					continue
 				}
 			}
 			writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, mergeWtMgr.Branch())
+			if c.Observer != nil {
+				c.Observer.OnMergeStart(r.BeadID, r.BranchName)
+			}
 			if err := c.mergeBack(ctx, mergeWtMgr, r); err != nil {
 				writef(out, "[%s] ERROR: merge failed: %v\n", r.BeadID, err)
+				if c.Observer != nil {
+					c.Observer.OnMergeComplete(r.BeadID, false, err.Error())
+				}
 				// Don't fail the entire run, but make the error visible
 				result.Failed++
 			} else {
 				writef(out, "[%s] ✓ merged successfully\n", r.BeadID)
+				if c.Observer != nil {
+					c.Observer.OnMergeComplete(r.BeadID, true, "")
+				}
 			}
 		} else if r.BranchName != "" && r.Outcome == OutcomeSuccess {
 			// Branch was created but worktree wasn't (shouldn't happen, but handle it)

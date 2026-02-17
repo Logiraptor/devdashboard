@@ -91,6 +91,58 @@ func (v *MultiAgentView) AddToolEvent(beadID string, toolName string, started bo
 	}
 }
 
+// SetMerging marks an agent as merging its worktree branch
+func (v *MultiAgentView) SetMerging(beadID string, branchName string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if block, ok := v.agents[beadID]; ok {
+		block.SetStatus("merging")
+		block.AddEvent(AgentEvent{
+			Type:      "merge_start",
+			Name:      "git merge",
+			Detail:    branchName,
+			Timestamp: time.Now(),
+		})
+	}
+}
+
+// CompleteMerge updates an agent after merge completes
+func (v *MultiAgentView) CompleteMerge(beadID string, success bool, errMsg string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if block, ok := v.agents[beadID]; ok {
+		if success {
+			block.SetStatus("success")
+			block.AddEvent(AgentEvent{
+				Type:      "merge_complete",
+				Name:      "git merge",
+				Detail:    "merged",
+				Timestamp: time.Now(),
+			})
+		} else {
+			block.SetStatus("failed")
+			detail := "merge failed"
+			if errMsg != "" {
+				detail = errMsg
+				if len(detail) > 40 {
+					detail = detail[:37] + "..."
+				}
+			}
+			block.AddEvent(AgentEvent{
+				Type:      "merge_complete",
+				Name:      "git merge",
+				Detail:    detail,
+				Timestamp: time.Now(),
+			})
+			// Update summary stats - was counted as success, now failed
+			v.succeeded--
+			v.failed++
+		}
+	}
+}
+
 // ActiveBeadID returns the bead ID of the most recently started running agent
 // This is used to route tool events when we don't have explicit bead context
 func (v *MultiAgentView) ActiveBeadID() string {
@@ -175,16 +227,23 @@ func (v *MultiAgentView) Summary() string {
 	defer v.mu.RUnlock()
 
 	running := 0
+	merging := 0
 	for _, block := range v.agents {
-		if block.Status == "running" {
+		switch block.Status {
+		case "running":
 			running++
+		case "merging":
+			merging++
 		}
 	}
 
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
 
 	if running > 0 {
 		parts = append(parts, fmt.Sprintf("%d running", running))
+	}
+	if merging > 0 {
+		parts = append(parts, fmt.Sprintf("%d merging", merging))
 	}
 	if v.succeeded > 0 {
 		parts = append(parts, fmt.Sprintf("%d done", v.succeeded))
@@ -230,14 +289,14 @@ func (v *MultiAgentView) IterNum() int {
 	return v.iterCounter
 }
 
-// UpdateDuration updates the elapsed time for running agents (called on tick)
+// UpdateDuration updates the elapsed time for running/merging agents (called on tick)
 func (v *MultiAgentView) UpdateDuration() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	now := time.Now()
 	for _, block := range v.agents {
-		if block.Status == "running" {
+		if block.Status == "running" || block.Status == "merging" {
 			block.Duration = now.Sub(block.StartTime)
 		}
 	}

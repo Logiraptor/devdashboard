@@ -7,14 +7,24 @@ import (
 	"devdeploy/internal/beads"
 )
 
+// mergeCall tracks a merge callback.
+type mergeCall struct {
+	BeadID     string
+	BranchName string
+	Success    bool
+	ErrMsg     string
+}
+
 // multiTestObserver tracks method calls for testing.
 type multiTestObserver struct {
-	onLoopStartCalls    []string
-	onBeadStartCalls    []beads.Bead
-	onBeadCompleteCalls []BeadResult
-	onLoopEndCalls      []*CoreResult
-	onToolStartCalls    []ToolEvent
-	onToolEndCalls      []ToolEvent
+	onLoopStartCalls     []string
+	onBeadStartCalls     []beads.Bead
+	onBeadCompleteCalls  []BeadResult
+	onLoopEndCalls       []*CoreResult
+	onToolStartCalls     []ToolEvent
+	onToolEndCalls       []ToolEvent
+	onMergeStartCalls    []mergeCall
+	onMergeCompleteCalls []mergeCall
 }
 
 func (t *multiTestObserver) OnLoopStart(rootBead string) {
@@ -39,6 +49,14 @@ func (t *multiTestObserver) OnToolStart(event ToolEvent) {
 
 func (t *multiTestObserver) OnToolEnd(event ToolEvent) {
 	t.onToolEndCalls = append(t.onToolEndCalls, event)
+}
+
+func (t *multiTestObserver) OnMergeStart(beadID, branchName string) {
+	t.onMergeStartCalls = append(t.onMergeStartCalls, mergeCall{BeadID: beadID, BranchName: branchName})
+}
+
+func (t *multiTestObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
+	t.onMergeCompleteCalls = append(t.onMergeCompleteCalls, mergeCall{BeadID: beadID, Success: success, ErrMsg: errMsg})
 }
 
 func TestNewMultiObserver_FiltersNilObservers(t *testing.T) {
@@ -258,6 +276,8 @@ func TestMultiObserver_EmptyObservers(t *testing.T) {
 	multi.OnLoopEnd(&CoreResult{})
 	multi.OnToolStart(ToolEvent{})
 	multi.OnToolEnd(ToolEvent{})
+	multi.OnMergeStart("bead-1", "branch-1")
+	multi.OnMergeComplete("bead-1", true, "")
 }
 
 func TestMultiObserver_ImplementsInterface(t *testing.T) {
@@ -296,6 +316,16 @@ func (f *failingObserver) OnToolStart(event ToolEvent) {
 }
 
 func (f *failingObserver) OnToolEnd(event ToolEvent) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnMergeStart(beadID, branchName string) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
 	f.panicked = true
 	panic("observer failed")
 }
