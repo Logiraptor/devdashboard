@@ -11,11 +11,13 @@ import (
 )
 
 // WorktreeManager manages temporary git worktrees for concurrent agent execution.
+// It wraps worktree.Manager with ralph-specific logic: temporary paths (/tmp/ralph-*),
+// branch preservation, and MergeRepo functionality.
 type WorktreeManager struct {
 	// baseWorkDir is the original workdir (may be a worktree itself)
 	baseWorkDir string
-	// srcRepo is the path to the main git repository
-	srcRepo string
+	// mgr is the unified worktree manager
+	mgr *worktree.Manager
 	// branch is the branch name to use for worktrees
 	branch string
 }
@@ -26,7 +28,13 @@ func NewWorktreeManager(workDir string) (*WorktreeManager, error) {
 	// Resolve the source repository
 	srcRepo, err := worktree.ResolveSourceRepo(workDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolving source repo: %w", err)
+	}
+
+	// Create unified worktree manager
+	mgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return nil, fmt.Errorf("creating worktree manager: %w", err)
 	}
 
 	// Get the current branch name
@@ -37,7 +45,7 @@ func NewWorktreeManager(workDir string) (*WorktreeManager, error) {
 
 	return &WorktreeManager{
 		baseWorkDir: workDir,
-		srcRepo:     srcRepo,
+		mgr:         mgr,
 		branch:      branch,
 	}, nil
 }
@@ -54,7 +62,7 @@ func getCurrentBranch(workDir string) (string, error) {
 
 // SrcRepo returns the path to the main git repository.
 func (w *WorktreeManager) SrcRepo() string {
-	return w.srcRepo
+	return w.mgr.SrcRepo()
 }
 
 // Branch returns the branch name used for worktrees.
@@ -64,44 +72,23 @@ func (w *WorktreeManager) Branch() string {
 
 // CreateWorktree creates a temporary worktree for the given bead ID.
 // Returns the path to the worktree directory and the branch name used.
+// Uses ralph-specific temporary paths: /tmp/ralph-<bead-id>
 func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, branchName string, err error) {
-	// Create worktree in /tmp/ralph-<bead-id>
+	// Create worktree in /tmp/ralph-<bead-id> (ralph-specific)
 	worktreePath = filepath.Join(os.TempDir(), fmt.Sprintf("ralph-%s", beadID))
 	// Create a unique branch name for this worktree
 	branchName = fmt.Sprintf("ralph/%s", beadID)
 
-	// Disable hooks
-	hooksConfig, cleanupHooks, err := worktree.DisableHooksConfig()
+	// Use unified worktree manager to create the worktree
+	err = w.mgr.Add(worktree.AddOptions{
+		WorktreePath: worktreePath,
+		Branch:       branchName,
+		BaseRef:      w.branch,
+		CreateBranch: true,
+		DisableHooks: true,
+	})
 	if err != nil {
-		return "", "", fmt.Errorf("disable hooks: %w", err)
-	}
-	defer func() { _ = cleanupHooks() }()
-	gitNoHooks := append([]string{"-C", w.srcRepo}, hooksConfig...)
-
-	// Check if branch already exists
-	var addStderr strings.Builder
-	if err := exec.Command("git", "-C", w.srcRepo, "rev-parse", "--verify", branchName).Run(); err != nil {
-		// Branch doesn't exist: create it when adding worktree
-		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", "-b", branchName, worktreePath, w.branch)...)
-		addCmd.Stderr = &addStderr
-		if err := addCmd.Run(); err != nil {
-			msg := strings.TrimSpace(addStderr.String())
-			if msg != "" {
-				return "", "", fmt.Errorf("creating worktree for %s: %s: %w", beadID, msg, err)
-			}
-			return "", "", fmt.Errorf("creating worktree for %s: %w", beadID, err)
-		}
-	} else {
-		// Branch exists: add worktree to existing branch
-		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", worktreePath, branchName)...)
-		addCmd.Stderr = &addStderr
-		if err := addCmd.Run(); err != nil {
-			msg := strings.TrimSpace(addStderr.String())
-			if msg != "" {
-				return "", "", fmt.Errorf("creating worktree for %s: %s: %w", beadID, msg, err)
-			}
-			return "", "", fmt.Errorf("creating worktree for %s: %w", beadID, err)
-		}
+		return "", "", fmt.Errorf("creating worktree for %s: %w", beadID, err)
 	}
 
 	return worktreePath, branchName, nil
@@ -111,7 +98,7 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 // Returns the worktree path, or empty string if not found.
 // Searches from the source repository.
 func (w *WorktreeManager) FindWorktreeForBranch(branchName string) string {
-	return worktree.FindWorktreeForBranch(w.srcRepo, branchName, "")
+	return worktree.FindWorktreeForBranch(w.mgr.SrcRepo(), branchName, "")
 }
 
 // MergeRepo returns the repository path to use for merging.
@@ -128,28 +115,18 @@ func (w *WorktreeManager) MergeRepo(targetBranch string) string {
 		return wtPath
 	}
 	// Fallback to srcRepo (may fail if branch is checked out elsewhere)
-	return w.srcRepo
+	return w.mgr.SrcRepo()
 }
 
 // RemoveWorktree removes a worktree created by CreateWorktree.
 // The associated branch (ralph/<beadID>) is preserved, as it may have been
 // pushed to remote or referenced elsewhere. To clean up branches, use
 // 'git branch -D <branchName>' separately.
+// Uses idempotent=true so missing worktrees are treated as success.
 func (w *WorktreeManager) RemoveWorktree(worktreePath string) error {
-	// Remove the worktree
-	cmd := exec.Command("git", "-C", w.srcRepo, "worktree", "remove", worktreePath, "--force")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		// If worktree doesn't exist, that's okay (idempotent)
-		if msg != "" && (strings.Contains(msg, "not found") || strings.Contains(msg, "No such file")) {
-			return nil
-		}
-		if msg != "" {
-			return fmt.Errorf("removing worktree %s: %s: %w", worktreePath, msg, err)
-		}
-		return fmt.Errorf("removing worktree %s: %w", worktreePath, err)
+	// Use unified worktree manager with idempotent=true
+	if err := w.mgr.Remove(worktreePath, true); err != nil {
+		return err
 	}
 
 	// Note: Branch is intentionally preserved after worktree removal.

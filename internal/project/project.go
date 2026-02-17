@@ -361,7 +361,7 @@ func (m *Manager) RemoveRepo(projectName, repoName string) error {
 		return err
 	}
 
-	if err := wtMgr.Remove(worktreePath); err != nil {
+	if err := wtMgr.Remove(worktreePath, false); err != nil {
 		return err
 	}
 	// Invalidate cache for this project since a repo was removed
@@ -387,7 +387,7 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 		return err
 	}
 
-	if err := wtMgr.Remove(wtPath); err != nil {
+	if err := wtMgr.Remove(wtPath, false); err != nil {
 		return fmt.Errorf("git worktree remove (PR): %w", err)
 	}
 

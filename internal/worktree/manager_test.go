@@ -120,7 +120,7 @@ func TestManager_Create_Ralph(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	defer func() {
-		_ = m.Remove(wtPath)
+		_ = m.Remove(wtPath, true)
 	}()
 
 	expectedBranch := "ralph/test-bead-123"
@@ -166,7 +166,7 @@ func TestManager_Create_Ralph_ReusesExistingBranch(t *testing.T) {
 	}()
 
 	// Remove the first worktree but keep the branch
-	if err := m.Remove(wtPath1); err != nil {
+	if err := m.Remove(wtPath1, false); err != nil {
 		t.Fatalf("Remove first worktree: %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestManager_Create_Project(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	defer func() {
-		_ = m.Remove(wtPath)
+		_ = m.Remove(wtPath, true)
 	}()
 
 	if gotBranch != branchName {
@@ -421,7 +421,7 @@ func TestManager_Remove(t *testing.T) {
 	}
 
 	// Remove it
-	if err := m.Remove(wtPath); err != nil {
+	if err := m.Remove(wtPath, false); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 
@@ -440,7 +440,7 @@ func TestManager_Remove_NonExistent(t *testing.T) {
 
 	// Removing non-existent worktree should be idempotent
 	nonExistent := filepath.Join(t.TempDir(), "does-not-exist")
-	if err := m.Remove(nonExistent); err != nil {
+	if err := m.Remove(nonExistent, true); err != nil {
 		t.Errorf("Remove should be idempotent, got error: %v", err)
 	}
 }
@@ -472,7 +472,7 @@ func TestManager_FindByBranch(t *testing.T) {
 		t.Fatalf("create worktree: %v", err)
 	}
 	defer func() {
-		_ = m.Remove(wtPath)
+		_ = m.Remove(wtPath, true)
 	}()
 
 	// Find it

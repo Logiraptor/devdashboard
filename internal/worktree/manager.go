@@ -95,11 +95,18 @@ func (m *Manager) Add(opts AddOptions) error {
 }
 
 // Remove removes a worktree at the given path.
-func (m *Manager) Remove(worktreePath string) error {
+// If idempotent is true, missing worktrees are treated as success.
+func (m *Manager) Remove(worktreePath string, idempotent bool) error {
 	cmd := exec.Command("git", "-C", m.srcRepo, "worktree", "remove", worktreePath, "--force")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if idempotent {
+			msg := strings.TrimSpace(stderr.String())
+			if msg != "" && (strings.Contains(msg, "not found") || strings.Contains(msg, "No such file")) {
+				return nil
+			}
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
