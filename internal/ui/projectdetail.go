@@ -41,9 +41,12 @@ type cursorDelegate struct {
 // Render implements list.ItemDelegate and adds '▸' prefix for selected items.
 // It checks if the current item index matches the list's selected index, and if so,
 // writes the cursor prefix before delegating to the default renderer.
+// Non-selected items get equivalent spacing to maintain alignment.
 func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	if index == m.Index() {
 		_, _ = fmt.Fprint(w, "▸ ")
+	} else {
+		_, _ = fmt.Fprint(w, "  ") // Same width as "▸ " to maintain alignment
 	}
 
 	// Delegate to default renderer
