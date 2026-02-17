@@ -28,9 +28,9 @@ func TestResourceKey(t *testing.T) {
 		{"pr", "grafana", 7, "pr:grafana:#7"},
 	}
 	for _, tt := range tests {
-		got := ResourceKey(tt.kind, tt.repo, tt.prNumber)
-		if got != tt.want {
-			t.Errorf("ResourceKey(%q, %q, %d) = %q, want %q", tt.kind, tt.repo, tt.prNumber, got, tt.want)
+		got := NewResourceKey(tt.kind, tt.repo, tt.prNumber)
+		if got.String() != tt.want {
+			t.Errorf("NewResourceKey(%q, %q, %d).String() = %q, want %q", tt.kind, tt.repo, tt.prNumber, got.String(), tt.want)
 		}
 	}
 }
@@ -38,7 +38,7 @@ func TestResourceKey(t *testing.T) {
 func TestRegisterAndQuery(t *testing.T) {
 	tr := New(nil)
 
-	key := ResourceKey("repo", "devdeploy", 0)
+	key := NewResourceKey("repo", "devdeploy", 0)
 	tr.Register(key, "%1", PaneShell)
 	tr.Register(key, "%2", PaneAgent)
 
@@ -66,7 +66,7 @@ func TestRegisterAndQuery(t *testing.T) {
 func TestUnregister(t *testing.T) {
 	tr := New(nil)
 
-	key := ResourceKey("repo", "devdeploy", 0)
+	key := NewResourceKey("repo", "devdeploy", 0)
 	tr.Register(key, "%1", PaneShell)
 	tr.Register(key, "%2", PaneAgent)
 
@@ -92,8 +92,8 @@ func TestUnregister(t *testing.T) {
 func TestUnregisterAll(t *testing.T) {
 	tr := New(nil)
 
-	key1 := ResourceKey("repo", "devdeploy", 0)
-	key2 := ResourceKey("repo", "grafana", 0)
+	key1 := NewResourceKey("repo", "devdeploy", 0)
+	key2 := NewResourceKey("repo", "grafana", 0)
 	tr.Register(key1, "%1", PaneShell)
 	tr.Register(key1, "%2", PaneAgent)
 	tr.Register(key2, "%3", PaneShell)
@@ -114,8 +114,8 @@ func TestPrune(t *testing.T) {
 	// Only %1 and %3 are alive; %2 is dead
 	tr := New(stubLiveness("%1", "%3"))
 
-	key1 := ResourceKey("repo", "devdeploy", 0)
-	key2 := ResourceKey("repo", "grafana", 0)
+	key1 := NewResourceKey("repo", "devdeploy", 0)
+	key2 := NewResourceKey("repo", "grafana", 0)
 	tr.Register(key1, "%1", PaneShell)
 	tr.Register(key1, "%2", PaneAgent) // dead
 	tr.Register(key2, "%3", PaneShell)
@@ -142,7 +142,7 @@ func TestPruneRemovesEntireResource(t *testing.T) {
 	// No panes are alive
 	tr := New(stubLiveness())
 
-	key := ResourceKey("repo", "devdeploy", 0)
+	key := NewResourceKey("repo", "devdeploy", 0)
 	tr.Register(key, "%1", PaneShell)
 	tr.Register(key, "%2", PaneAgent)
 
@@ -160,7 +160,8 @@ func TestPruneRemovesEntireResource(t *testing.T) {
 
 func TestPruneNilLiveness(t *testing.T) {
 	tr := New(nil)
-	tr.Register("repo:foo", "%1", PaneShell)
+	key := NewResourceKey("repo", "foo", 0)
+	tr.Register(key, "%1", PaneShell)
 
 	pruned, err := tr.Prune()
 	if err != nil {
@@ -176,9 +177,11 @@ func TestPruneNilLiveness(t *testing.T) {
 
 func TestAllPanes(t *testing.T) {
 	tr := New(nil)
-	tr.Register("repo:a", "%1", PaneShell)
-	tr.Register("repo:b", "%2", PaneAgent)
-	tr.Register("repo:a", "%3", PaneAgent)
+	keyA := NewResourceKey("repo", "a", 0)
+	keyB := NewResourceKey("repo", "b", 0)
+	tr.Register(keyA, "%1", PaneShell)
+	tr.Register(keyB, "%2", PaneAgent)
+	tr.Register(keyA, "%3", PaneAgent)
 
 	all := tr.AllPanes()
 	if len(all) != 3 {
@@ -188,7 +191,7 @@ func TestAllPanes(t *testing.T) {
 
 func TestPanesForResourceReturnsCopy(t *testing.T) {
 	tr := New(nil)
-	key := "repo:devdeploy"
+	key := NewResourceKey("repo", "devdeploy", 0)
 	tr.Register(key, "%1", PaneShell)
 
 	panes := tr.PanesForResource(key)
@@ -203,7 +206,8 @@ func TestPanesForResourceReturnsCopy(t *testing.T) {
 
 func TestCountForResourceEmpty(t *testing.T) {
 	tr := New(nil)
-	shells, agents := tr.CountForResource("repo:nonexistent")
+	key := NewResourceKey("repo", "nonexistent", 0)
+	shells, agents := tr.CountForResource(key)
 	if shells != 0 || agents != 0 {
 		t.Errorf("CountForResource(nonexistent) = (%d, %d), want (0, 0)", shells, agents)
 	}
