@@ -33,14 +33,21 @@ type cursorDelegate struct {
 	listModel *list.Model
 }
 
+// renderCursorPrefix returns the cursor prefix string ("▸ ") if the item at the given
+// index is selected, otherwise returns an empty string.
+func (d cursorDelegate) renderCursorPrefix(index int) string {
+	isSelected := d.listModel != nil && index == d.listModel.Index()
+	if isSelected {
+		return "▸ "
+	}
+	return ""
+}
+
 // Render implements list.ItemDelegate and adds '▸' prefix for selected items.
 func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	// Check if this item is selected by comparing index with the list's selected index
-	isSelected := d.listModel != nil && index == d.listModel.Index()
-
-	// Write cursor prefix if selected
-	if isSelected {
-		_, _ = fmt.Fprint(w, "▸ ")
+	prefix := d.renderCursorPrefix(index)
+	if prefix != "" {
+		_, _ = fmt.Fprint(w, prefix)
 	}
 
 	// Delegate to default renderer
