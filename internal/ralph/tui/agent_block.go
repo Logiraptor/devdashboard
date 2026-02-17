@@ -125,11 +125,19 @@ func extractToolDetail(toolName string, attrs map[string]string) string {
 	return ""
 }
 
-// truncateCmd truncates a shell command, preferring to show the start
+// truncateCmd truncates a shell command, stripping cd prefixes and preferring to show the actual command
 func truncateCmd(cmd string, max int) string {
 	// Remove newlines for display
 	cmd = strings.ReplaceAll(cmd, "\n", " ")
 	cmd = strings.TrimSpace(cmd)
+
+	// Strip "cd /path && " prefix - common when running in worktrees
+	if strings.HasPrefix(cmd, "cd ") {
+		if idx := strings.Index(cmd, " && "); idx != -1 {
+			cmd = strings.TrimSpace(cmd[idx+4:])
+		}
+	}
+
 	return truncate(cmd, max)
 }
 
