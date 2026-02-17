@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"devdeploy/internal/jsonutil"
 	"devdeploy/internal/trace"
 )
 
@@ -193,16 +193,16 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 	}
 
 	var event map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonLine), &event); err != nil {
+	if !jsonutil.UnmarshalLineSafe(jsonLine, &event) {
 		return nil
 	}
 
-	eventType, _ := event["type"].(string)
+	eventType := jsonutil.GetString(event, "type")
 	if eventType != "tool_call" {
 		return nil
 	}
 
-	subtype, _ := event["subtype"].(string)
+	subtype := jsonutil.GetString(event, "subtype")
 	// New format uses "started" and "completed", legacy uses "started" and "ended"
 	started := subtype == "started"
 
@@ -216,7 +216,7 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 
 	// Fall back to legacy format: name and arguments at top level
 	if name == "" {
-		name, _ = event["name"].(string)
+		name = jsonutil.GetString(event, "name")
 		if args, ok := event["arguments"].(map[string]interface{}); ok {
 			attrs = extractArgsAsAttrs(args)
 		}
@@ -226,18 +226,7 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 				continue
 			}
 			if _, exists := attrs[k]; !exists {
-				var strVal string
-				switch val := v.(type) {
-				case string:
-					strVal = val
-				case float64:
-					strVal = fmt.Sprintf("%.0f", val)
-				case bool:
-					strVal = fmt.Sprintf("%t", val)
-				default:
-					strVal = fmt.Sprintf("%v", val)
-				}
-				attrs[k] = strVal
+				attrs[k] = jsonutil.ToString(v)
 			}
 		}
 	}
@@ -247,10 +236,8 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 	}
 
 	// Extract call_id for matching start/end events
-	var id string
-	if callID, ok := event["call_id"].(string); ok && callID != "" {
-		id = callID
-	} else {
+	id := jsonutil.GetStringOr(event, "call_id", "")
+	if id == "" {
 		// Generate a unique ID if not present
 		id = trace.NewSpanID()
 	}
@@ -302,18 +289,7 @@ func extractArgsAsAttrs(args map[string]interface{}) map[string]string {
 	attrs := make(map[string]string)
 
 	for k, v := range args {
-		// Convert values to strings
-		var strVal string
-		switch val := v.(type) {
-		case string:
-			strVal = val
-		case float64:
-			strVal = fmt.Sprintf("%.0f", val)
-		case bool:
-			strVal = fmt.Sprintf("%t", val)
-		default:
-			strVal = fmt.Sprintf("%v", val)
-		}
+		strVal := jsonutil.ToString(v)
 
 		// Map common argument names to standard attribute names
 		switch k {
@@ -409,29 +385,23 @@ func parseAgentResultEvent(stdout string) (chatID, errorMsg string) {
 		}
 
 		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
+		if !jsonutil.UnmarshalLineSafe(line, &event) {
 			continue
 		}
 
-		eventType, _ := event["type"].(string)
+		eventType := jsonutil.GetString(event, "type")
 		if eventType != "result" {
 			continue
 		}
 
 		// Extract chatId - may be at top level or nested
-		if id, ok := event["chatId"].(string); ok {
-			chatID = id
-		} else if id, ok := event["chat_id"].(string); ok {
-			chatID = id
-		}
+		chatID = jsonutil.GetStringOr(event, "chatId", jsonutil.GetString(event, "chat_id"))
 
 		// Extract error message
-		if errStr, ok := event["error"].(string); ok && errStr != "" {
+		if errStr := jsonutil.GetString(event, "error"); errStr != "" {
 			errorMsg = errStr
 		} else if errObj, ok := event["error"].(map[string]interface{}); ok {
-			if msg, ok := errObj["message"].(string); ok {
-				errorMsg = msg
-			}
+			errorMsg = jsonutil.GetString(errObj, "message")
 		}
 	}
 	return chatID, errorMsg

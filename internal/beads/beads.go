@@ -3,13 +3,13 @@
 package beads
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"devdeploy/internal/bd"
+	"devdeploy/internal/jsonutil"
 )
 
 // Bead represents a bd issue associated with a project resource.
@@ -104,9 +104,9 @@ func ListForPR(worktreeDir, projectName string, prNumber int) ([]Bead, error) {
 // parseBeads decodes JSON output from bd list into Bead slice.
 // Filters to open/in_progress by default (closed beads are noise).
 func parseBeads(data []byte) ([]Bead, error) {
-	var entries []bdListEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("beads.parseBeads: failed to unmarshal JSON: %w", err)
+	entries, err := jsonutil.UnmarshalArrayAllowEmpty[bdListEntry](data, "beads.parseBeads")
+	if err != nil {
+		return nil, err
 	}
 
 	result := make([]Bead, 0, len(entries))
