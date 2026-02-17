@@ -20,9 +20,11 @@ const reservedChromeLines = 4
 // Fixed heights for bottom sections to prevent layout jumping when selection changes.
 // These sections always render with the same height, padded with empty lines if needed.
 const (
-	activePanesHeight  = 5 // "Active Panes" header + up to 4 pane entries
-	beadDetailsHeight  = 7 // "Bead Details" header + title + status + 3 desc lines + labels
-	headerHeight       = 3 // Project title + blank line + "Resources" header
+	activePanesHeight     = 5  // "Active Panes" header + up to 4 pane entries
+	headerHeight          = 3  // Project title + blank line + "Resources" header
+	minBeadDetailsHeight  = 5  // Minimum: header + title + status + 1 desc line + labels
+	maxBeadDetailsHeight  = 15 // Maximum lines for bead details section
+	minListHeight         = 5  // Minimum lines to reserve for the resource list
 )
 
 // cursorDelegate is a custom list delegate that adds '▸' cursor prefix for selected items.
@@ -342,11 +344,39 @@ func (p *ProjectDetailView) viewHeight() int {
 		return 0
 	}
 	// Reserve space for: chrome, header, active panes section, bead details section
-	h := p.termHeight - reservedChromeLines - headerHeight - activePanesHeight - beadDetailsHeight
-	if h < 5 {
-		h = 5
+	h := p.termHeight - reservedChromeLines - headerHeight - activePanesHeight - p.beadDetailsAllowedHeight()
+	if h < minListHeight {
+		h = minListHeight
 	}
 	return h
+}
+
+// beadDetailsAllowedHeight calculates how many lines the bead details section can use.
+// Returns a value between minBeadDetailsHeight and maxBeadDetailsHeight based on terminal size.
+// Extra space beyond minimums is split: 40% to bead details, 60% to list.
+func (p *ProjectDetailView) beadDetailsAllowedHeight() int {
+	if p.termHeight <= 0 {
+		return minBeadDetailsHeight
+	}
+
+	// Calculate baseline requirement (all fixed sections + minimums)
+	fixedOverhead := reservedChromeLines + headerHeight + activePanesHeight
+	baselineTotal := fixedOverhead + minListHeight + minBeadDetailsHeight
+
+	// If we don't have enough for baseline, use minimum
+	if p.termHeight <= baselineTotal {
+		return minBeadDetailsHeight
+	}
+
+	// Extra space beyond baseline - give 40% to bead details
+	extraSpace := p.termHeight - baselineTotal
+	beadExtra := extraSpace * 2 / 5 // 40% of extra goes to bead details
+
+	result := minBeadDetailsHeight + beadExtra
+	if result > maxBeadDetailsHeight {
+		return maxBeadDetailsHeight
+	}
+	return result
 }
 
 // Selected returns the index of the currently selected item in the list.
@@ -530,13 +560,15 @@ func (p *ProjectDetailView) renderActivePanesSection() string {
 	return "\n" + lipgloss.Place(width, activePanesHeight, lipgloss.Left, lipgloss.Top, rendered)
 }
 
-// renderBeadDetailsSection renders the Bead Details section with a fixed height.
-// Always occupies beadDetailsHeight lines, showing empty placeholder when no bead is selected.
+// renderBeadDetailsSection renders the Bead Details section with dynamic height.
+// Always occupies a consistent height (based on terminal size) to prevent layout jumping.
 func (p *ProjectDetailView) renderBeadDetailsSection() string {
 	width := p.termWidth
 	if width <= 0 {
 		width = 80
 	}
+
+	sectionHeight := p.beadDetailsAllowedHeight()
 
 	var content strings.Builder
 	content.WriteString(Styles.Section.Render("Bead Details") + "\n")
@@ -559,10 +591,15 @@ func (p *ProjectDetailView) renderBeadDetailsSection() string {
 			content.WriteString("  " + Styles.Status.Render(strings.Join(statusParts, "  ")) + "\n")
 		}
 
-		// Description (truncate to fit, max 2 lines)
+		// Calculate max description lines: sectionHeight - header(1) - title(1) - status(1) - labels(1)
+		maxDescLines := sectionHeight - 4
+		if maxDescLines < 1 {
+			maxDescLines = 1
+		}
+
+		// Description (show as much as will fit)
 		if bead.Description != "" {
 			descLines := strings.Split(bead.Description, "\n")
-			maxDescLines := 2
 			for i, line := range descLines {
 				if i >= maxDescLines {
 					break
@@ -585,9 +622,9 @@ func (p *ProjectDetailView) renderBeadDetailsSection() string {
 		}
 	}
 
-	// Pad to fixed height using lipgloss.Place
+	// Pad to consistent height using lipgloss.Place
 	rendered := content.String()
-	return "\n" + lipgloss.Place(width, beadDetailsHeight, lipgloss.Left, lipgloss.Top, rendered)
+	return "\n" + lipgloss.Place(width, sectionHeight, lipgloss.Left, lipgloss.Top, rendered)
 }
 
 // resourceStatus returns a status string for display (e.g. "● 2 shells 1 agent").
