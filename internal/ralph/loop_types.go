@@ -1,7 +1,6 @@
 package ralph
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -60,33 +59,38 @@ func (r StopReason) ExitCode() int {
 	}
 }
 
+// parseStopReason converts a string to a StopReason value.
+func parseStopReason(s string) (StopReason, error) {
+	switch s {
+	case "normal":
+		return StopNormal, nil
+	case "max-iterations":
+		return StopMaxIterations, nil
+	case "consecutive-failures":
+		return StopConsecutiveFails, nil
+	case "wall-clock-timeout":
+		return StopWallClock, nil
+	case "context-cancelled":
+		return StopContextCancelled, nil
+	case "all-beads-skipped":
+		return StopAllBeadsSkipped, nil
+	default:
+		return 0, ParseEnumError("StopReason", s)
+	}
+}
+
 // MarshalJSON implements json.Marshaler.
 func (r StopReason) MarshalJSON() ([]byte, error) {
-	return json.Marshal(r.String())
+	return MarshalEnumJSON(r)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (r *StopReason) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
+	parsed, err := UnmarshalEnumJSON(data, parseStopReason)
+	if err != nil {
 		return err
 	}
-	switch s {
-	case "normal":
-		*r = StopNormal
-	case "max-iterations":
-		*r = StopMaxIterations
-	case "consecutive-failures":
-		*r = StopConsecutiveFails
-	case "wall-clock-timeout":
-		*r = StopWallClock
-	case "context-cancelled":
-		*r = StopContextCancelled
-	case "all-beads-skipped":
-		*r = StopAllBeadsSkipped
-	default:
-		return fmt.Errorf("unknown StopReason: %s", s)
-	}
+	*r = parsed
 	return nil
 }
 

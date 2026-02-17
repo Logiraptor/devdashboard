@@ -31,10 +31,10 @@ func containsAll(args []string, want string) bool {
 
 func TestListForRepo_FiltersClosedAndPRBeads(t *testing.T) {
 	entries := []bdListEntry{
-		{ID: "a-1", Title: "Open repo bead", Status: "open", Priority: 2, Labels: []string{}},
-		{ID: "a-2", Title: "In-progress bead", Status: "in_progress", Priority: 1, Labels: []string{}},
-		{ID: "a-3", Title: "Closed bead", Status: "closed", Priority: 2, Labels: []string{}},
-		{ID: "a-4", Title: "PR bead", Status: "open", Priority: 2, Labels: []string{"pr:42"}},
+		{BDEntryBase: BDEntryBase{ID: "a-1", Title: "Open repo bead", Status: "open", Priority: 2, Labels: []string{}}},
+		{BDEntryBase: BDEntryBase{ID: "a-2", Title: "In-progress bead", Status: "in_progress", Priority: 1, Labels: []string{}}},
+		{BDEntryBase: BDEntryBase{ID: "a-3", Title: "Closed bead", Status: "closed", Priority: 2, Labels: []string{}}},
+		{BDEntryBase: BDEntryBase{ID: "a-4", Title: "PR bead", Status: "open", Priority: 2, Labels: []string{"pr:42"}}},
 	}
 
 	key := fmt.Sprintf("%v", []string{"list", "--json", "--limit", "0"})
@@ -62,8 +62,8 @@ func TestListForRepo_FiltersClosedAndPRBeads(t *testing.T) {
 
 func TestListForPR(t *testing.T) {
 	entries := []bdListEntry{
-		{ID: "b-1", Title: "PR bead", Status: "open", Priority: 1, Labels: []string{"pr:7"}},
-		{ID: "b-2", Title: "Closed PR bead", Status: "closed", Priority: 2, Labels: []string{"pr:7"}},
+		{BDEntryBase: BDEntryBase{ID: "b-1", Title: "PR bead", Status: "open", Priority: 1, Labels: []string{"pr:7"}}},
+		{BDEntryBase: BDEntryBase{ID: "b-2", Title: "Closed PR bead", Status: "closed", Priority: 2, Labels: []string{"pr:7"}}},
 	}
 
 	key := fmt.Sprintf("%v", []string{"list", "--label", "pr:7", "--json", "--limit", "0"})

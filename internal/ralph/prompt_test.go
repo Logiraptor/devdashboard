@@ -135,9 +135,11 @@ func main() {}
 
 func TestFetchPromptData_Success(t *testing.T) {
 	runner := mockBDShowFull(&bdShowFull{
-		ID:          "fetch-1",
-		Title:       "Fetched bead",
-		Description: "Full description from bd show.",
+		bdShowBase: bdShowBase{
+			ID:          "fetch-1",
+			Title:       "Fetched bead",
+			Description: "Full description from bd show.",
+		},
 	})
 
 	got, err := FetchPromptData(runner, "/fake", "fetch-1")

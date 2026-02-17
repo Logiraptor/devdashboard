@@ -66,6 +66,19 @@ type toolEventMsg struct {
 	Started bool
 }
 
+// mergeStartMsg indicates a merge operation has started
+type mergeStartMsg struct {
+	BeadID     string
+	BranchName string
+}
+
+// mergeCompleteMsg indicates a merge operation has completed
+type mergeCompleteMsg struct {
+	BeadID  string
+	Success bool
+	ErrMsg  string
+}
+
 // Observer implements ralph.ProgressObserver and forwards events to the TUI.
 type Observer struct {
 	ralph.NoopObserver
@@ -114,6 +127,20 @@ func (o *Observer) OnToolStart(event ralph.ToolEvent) {
 func (o *Observer) OnToolEnd(event ralph.ToolEvent) {
 	if o.program != nil {
 		o.program.Send(toolEventMsg{Event: event, Started: false})
+	}
+}
+
+// OnMergeStart is called when a worktree merge begins.
+func (o *Observer) OnMergeStart(beadID, branchName string) {
+	if o.program != nil {
+		o.program.Send(mergeStartMsg{BeadID: beadID, BranchName: branchName})
+	}
+}
+
+// OnMergeComplete is called when a worktree merge finishes.
+func (o *Observer) OnMergeComplete(beadID string, success bool, errMsg string) {
+	if o.program != nil {
+		o.program.Send(mergeCompleteMsg{BeadID: beadID, Success: success, ErrMsg: errMsg})
 	}
 }
 
@@ -270,6 +297,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route tool event to the appropriate agent using BeadID (set by beadContextObserver)
 		if msg.Event.BeadID != "" {
 			m.multiAgentView.AddToolEvent(msg.Event.BeadID, msg.Event.Name, msg.Started, msg.Event.Attributes)
+		}
+
+	case mergeStartMsg:
+		// Show merge in progress for this bead
+		m.multiAgentView.SetMerging(msg.BeadID, msg.BranchName)
+
+	case mergeCompleteMsg:
+		// Update bead with merge result
+		m.multiAgentView.CompleteMerge(msg.BeadID, msg.Success, msg.ErrMsg)
+		if !msg.Success {
+			// If merge failed, increment failed count (it was counted as success before)
+			m.mu.Lock()
+			m.summary.Succeeded--
+			m.summary.Failed++
+			m.mu.Unlock()
 		}
 
 	case loopEndMsg:

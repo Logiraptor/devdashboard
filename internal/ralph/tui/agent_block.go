@@ -125,11 +125,19 @@ func extractToolDetail(toolName string, attrs map[string]string) string {
 	return ""
 }
 
-// truncateCmd truncates a shell command, preferring to show the start
+// truncateCmd truncates a shell command, stripping cd prefixes and preferring to show the actual command
 func truncateCmd(cmd string, max int) string {
 	// Remove newlines for display
 	cmd = strings.ReplaceAll(cmd, "\n", " ")
 	cmd = strings.TrimSpace(cmd)
+
+	// Strip "cd /path && " prefix - common when running in worktrees
+	if strings.HasPrefix(cmd, "cd ") {
+		if idx := strings.Index(cmd, " && "); idx != -1 {
+			cmd = strings.TrimSpace(cmd[idx+4:])
+		}
+	}
+
 	return truncate(cmd, max)
 }
 
@@ -141,6 +149,7 @@ type AgentBlockStyles struct {
 	BorderSuccess   lipgloss.Style
 	BorderFailed    lipgloss.Style
 	BorderQuestion  lipgloss.Style
+	BorderMerging   lipgloss.Style
 
 	// Header line
 	BeadID    lipgloss.Style
@@ -159,6 +168,7 @@ type AgentBlockStyles struct {
 	SuccessIcon  lipgloss.Style
 	FailedIcon   lipgloss.Style
 	QuestionIcon lipgloss.Style
+	MergingIcon  lipgloss.Style
 }
 
 // DefaultAgentBlockStyles returns styles for agent blocks
@@ -171,6 +181,7 @@ func DefaultAgentBlockStyles() AgentBlockStyles {
 	red := lipgloss.Color("#f38ba8")
 	yellow := lipgloss.Color("#f9e2af")
 	blue := lipgloss.Color("#89b4fa")
+	peach := lipgloss.Color("#fab387")
 	surface0 := lipgloss.Color("#313244")
 	subtext0 := lipgloss.Color("#a6adc8")
 	subtext1 := lipgloss.Color("#bac2de")
@@ -195,6 +206,10 @@ func DefaultAgentBlockStyles() AgentBlockStyles {
 		BorderQuestion: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(yellow).
+			Padding(0, 1),
+		BorderMerging: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(peach).
 			Padding(0, 1),
 
 		BeadID: lipgloss.NewStyle().
@@ -224,6 +239,8 @@ func DefaultAgentBlockStyles() AgentBlockStyles {
 			Foreground(red),
 		QuestionIcon: lipgloss.NewStyle().
 			Foreground(yellow),
+		MergingIcon: lipgloss.NewStyle().
+			Foreground(peach),
 	}
 }
 
@@ -259,6 +276,9 @@ func (b *AgentBlock) Render(styles AgentBlockStyles, width int) string {
 	case "question":
 		headerIcon = "?"
 		headerIconStyle = styles.QuestionIcon
+	case "merging":
+		headerIcon = "⤵" // Merge arrow
+		headerIconStyle = styles.MergingIcon
 	}
 
 	// Calculate available width for title
@@ -310,6 +330,8 @@ func (b *AgentBlock) Render(styles AgentBlockStyles, width int) string {
 		borderStyle = styles.BorderFailed
 	case "question":
 		borderStyle = styles.BorderQuestion
+	case "merging":
+		borderStyle = styles.BorderMerging
 	}
 
 	return borderStyle.Width(contentWidth).Render(content)
@@ -335,6 +357,7 @@ var toolIcons = map[string]string{
 	"Delete":         "✕",
 	"WebFetch":       "⬡",
 	"TodoWrite":      "▣",
+	"git merge":      "⤵",
 }
 
 // getToolIcon returns an icon for a tool, with fallback

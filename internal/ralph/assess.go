@@ -1,12 +1,12 @@
 package ralph
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
+	"devdeploy/internal/jsonutil"
 )
 
 // Outcome represents the result of an agent iteration.
@@ -35,37 +35,41 @@ func (o Outcome) String() string {
 	}
 }
 
+// parseOutcome converts a string to an Outcome value.
+func parseOutcome(s string) (Outcome, error) {
+	switch s {
+	case "success":
+		return OutcomeSuccess, nil
+	case "question":
+		return OutcomeQuestion, nil
+	case "failure":
+		return OutcomeFailure, nil
+	case "timeout":
+		return OutcomeTimeout, nil
+	default:
+		return 0, ParseEnumError("Outcome", s)
+	}
+}
+
 // MarshalJSON implements json.Marshaler.
 func (o Outcome) MarshalJSON() ([]byte, error) {
-	return json.Marshal(o.String())
+	return MarshalEnumJSON(o)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (o *Outcome) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
+	parsed, err := UnmarshalEnumJSON(data, parseOutcome)
+	if err != nil {
 		return err
 	}
-	switch s {
-	case "success":
-		*o = OutcomeSuccess
-	case "question":
-		*o = OutcomeQuestion
-	case "failure":
-		*o = OutcomeFailure
-	case "timeout":
-		*o = OutcomeTimeout
-	default:
-		return fmt.Errorf("unknown Outcome: %s", s)
-	}
+	*o = parsed
 	return nil
 }
 
 // bdShowEntry mirrors the JSON shape emitted by `bd show <id> --json`.
 // Only the fields we need for assessment are included.
 type bdShowEntry struct {
-	ID           string      `json:"id"`
-	Status       string      `json:"status"`
+	bdShowBase
 	Dependencies []bdShowDep `json:"dependencies"`
 	Dependents   []bdShowDep `json:"dependents"`
 }
@@ -143,12 +147,9 @@ func Assess(workDir string, beadID string, result *AgentResult, bdShow BDShowFun
 // parseBDShow decodes the JSON array from `bd show <id> --json` and returns
 // the first entry. bd show --json always returns a single-element array.
 func parseBDShow(data []byte) (*bdShowEntry, error) {
-	var entries []bdShowEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
-	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("empty result from bd show")
+	entries, err := jsonutil.UnmarshalArray[bdShowEntry](data, "parsing bd show output")
+	if err != nil {
+		return nil, err
 	}
 	return &entries[0], nil
 }

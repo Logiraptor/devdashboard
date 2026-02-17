@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"devdeploy/internal/jsonutil"
 	"devdeploy/internal/trace"
 )
 
@@ -186,71 +187,81 @@ func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Op
 //
 //	{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
 //
-// Returns nil if the line is not a tool_call event or cannot be parsed.
-func ParseToolEvent(jsonLine string) *ToolEvent {
+// Returns (nil, nil) if the line is not a tool_call event.
+// Returns (nil, error) if the line is a tool_call event but has validation errors.
+// Returns (*ToolEvent, nil) if parsing succeeds.
+func ParseToolEvent(jsonLine string) (*ToolEvent, error) {
 	if jsonLine == "" {
-		return nil
+		return nil, nil // Empty line is not an error, just not a tool event
 	}
 
-	var event map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonLine), &event); err != nil {
-		return nil
+	// First check if tool_call is explicitly null by looking at raw JSON
+	var eventMap map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonLine), &eventMap); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	eventType, _ := event["type"].(string)
+	eventType, _ := eventMap["type"].(string)
 	if eventType != "tool_call" {
-		return nil
+		return nil, nil // Not a tool_call event, not an error
 	}
 
-	subtype, _ := event["subtype"].(string)
+	// Check for explicit null tool_call
+	if toolCallVal, exists := eventMap["tool_call"]; exists && toolCallVal == nil {
+		return nil, fmt.Errorf("tool_call event has null 'tool_call' field")
+	}
+
+	// Now unmarshal into typed struct
+	var raw toolEventRaw
+	if err := json.Unmarshal([]byte(jsonLine), &raw); err != nil {
+		// This shouldn't happen since we already validated JSON above
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	// Validate tool_call event structure
+	if err := validateToolEventTyped(&raw, eventMap); err != nil {
+		return nil, err
+	}
+
 	// New format uses "started" and "completed", legacy uses "started" and "ended"
-	started := subtype == "started"
+	started := raw.Subtype == "started"
 
 	var name string
 	attrs := make(map[string]string)
 
 	// Try new format first: tool_call object with typed tool call
-	if toolCall, ok := event["tool_call"].(map[string]interface{}); ok {
-		name, attrs = parseNewToolCallFormat(toolCall)
+	if raw.ToolCall != nil && len(raw.ToolCall) > 0 {
+		name, attrs = parseNewToolCallFormatTyped(raw.ToolCall)
 	}
 
 	// Fall back to legacy format: name and arguments at top level
 	if name == "" {
-		name, _ = event["name"].(string)
-		if args, ok := event["arguments"].(map[string]interface{}); ok {
-			attrs = extractArgsAsAttrs(args)
+		name = raw.Name
+		if raw.Args != nil {
+			attrs = extractArgsAsAttrs(raw.Args)
 		}
 		// For legacy format, also extract other top-level fields as attributes
-		for k, v := range event {
-			if k == "type" || k == "subtype" || k == "name" || k == "arguments" || k == "call_id" {
-				continue
-			}
-			if _, exists := attrs[k]; !exists {
-				var strVal string
-				switch val := v.(type) {
-				case string:
-					strVal = val
-				case float64:
-					strVal = fmt.Sprintf("%.0f", val)
-				case bool:
-					strVal = fmt.Sprintf("%t", val)
-				default:
-					strVal = fmt.Sprintf("%v", val)
+		// We need to unmarshal again to get all fields since toolEventRaw only captures known ones
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonLine), &event); err == nil {
+			for k, v := range event {
+				if k == "type" || k == "subtype" || k == "name" || k == "arguments" || k == "call_id" {
+					continue
 				}
-				attrs[k] = strVal
+				if _, exists := attrs[k]; !exists {
+					attrs[k] = jsonutil.ToString(v)
+				}
 			}
 		}
 	}
 
 	if name == "" {
-		return nil
+		return nil, fmt.Errorf("tool_call event missing tool name: expected either 'tool_call' object (new format) or 'name' field (legacy format)")
 	}
 
 	// Extract call_id for matching start/end events
-	var id string
-	if callID, ok := event["call_id"].(string); ok && callID != "" {
-		id = callID
-	} else {
+	id := raw.CallID
+	if id == "" {
 		// Generate a unique ID if not present
 		id = trace.NewSpanID()
 	}
@@ -261,12 +272,151 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 		Started:    started,
 		Timestamp:  time.Now(),
 		Attributes: attrs,
-	}
+	}, nil
 }
 
-// parseNewToolCallFormat extracts tool name and attributes from the new agent CLI format.
-// The tool_call object contains typed tool calls like shellToolCall, readToolCall, etc.
-func parseNewToolCallFormat(toolCall map[string]interface{}) (string, map[string]string) {
+// validateToolEventTyped validates a tool_call event structure using typed structs.
+// eventMap is the raw parsed JSON map used to check for explicit null values.
+// Returns a detailed error if validation fails.
+func validateToolEventTyped(raw *toolEventRaw, eventMap map[string]interface{}) error {
+	// Check subtype
+	if raw.Subtype == "" {
+		return fmt.Errorf("tool_call event missing required 'subtype' field")
+	}
+	if raw.Subtype != "started" && raw.Subtype != "completed" && raw.Subtype != "ended" {
+		return fmt.Errorf("tool_call event has invalid 'subtype' %q: expected 'started', 'completed' (new format), or 'ended' (legacy format)", raw.Subtype)
+	}
+
+	// Check for format indicators
+	// Check if tool_call field exists in the raw JSON (distinguishes null from missing)
+	_, toolCallExists := eventMap["tool_call"]
+	hasName := raw.Name != ""
+
+	// Validate format-specific requirements
+	if toolCallExists {
+		// tool_call field exists - check if it's valid
+		if raw.ToolCall == nil {
+			// This case was already handled above, but double-check
+			return fmt.Errorf("tool_call event has null 'tool_call' field")
+		}
+		if len(raw.ToolCall) == 0 {
+			return fmt.Errorf("tool_call event 'tool_call' object is empty: expected one typed tool call (e.g., shellToolCall, readToolCall)")
+		}
+
+		// Check for at least one recognized tool call type
+		recognizedTypes := []string{
+			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
+			"strReplaceToolCall", "grepToolCall", "globToolCall",
+			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
+			"todoWriteToolCall",
+		}
+		found := false
+		for _, toolType := range recognizedTypes {
+			if _, ok := raw.ToolCall[toolType]; ok {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// List available keys for better error message
+			keys := make([]string, 0, len(raw.ToolCall))
+			for k := range raw.ToolCall {
+				keys = append(keys, k)
+			}
+			return fmt.Errorf("tool_call event 'tool_call' object contains unrecognized tool type: found %v, expected one of %v", keys, recognizedTypes)
+		}
+	} else if hasName {
+		// Legacy format: name is present, which is sufficient
+		// Arguments are optional in legacy format
+	} else {
+		// Neither format indicator present
+		return fmt.Errorf("tool_call event missing tool identifier: expected either 'tool_call' object (new format) or 'name' field (legacy format)")
+	}
+
+	return nil
+}
+
+// validateToolEvent validates a tool_call event structure and returns a detailed error
+// if validation fails. It distinguishes between different format variations and missing fields.
+// This is kept for backward compatibility but validateToolEventTyped is preferred.
+func validateToolEvent(event map[string]interface{}) error {
+	// Check subtype
+	subtype, ok := event["subtype"].(string)
+	if !ok || subtype == "" {
+		return fmt.Errorf("tool_call event missing required 'subtype' field")
+	}
+	if subtype != "started" && subtype != "completed" && subtype != "ended" {
+		return fmt.Errorf("tool_call event has invalid 'subtype' %q: expected 'started', 'completed' (new format), or 'ended' (legacy format)", subtype)
+	}
+
+	// Check for format indicators
+	hasToolCall := false
+	hasName := false
+
+	if toolCall, ok := event["tool_call"]; ok {
+		if toolCall == nil {
+			return fmt.Errorf("tool_call event has null 'tool_call' field")
+		}
+		if _, ok := toolCall.(map[string]interface{}); !ok {
+			return fmt.Errorf("tool_call event has 'tool_call' field with invalid type: expected object")
+		}
+		hasToolCall = true
+	}
+
+	if name, ok := event["name"]; ok {
+		if name == nil {
+			return fmt.Errorf("tool_call event has null 'name' field")
+		}
+		if _, ok := name.(string); !ok {
+			return fmt.Errorf("tool_call event has 'name' field with invalid type: expected string")
+		}
+		hasName = true
+	}
+
+	// Validate format-specific requirements
+	if hasToolCall {
+		// New format: validate tool_call structure
+		toolCall, _ := event["tool_call"].(map[string]interface{})
+		if len(toolCall) == 0 {
+			return fmt.Errorf("tool_call event 'tool_call' object is empty: expected one typed tool call (e.g., shellToolCall, readToolCall)")
+		}
+
+		// Check for at least one recognized tool call type
+		recognizedTypes := []string{
+			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
+			"strReplaceToolCall", "grepToolCall", "globToolCall",
+			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
+			"todoWriteToolCall",
+		}
+		found := false
+		for _, toolType := range recognizedTypes {
+			if _, ok := toolCall[toolType]; ok {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// List available keys for better error message
+			keys := make([]string, 0, len(toolCall))
+			for k := range toolCall {
+				keys = append(keys, k)
+			}
+			return fmt.Errorf("tool_call event 'tool_call' object contains unrecognized tool type: found %v, expected one of %v", keys, recognizedTypes)
+		}
+	} else if hasName {
+		// Legacy format: name is present, which is sufficient
+		// Arguments are optional in legacy format
+	} else {
+		// Neither format indicator present
+		return fmt.Errorf("tool_call event missing tool identifier: expected either 'tool_call' object (new format) or 'name' field (legacy format)")
+	}
+
+	return nil
+}
+
+// parseNewToolCallFormatTyped extracts tool name and attributes from the new agent CLI format
+// using typed structs. The tool_call object contains typed tool calls like shellToolCall, readToolCall, etc.
+func parseNewToolCallFormatTyped(toolCall map[string]interface{}) (string, map[string]string) {
 	attrs := make(map[string]string)
 
 	// Map of tool call types to canonical tool names
@@ -297,23 +447,19 @@ func parseNewToolCallFormat(toolCall map[string]interface{}) (string, map[string
 	return "", attrs
 }
 
+// parseNewToolCallFormat extracts tool name and attributes from the new agent CLI format.
+// The tool_call object contains typed tool calls like shellToolCall, readToolCall, etc.
+// This is kept for backward compatibility but parseNewToolCallFormatTyped is preferred.
+func parseNewToolCallFormat(toolCall map[string]interface{}) (string, map[string]string) {
+	return parseNewToolCallFormatTyped(toolCall)
+}
+
 // extractArgsAsAttrs converts tool arguments to string attributes.
 func extractArgsAsAttrs(args map[string]interface{}) map[string]string {
 	attrs := make(map[string]string)
 
 	for k, v := range args {
-		// Convert values to strings
-		var strVal string
-		switch val := v.(type) {
-		case string:
-			strVal = val
-		case float64:
-			strVal = fmt.Sprintf("%.0f", val)
-		case bool:
-			strVal = fmt.Sprintf("%t", val)
-		default:
-			strVal = fmt.Sprintf("%v", val)
-		}
+		strVal := jsonutil.ToString(v)
 
 		// Map common argument names to standard attribute names
 		switch k {
@@ -382,7 +528,13 @@ func (w *toolEventWriter) Write(p []byte) (n int, err error) {
 		line = strings.TrimSuffix(line, "\n")
 
 		// Try to parse as tool event
-		event := ParseToolEvent(line)
+		event, err := ParseToolEvent(line)
+		if err != nil {
+			// Log validation errors for tool_call events
+			// This helps debug format issues without breaking the stream
+			fmt.Fprintf(os.Stderr, "tool event validation error: %v\n", err)
+			continue
+		}
 		if event != nil {
 			if event.Started {
 				w.observer.OnToolStart(*event)
@@ -408,29 +560,31 @@ func parseAgentResultEvent(stdout string) (chatID, errorMsg string) {
 			continue
 		}
 
-		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
+		var raw agentResultEventRaw
+		if !jsonutil.UnmarshalLineSafe(line, &raw) {
 			continue
 		}
 
-		eventType, _ := event["type"].(string)
-		if eventType != "result" {
+		if raw.Type != "result" {
 			continue
 		}
 
-		// Extract chatId - may be at top level or nested
-		if id, ok := event["chatId"].(string); ok {
-			chatID = id
-		} else if id, ok := event["chat_id"].(string); ok {
-			chatID = id
+		// Extract chatId - may be at top level (camelCase or snake_case)
+		if raw.ChatID != "" {
+			chatID = raw.ChatID
+		} else if raw.ChatIDAlt != "" {
+			chatID = raw.ChatIDAlt
 		}
 
-		// Extract error message
-		if errStr, ok := event["error"].(string); ok && errStr != "" {
-			errorMsg = errStr
-		} else if errObj, ok := event["error"].(map[string]interface{}); ok {
-			if msg, ok := errObj["message"].(string); ok {
-				errorMsg = msg
+		// Extract error message - can be string or object
+		if raw.Error != nil {
+			switch errVal := raw.Error.(type) {
+			case string:
+				errorMsg = errVal
+			case map[string]interface{}:
+				if msg, ok := errVal["message"].(string); ok {
+					errorMsg = msg
+				}
 			}
 		}
 	}

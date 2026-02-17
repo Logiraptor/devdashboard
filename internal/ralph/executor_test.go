@@ -313,7 +313,10 @@ more garbage`
 
 func TestParseToolEvent_Started(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -330,7 +333,10 @@ func TestParseToolEvent_Started(t *testing.T) {
 
 func TestParseToolEvent_Ended(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"ended","name":"read","duration_ms":123}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -347,7 +353,10 @@ func TestParseToolEvent_Ended(t *testing.T) {
 
 func TestParseToolEvent_ShellCommand(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","name":"shell","arguments":{"command":"ls -la"}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -361,7 +370,10 @@ func TestParseToolEvent_ShellCommand(t *testing.T) {
 
 func TestParseToolEvent_SearchQuery(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","name":"search","arguments":{"query":"find function"}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -375,7 +387,10 @@ func TestParseToolEvent_SearchQuery(t *testing.T) {
 
 func TestParseToolEvent_WriteFile(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","name":"write","arguments":{"path":"bar.go","file_path":"bar.go"}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -389,37 +404,58 @@ func TestParseToolEvent_WriteFile(t *testing.T) {
 
 func TestParseToolEvent_NotToolCall(t *testing.T) {
 	jsonLine := `{"type":"result","chatId":"chat-123"}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Errorf("ParseToolEvent returned error %v, want nil", err)
+	}
 	if event != nil {
 		t.Errorf("ParseToolEvent returned %+v, want nil", event)
 	}
 }
 
 func TestParseToolEvent_EmptyString(t *testing.T) {
-	event := ParseToolEvent("")
+	event, err := ParseToolEvent("")
+	if err != nil {
+		t.Errorf("ParseToolEvent returned error %v, want nil", err)
+	}
 	if event != nil {
 		t.Errorf("ParseToolEvent returned %+v, want nil", event)
 	}
 }
 
 func TestParseToolEvent_InvalidJSON(t *testing.T) {
-	event := ParseToolEvent("not json")
+	event, err := ParseToolEvent("not json")
+	if err == nil {
+		t.Error("ParseToolEvent should return error for invalid JSON")
+	}
 	if event != nil {
 		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "invalid JSON") {
+		t.Errorf("Error message should mention 'invalid JSON', got: %v", err)
 	}
 }
 
 func TestParseToolEvent_MissingName(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started"}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for missing tool identifier")
+	}
 	if event != nil {
 		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "missing tool identifier") {
+		t.Errorf("Error message should mention 'missing tool identifier', got: %v", err)
 	}
 }
 
 func TestParseToolEvent_GenericAttributes(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","name":"custom_tool","arguments":{"arg1":"value1","arg2":"value2"},"extra_field":"extra_value"}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -438,7 +474,10 @@ func TestParseToolEvent_GenericAttributes(t *testing.T) {
 
 func TestParseToolEvent_NewFormatShell(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"tool_abc123","tool_call":{"shellToolCall":{"args":{"command":"ls -la"}}}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -458,7 +497,10 @@ func TestParseToolEvent_NewFormatShell(t *testing.T) {
 
 func TestParseToolEvent_NewFormatRead(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"tool_xyz789","tool_call":{"readToolCall":{"args":{"path":"/some/file.go"}}}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -472,7 +514,10 @@ func TestParseToolEvent_NewFormatRead(t *testing.T) {
 
 func TestParseToolEvent_NewFormatCompleted(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"completed","call_id":"tool_abc123","tool_call":{"shellToolCall":{"args":{"command":"ls"},"result":{"success":{}}}}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -486,7 +531,10 @@ func TestParseToolEvent_NewFormatCompleted(t *testing.T) {
 
 func TestParseToolEvent_NewFormatGrep(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"grep_1","tool_call":{"grepToolCall":{"args":{"pattern":"func main","path":"./"}}}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -500,7 +548,10 @@ func TestParseToolEvent_NewFormatGrep(t *testing.T) {
 
 func TestParseToolEvent_NewFormatGlob(t *testing.T) {
 	jsonLine := `{"type":"tool_call","subtype":"started","call_id":"glob_1","tool_call":{"globToolCall":{"args":{"glob_pattern":"**/*.go"}}}}`
-	event := ParseToolEvent(jsonLine)
+	event, err := ParseToolEvent(jsonLine)
+	if err != nil {
+		t.Fatalf("ParseToolEvent returned error: %v", err)
+	}
 	if event == nil {
 		t.Fatal("ParseToolEvent returned nil")
 	}
@@ -509,6 +560,106 @@ func TestParseToolEvent_NewFormatGlob(t *testing.T) {
 	}
 	if event.Attributes["glob_pattern"] != "**/*.go" {
 		t.Errorf("Attributes[glob_pattern] = %q, want %q", event.Attributes["glob_pattern"], "**/*.go")
+	}
+}
+
+// Validation error tests
+
+func TestParseToolEvent_MissingSubtype(t *testing.T) {
+	jsonLine := `{"type":"tool_call"}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for missing subtype")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "subtype") {
+		t.Errorf("Error message should mention 'subtype', got: %v", err)
+	}
+}
+
+func TestParseToolEvent_InvalidSubtype(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"invalid"}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for invalid subtype")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "invalid") && !strings.Contains(err.Error(), "subtype") {
+		t.Errorf("Error message should mention invalid subtype, got: %v", err)
+	}
+}
+
+func TestParseToolEvent_NewFormatEmptyToolCall(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","tool_call":{}}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for empty tool_call object")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "empty") {
+		t.Errorf("Error message should mention empty tool_call, got: %v", err)
+	}
+}
+
+func TestParseToolEvent_NewFormatUnrecognizedToolType(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","tool_call":{"unknownToolCall":{"args":{}}}}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for unrecognized tool type")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "unrecognized") {
+		t.Errorf("Error message should mention unrecognized tool type, got: %v", err)
+	}
+}
+
+func TestParseToolEvent_NullToolCall(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","tool_call":null}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for null tool_call")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "null") {
+		t.Errorf("Error message should mention null tool_call, got: %v", err)
+	}
+}
+
+func TestParseToolEvent_NullName(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":null}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for null name")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "null") && !strings.Contains(err.Error(), "name") {
+		t.Errorf("Error message should mention null name, got: %v", err)
+	}
+}
+
+func TestParseToolEvent_InvalidNameType(t *testing.T) {
+	jsonLine := `{"type":"tool_call","subtype":"started","name":123}`
+	event, err := ParseToolEvent(jsonLine)
+	if err == nil {
+		t.Error("ParseToolEvent should return error for invalid name type")
+	}
+	if event != nil {
+		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	}
+	if err != nil && !strings.Contains(err.Error(), "invalid type") && !strings.Contains(err.Error(), "name") {
+		t.Errorf("Error message should mention invalid name type, got: %v", err)
 	}
 }
 

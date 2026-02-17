@@ -3,13 +3,13 @@
 package beads
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"devdeploy/internal/bd"
+	"devdeploy/internal/jsonutil"
 )
 
 // Bead represents a bd issue associated with a project resource.
@@ -32,15 +32,21 @@ type bdDependency struct {
 	Type        string `json:"type"`
 }
 
+// BDEntryBase contains fields shared by bd ready and bd list JSON output.
+type BDEntryBase struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Priority  int       `json:"priority"`
+	Labels    []string  `json:"labels"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // bdListEntry mirrors the JSON shape emitted by `bd list --json`.
+// It embeds BDEntryBase for common fields and adds variant-specific fields.
 type bdListEntry struct {
-	ID           string         `json:"id"`
-	Title        string         `json:"title"`
+	BDEntryBase
 	Description  string         `json:"description"`
-	Status       string         `json:"status"`
-	Priority     int            `json:"priority"`
-	Labels       []string       `json:"labels"`
-	CreatedAt    time.Time      `json:"created_at"`
 	IssueType    string         `json:"issue_type"`
 	Dependencies []bdDependency `json:"dependencies"`
 }
@@ -98,9 +104,9 @@ func ListForPR(worktreeDir, projectName string, prNumber int) ([]Bead, error) {
 // parseBeads decodes JSON output from bd list into Bead slice.
 // Filters to open/in_progress by default (closed beads are noise).
 func parseBeads(data []byte) ([]Bead, error) {
-	var entries []bdListEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("beads.parseBeads: failed to unmarshal JSON: %w", err)
+	entries, err := jsonutil.UnmarshalArrayAllowEmpty[bdListEntry](data, "beads.parseBeads")
+	if err != nil {
+		return nil, err
 	}
 
 	result := make([]Bead, 0, len(entries))
@@ -108,17 +114,7 @@ func parseBeads(data []byte) ([]Bead, error) {
 		if e.Status == StatusClosed {
 			continue
 		}
-		result = append(result, Bead{
-			ID:          e.ID,
-			Title:       e.Title,
-			Description: e.Description,
-			Status:      e.Status,
-			Priority:    e.Priority,
-			Labels:      e.Labels,
-			CreatedAt:   e.CreatedAt,
-			IssueType:   e.IssueType,
-			ParentID:    extractParentID(e.Dependencies),
-		})
+		result = append(result, beadFromBase(e.BDEntryBase, e.Description, e.IssueType, extractParentID(e.Dependencies)))
 	}
 	return result, nil
 }
@@ -132,6 +128,22 @@ func extractParentID(deps []bdDependency) string {
 		}
 	}
 	return ""
+}
+
+// beadFromBase creates a Bead from BDEntryBase with optional additional fields.
+// This consolidates the common pattern of mapping BDEntryBase fields to Bead.
+func beadFromBase(base BDEntryBase, description, issueType, parentID string) Bead {
+	return Bead{
+		ID:          base.ID,
+		Title:       base.Title,
+		Description: description,
+		Status:      base.Status,
+		Priority:    base.Priority,
+		Labels:      base.Labels,
+		CreatedAt:   base.CreatedAt,
+		IssueType:   issueType,
+		ParentID:    parentID,
+	}
 }
 
 // SortHierarchically reorders beads so that epics appear first, each

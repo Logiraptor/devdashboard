@@ -91,3 +91,21 @@ func (m *MultiObserver) OnToolEnd(event ToolEvent) {
 		}
 	}
 }
+
+// OnMergeStart forwards the call to all observers.
+func (m *MultiObserver) OnMergeStart(beadID, branchName string) {
+	for _, obs := range m.observers {
+		if obs != nil {
+			safeCall(func() { obs.OnMergeStart(beadID, branchName) })
+		}
+	}
+}
+
+// OnMergeComplete forwards the call to all observers.
+func (m *MultiObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
+	for _, obs := range m.observers {
+		if obs != nil {
+			safeCall(func() { obs.OnMergeComplete(beadID, success, errMsg) })
+		}
+	}
+}

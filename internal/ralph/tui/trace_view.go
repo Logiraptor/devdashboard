@@ -224,7 +224,7 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 		}
 	case "shell":
 		if cmd, ok := span.Attributes["command"]; ok {
-			detail = truncate(cmd, maxDetail)
+			detail = truncateCmd(cmd, maxDetail)
 		}
 	case "search", "grep":
 		if q, ok := span.Attributes["query"]; ok {

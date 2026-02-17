@@ -27,9 +27,9 @@ func mockBDError(msg string) BDRunner {
 func TestReadyBeads_PrioritySorting(t *testing.T) {
 	now := time.Now()
 	entries := []bdReadyEntry{
-		{ID: "low-pri", Title: "Low priority", Status: "open", Priority: 3, CreatedAt: now.Add(-1 * time.Hour)},
-		{ID: "high-pri", Title: "High priority", Status: "open", Priority: 1, CreatedAt: now},
-		{ID: "mid-pri", Title: "Mid priority", Status: "open", Priority: 2, CreatedAt: now.Add(-2 * time.Hour)},
+		{beads.BDEntryBase{ID: "low-pri", Title: "Low priority", Status: "open", Priority: 3, CreatedAt: now.Add(-1 * time.Hour)}},
+		{beads.BDEntryBase{ID: "high-pri", Title: "High priority", Status: "open", Priority: 1, CreatedAt: now}},
+		{beads.BDEntryBase{ID: "mid-pri", Title: "Mid priority", Status: "open", Priority: 2, CreatedAt: now.Add(-2 * time.Hour)}},
 	}
 
 	got, err := ReadyBeadsWithRunner(mockBDReady(entries), "/fake/dir", "")
@@ -47,9 +47,9 @@ func TestReadyBeads_PrioritySorting(t *testing.T) {
 func TestReadyBeads_SamePriority_OldestFirst(t *testing.T) {
 	now := time.Now()
 	entries := []bdReadyEntry{
-		{ID: "newer", Title: "Newer bead", Status: "open", Priority: 2, CreatedAt: now},
-		{ID: "oldest", Title: "Oldest bead", Status: "open", Priority: 2, CreatedAt: now.Add(-48 * time.Hour)},
-		{ID: "middle", Title: "Middle bead", Status: "open", Priority: 2, CreatedAt: now.Add(-24 * time.Hour)},
+		{beads.BDEntryBase{ID: "newer", Title: "Newer bead", Status: "open", Priority: 2, CreatedAt: now}},
+		{beads.BDEntryBase{ID: "oldest", Title: "Oldest bead", Status: "open", Priority: 2, CreatedAt: now.Add(-48 * time.Hour)}},
+		{beads.BDEntryBase{ID: "middle", Title: "Middle bead", Status: "open", Priority: 2, CreatedAt: now.Add(-24 * time.Hour)}},
 	}
 
 	got, err := ReadyBeadsWithRunner(mockBDReady(entries), "/fake/dir", "")
@@ -141,7 +141,7 @@ func TestReadyBeads_NoParentWhenEmpty(t *testing.T) {
 func TestReadyBeads_SingleBead(t *testing.T) {
 	now := time.Now()
 	entries := []bdReadyEntry{
-		{ID: "only-one", Title: "Only bead", Status: "open", Priority: 2, Labels: []string{"project:p"}, CreatedAt: now},
+		{beads.BDEntryBase{ID: "only-one", Title: "Only bead", Status: "open", Priority: 2, Labels: []string{"project:p"}, CreatedAt: now}},
 	}
 
 	got, err := ReadyBeadsWithRunner(mockBDReady(entries), "/fake/dir", "")
@@ -160,12 +160,14 @@ func TestReadyBeads_ReturnsBeadFields(t *testing.T) {
 	now := time.Date(2026, 2, 8, 12, 0, 0, 0, time.UTC)
 	entries := []bdReadyEntry{
 		{
-			ID:        "full-bead",
-			Title:     "Full field bead",
-			Status:    "open",
-			Priority:  1,
-			Labels:    []string{"project:test", "team:core"},
-			CreatedAt: now,
+			beads.BDEntryBase{
+				ID:        "full-bead",
+				Title:     "Full field bead",
+				Status:    "open",
+				Priority:  1,
+				Labels:    []string{"project:test", "team:core"},
+				CreatedAt: now,
+			},
 		},
 	}
 
