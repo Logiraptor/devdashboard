@@ -80,6 +80,12 @@ func newBeadContextObserver(inner ProgressObserver, beadID string) ProgressObser
 	return &beadContextObserver{inner: inner, beadID: beadID}
 }
 
+// withBeadID tags a tool event with the bead ID.
+func (o *beadContextObserver) withBeadID(event ToolEvent) ToolEvent {
+	event.BeadID = o.beadID
+	return event
+}
+
 func (o *beadContextObserver) OnLoopStart(rootBead string) {
 	o.inner.OnLoopStart(rootBead)
 }
@@ -97,13 +103,11 @@ func (o *beadContextObserver) OnLoopEnd(result *CoreResult) {
 }
 
 func (o *beadContextObserver) OnToolStart(event ToolEvent) {
-	event.BeadID = o.beadID
-	o.inner.OnToolStart(event)
+	o.inner.OnToolStart(o.withBeadID(event))
 }
 
 func (o *beadContextObserver) OnToolEnd(event ToolEvent) {
-	event.BeadID = o.beadID
-	o.inner.OnToolEnd(event)
+	o.inner.OnToolEnd(o.withBeadID(event))
 }
 
 // Core orchestrates parallel agent execution for a bead tree.
