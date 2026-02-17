@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"devdeploy/internal/worktree"
 )
 
 // WorktreeManager manages temporary git worktrees for concurrent agent execution.
@@ -132,35 +134,6 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 	return worktreePath, branchName, nil
 }
 
-// FindWorktreeForBranch finds the worktree that has the given branch checked out.
-// Returns the worktree path, or empty string if not found.
-// Searches from the source repository.
-func (w *WorktreeManager) FindWorktreeForBranch(branchName string) string {
-	cmd := exec.Command("git", "-C", w.srcRepo, "worktree", "list", "--porcelain")
-	var out strings.Builder
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-
-	// Porcelain format: blocks separated by blank lines.
-	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
-	var currentPath string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-		}
-		if strings.HasPrefix(line, "branch ") {
-			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" {
-				return currentPath
-			}
-		}
-	}
-	return ""
-}
-
 // MergeRepo returns the repository path to use for merging.
 // If baseWorkDir is already on the target branch, use it.
 // Otherwise, find the worktree that has the target branch.
@@ -171,7 +144,7 @@ func (w *WorktreeManager) MergeRepo(targetBranch string) string {
 		return w.baseWorkDir
 	}
 	// Find worktree with target branch
-	if wtPath := w.FindWorktreeForBranch(targetBranch); wtPath != "" {
+	if wtPath := worktree.FindWorktreeForBranch(w.srcRepo, targetBranch, false); wtPath != "" {
 		return wtPath
 	}
 	// Fallback to srcRepo (may fail if branch is checked out elsewhere)

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"devdeploy/internal/worktree"
 )
 
 const (
@@ -961,7 +963,7 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	}
 
 	// Scan existing worktrees for one already on this branch.
-	if existing := m.findWorktreeForBranch(srcRepo, branchName); existing != "" {
+	if existing := worktree.FindWorktreeForBranch(srcRepo, branchName, true); existing != "" {
 		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
 		// The worktree is usable even if rule injection fails.
 		_ = InjectWorktreeRules(existing)
@@ -1022,34 +1024,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	// Invalidate cache for this project since a new worktree was created
 	m.ClearPRCacheForProject(projectName)
 	return dstPath, nil
-}
-
-// findWorktreeForBranch scans git worktree list output for a worktree
-// that has the given branch checked out. Returns the worktree path or "".
-func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
-	cmd := exec.Command("git", "-C", srcRepo, "worktree", "list", "--porcelain")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-
-	// Porcelain format: blocks separated by blank lines.
-	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
-	var currentPath string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-		}
-		if strings.HasPrefix(line, "branch ") {
-			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" && currentPath != srcRepo {
-				return currentPath
-			}
-		}
-	}
-	return ""
 }
 
 // buildResourcesFromReposAndPRs builds a flat []Resource from repos and PRs.
