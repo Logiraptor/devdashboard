@@ -42,7 +42,7 @@ type LivenessChecker func() (map[string]bool, error)
 // Tracker manages the mapping from resources to active tmux panes.
 // Safe for concurrent use.
 type Tracker struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	panes    map[string][]TrackedPane // resourceKey -> panes
 	liveness LivenessChecker
 }
@@ -90,8 +90,8 @@ func (t *Tracker) Unregister(paneID string) bool {
 // PanesForResource returns tracked panes for a resource key.
 // Returns nil if no panes are tracked.
 func (t *Tracker) PanesForResource(resourceKey string) []TrackedPane {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	panes := t.panes[resourceKey]
 	if len(panes) == 0 {
 		return nil
@@ -103,8 +103,8 @@ func (t *Tracker) PanesForResource(resourceKey string) []TrackedPane {
 
 // AllPanes returns all tracked panes across all resources.
 func (t *Tracker) AllPanes() []TrackedPane {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	var out []TrackedPane
 	for _, panes := range t.panes {
 		out = append(out, panes...)
@@ -114,8 +114,8 @@ func (t *Tracker) AllPanes() []TrackedPane {
 
 // Count returns the total number of tracked panes.
 func (t *Tracker) Count() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	n := 0
 	for _, panes := range t.panes {
 		n += len(panes)
@@ -125,8 +125,8 @@ func (t *Tracker) Count() int {
 
 // CountForResource returns (shells, agents) for a given resource key.
 func (t *Tracker) CountForResource(resourceKey string) (shells, agents int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	for _, p := range t.panes[resourceKey] {
 		switch p.Type {
 		case PaneShell:

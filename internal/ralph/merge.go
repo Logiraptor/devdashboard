@@ -332,6 +332,7 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 	if renderErr != nil {
 		// Abort merge and return error
 		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		// Best effort - if abort fails, we still return the rendering error
 		_ = abortCmd.Run()
 		return fmt.Errorf("rendering conflict resolution prompt: %w", renderErr)
 	}
@@ -347,8 +348,10 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 	if agentErr != nil {
 		// Agent failed to run - abort merge and create question bead
 		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		// Best effort - if abort fails, we still return the agent error
 		_ = abortCmd.Run()
 		if beadID != "" {
+			// Best effort - if bead creation fails, we still return the agent error
 			_ = createQuestionBeadForMergeConflict(repoPath, beadID, targetBranch, sourceBranch)
 		}
 		return fmt.Errorf("merge conflict resolution agent failed: %w", agentErr)
@@ -358,8 +361,10 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 	if hasMergeConflicts(repoPath) {
 		// Agent didn't resolve all conflicts - abort and create question bead
 		abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+		// Best effort - if abort fails, we still return the conflict error
 		_ = abortCmd.Run()
 		if beadID != "" {
+			// Best effort - if bead creation fails, we still return the conflict error
 			_ = createQuestionBeadForMergeConflict(repoPath, beadID, targetBranch, sourceBranch)
 		}
 		return fmt.Errorf("agent could not resolve merge conflicts (exit code: %d)", result.ExitCode)
@@ -367,6 +372,7 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 
 	// Conflicts resolved! Verify the merge commit exists
 	statusCmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	// Ignore status error: if git status fails, we'll proceed anyway (best-effort check)
 	statusOut, _ := statusCmd.Output()
 	if len(strings.TrimSpace(string(statusOut))) > 0 {
 		// There are uncommitted changes - agent may have resolved but not committed
@@ -374,8 +380,10 @@ func MergeWithAgentResolution(ctx context.Context, repoPath, targetBranch, sourc
 		commitCmd := exec.Command("git", "-C", repoPath, "commit", "--no-edit")
 		if commitErr := commitCmd.Run(); commitErr != nil {
 			abortCmd := exec.Command("git", "-C", repoPath, "merge", "--abort")
+			// Best effort - if abort fails, we still return the commit error
 			_ = abortCmd.Run()
 			if beadID != "" {
+				// Best effort - if bead creation fails, we still return the commit error
 				_ = createQuestionBeadForMergeConflict(repoPath, beadID, targetBranch, sourceBranch)
 			}
 			return fmt.Errorf("agent resolved conflicts but failed to commit: %w", commitErr)

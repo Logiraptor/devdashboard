@@ -42,7 +42,10 @@ func TestListForRepo_FiltersClosedAndPRBeads(t *testing.T) {
 	runBD = mockBD(map[string][]bdListEntry{key: entries})
 	defer func() { runBD = old }()
 
-	got := ListForRepo("/fake/dir", "myproj")
+	got, err := ListForRepo("/fake/dir", "myproj")
+	if err != nil {
+		t.Fatalf("ListForRepo returned error: %v", err)
+	}
 
 	if len(got) != 2 {
 		t.Fatalf("expected 2 beads, got %d: %+v", len(got), got)
@@ -68,7 +71,10 @@ func TestListForPR(t *testing.T) {
 	runBD = mockBD(map[string][]bdListEntry{key: entries})
 	defer func() { runBD = old }()
 
-	got := ListForPR("/fake/dir", "myproj", 7)
+	got, err := ListForPR("/fake/dir", "myproj", 7)
+	if err != nil {
+		t.Fatalf("ListForPR returned error: %v", err)
+	}
 
 	if len(got) != 1 {
 		t.Fatalf("expected 1 bead, got %d: %+v", len(got), got)
@@ -85,7 +91,10 @@ func TestListForRepo_BDNotAvailable(t *testing.T) {
 	}
 	defer func() { runBD = old }()
 
-	got := ListForRepo("/fake/dir", "myproj")
+	got, err := ListForRepo("/fake/dir", "myproj")
+	if err == nil {
+		t.Errorf("expected error when bd unavailable, got nil")
+	}
 	if got != nil {
 		t.Errorf("expected nil when bd unavailable, got %+v", got)
 	}
@@ -98,21 +107,30 @@ func TestListForPR_BDNotAvailable(t *testing.T) {
 	}
 	defer func() { runBD = old }()
 
-	got := ListForPR("/fake/dir", "myproj", 42)
+	got, err := ListForPR("/fake/dir", "myproj", 42)
+	if err == nil {
+		t.Errorf("expected error when bd unavailable, got nil")
+	}
 	if got != nil {
 		t.Errorf("expected nil when bd unavailable, got %+v", got)
 	}
 }
 
 func TestParseBeads_InvalidJSON(t *testing.T) {
-	got := parseBeads([]byte("not json"))
+	got, err := parseBeads([]byte("not json"))
+	if err == nil {
+		t.Errorf("expected error for invalid JSON, got nil")
+	}
 	if got != nil {
 		t.Errorf("expected nil for invalid JSON, got %+v", got)
 	}
 }
 
 func TestParseBeads_EmptyArray(t *testing.T) {
-	got := parseBeads([]byte("[]"))
+	got, err := parseBeads([]byte("[]"))
+	if err != nil {
+		t.Fatalf("parseBeads returned error: %v", err)
+	}
 	if len(got) != 0 {
 		t.Errorf("expected empty slice for [], got %+v", got)
 	}
@@ -269,7 +287,10 @@ func TestParseBeads_ExtractsIssueTypeAndParentID(t *testing.T) {
 			{"issue_id": "child-1", "depends_on_id": "epic-1", "type": "parent-child"}
 		]}
 	]`
-	got := parseBeads([]byte(data))
+	got, err := parseBeads([]byte(data))
+	if err != nil {
+		t.Fatalf("parseBeads returned error: %v", err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 beads, got %d", len(got))
 	}
