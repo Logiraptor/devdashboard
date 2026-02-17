@@ -936,11 +936,11 @@ func TestResourceKeyFromResource(t *testing.T) {
 func TestPopulateResourcePanes(t *testing.T) {
 	ta := newTestApp(t)
 
-	rkRepo := session.NewRepoKey("myrepo")
-	rkPR := session.NewPRKey("myrepo", 42)
-	ta.Sessions.Register(rkRepo, "%1", session.PaneShell)
-	ta.Sessions.Register(rkRepo, "%2", session.PaneAgent)
-	ta.Sessions.Register(rkPR, "%3", session.PaneAgent)
+	repoKey := session.NewRepoKey("myrepo")
+	prKey := session.NewPRKey("myrepo", 42)
+	ta.Sessions.Register(repoKey, "%1", session.PaneShell)
+	ta.Sessions.Register(repoKey, "%2", session.PaneAgent)
+	ta.Sessions.Register(prKey, "%3", session.PaneAgent)
 
 	detail := NewProjectDetailView("test-proj")
 	detail.Resources = []project.Resource{

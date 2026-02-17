@@ -5,6 +5,7 @@
 package session
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -17,11 +18,63 @@ const (
 	PaneAgent PaneType = "agent"
 )
 
+// ResourceKey represents a unique identifier for a project resource (repo or PR).
+// It can be serialized to/from strings in the format:
+//   - Repos: "repo:<name>"
+//   - PRs: "pr:<repo>:#<number>"
+type ResourceKey struct {
+	kind     string // "repo" or "pr"
+	repoName string
+	prNumber int
+}
+
+// NewRepoKey creates a ResourceKey for a repository.
+func NewRepoKey(repoName string) ResourceKey {
+	return ResourceKey{
+		kind:     "repo",
+		repoName: repoName,
+		prNumber: 0,
+	}
+}
+
+// NewPRKey creates a ResourceKey for a pull request.
+func NewPRKey(repoName string, prNumber int) ResourceKey {
+	return ResourceKey{
+		kind:     "pr",
+		repoName: repoName,
+		prNumber: prNumber,
+	}
+}
+
+// String returns the string representation of the resource key.
+// Format: "repo:<name>" for repos, "pr:<repo>:#<number>" for PRs.
+func (rk ResourceKey) String() string {
+	if rk.kind == "pr" && rk.prNumber > 0 {
+		return fmt.Sprintf("pr:%s:#%d", rk.repoName, rk.prNumber)
+	}
+	return fmt.Sprintf("repo:%s", rk.repoName)
+}
+
+// Kind returns the resource kind: "repo" or "pr".
+func (rk ResourceKey) Kind() string {
+	return rk.kind
+}
+
+// RepoName returns the repository name.
+func (rk ResourceKey) RepoName() string {
+	return rk.repoName
+}
+
+// PRNumber returns the PR number. Returns 0 for repo keys.
+func (rk ResourceKey) PRNumber() int {
+	return rk.prNumber
+}
+
 // TrackedPane holds metadata about one active tmux pane.
 type TrackedPane struct {
 	PaneID      string      // tmux pane ID (e.g. "%42")
 	Type        PaneType    // shell or agent
-	ResourceKey ResourceKey // resource this pane belongs to (e.g. "repo:devdeploy" or "pr:devdeploy:#42")
+	ResourceKey ResourceKey // resource this pane belongs to
 	CreatedAt   time.Time   // when the pane was registered
 }
 

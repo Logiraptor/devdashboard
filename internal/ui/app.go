@@ -367,7 +367,6 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 
 	for _, pane := range allPanes {
 		if pane.ResourceKey.Kind() == "pr" {
-
 			prPanes = append(prPanes, pane)
 		} else {
 			repoPanes = append(repoPanes, pane)
@@ -398,17 +397,13 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 // getPaneDisplayName returns a human-readable name for a pane.
 // Works globally without requiring Detail view.
 func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
-	rk := pane.ResourceKey
-	repoName := rk.RepoName()
-
-
 	var name string
-	if rk.Kind() == "pr" && rk.PRNumber() > 0 {
+	if pane.ResourceKey.Kind() == "pr" {
 		// PR resource
-		name = fmt.Sprintf("%s-pr-%d", repoName, rk.PRNumber())
+		name = fmt.Sprintf("%s-pr-%d", pane.ResourceKey.RepoName(), pane.ResourceKey.PRNumber())
 	} else {
 		// Repo resource
-		name = repoName
+		name = pane.ResourceKey.RepoName()
 	}
 
 	// Add pane type
