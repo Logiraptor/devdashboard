@@ -12,7 +12,7 @@ import (
 
 // excludeEntries are the paths added to .git/info/exclude so injected
 // files are invisible to git status, diff, etc.
-var excludeEntries = []string{".cursor/", "dev-log/"}
+var excludeEntries = []string{".cursor/"}
 
 // InjectWorktreeRules writes Cursor rule files and a dev-log directory
 // into a worktree, then adds them to the repo's git exclude file
