@@ -22,6 +22,7 @@ This directory contains architecture documentation for the devdeploy project.
 | [2026-02-16-observer-pattern-analysis.md](2026-02-16-observer-pattern-analysis.md) | Observer pattern simplification: analysis and refactoring proposals |
 | [2026-02-16-resource-key-typing-investigation.md](2026-02-16-resource-key-typing-investigation.md) | Resource key typing: investigation and design for replacing string keys with typed struct |
 | [2026-02-16-worktree-unification-investigation.md](2026-02-16-worktree-unification-investigation.md) | Worktree unification: investigation of worktree operations in project.go and ralph/worktree.go, unified API design |
+| [2026-02-16-projectdetail-delegation-investigation.md](2026-02-16-projectdetail-delegation-investigation.md) | ProjectDetailView delegation complexity: analysis of cursorDelegate pattern, performance benchmarks, simplification options |
 
 ## Adding New Decisions
 
