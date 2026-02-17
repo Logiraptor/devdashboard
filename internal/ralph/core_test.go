@@ -22,12 +22,14 @@ func mockBDForCore(beadsList []beads.Bead) BDRunner {
 			// Return one bead at a time
 			b := beadsList[idx]
 			entries := []bdReadyEntry{{
-				ID:        b.ID,
-				Title:     b.Title,
-				Status:    b.Status,
-				Priority:  b.Priority,
-				Labels:    b.Labels,
-				CreatedAt: b.CreatedAt,
+				beads.BDEntryBase{
+					ID:        b.ID,
+					Title:     b.Title,
+					Status:    b.Status,
+					Priority:  b.Priority,
+					Labels:    b.Labels,
+					CreatedAt: b.CreatedAt,
+				},
 			}}
 			return json.Marshal(entries)
 		}
