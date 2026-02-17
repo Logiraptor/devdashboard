@@ -5,40 +5,6 @@ import (
 	"strings"
 )
 
-// FindWorktreeForBranch scans git worktree list output for a worktree
-// that has the given branch checked out. Returns the worktree path or "".
-// srcRepo is the path to the main git repository.
-// branchName is the branch name to search for.
-// excludePath optionally excludes a specific path from results (e.g., the source repo itself).
-func FindWorktreeForBranch(srcRepo, branchName string, excludePath string) string {
-	cmd := exec.Command("git", "-C", srcRepo, "worktree", "list", "--porcelain")
-	var out strings.Builder
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-
-	// Porcelain format: blocks separated by blank lines.
-	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
-	var currentPath string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-		}
-		if strings.HasPrefix(line, "branch ") {
-			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" {
-				// Exclude the source repo and optionally another path
-				if currentPath != srcRepo && currentPath != excludePath {
-					return currentPath
-				}
-			}
-		}
-	}
-	return ""
-}
-
 // WorktreeInfo represents a parsed worktree entry from git worktree list.
 type WorktreeInfo struct {
 	Path   string
