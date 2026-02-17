@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -186,20 +187,28 @@ func RunAgentOpus(ctx context.Context, workDir string, prompt string, opts ...Op
 //
 //	{"type":"tool_call","subtype":"started","name":"read","arguments":{"path":"foo.go"}}
 //
-// Returns nil if the line is not a tool_call event or cannot be parsed.
-func ParseToolEvent(jsonLine string) *ToolEvent {
+// Returns (nil, nil) if the line is not a tool_call event.
+// Returns (nil, error) if the line is a tool_call event but has validation errors.
+// Returns (*ToolEvent, nil) if parsing succeeds.
+func ParseToolEvent(jsonLine string) (*ToolEvent, error) {
 	if jsonLine == "" {
-		return nil
+		return nil, nil // Empty line is not an error, just not a tool event
 	}
 
 	var event map[string]interface{}
-	if !jsonutil.UnmarshalLineSafe(jsonLine, &event) {
-		return nil
+	if err := json.Unmarshal([]byte(jsonLine), &event); err != nil {
+		// Invalid JSON - return error with context
+		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	eventType := jsonutil.GetString(event, "type")
 	if eventType != "tool_call" {
-		return nil
+		return nil, nil // Not a tool_call event, not an error
+	}
+
+	// Validate tool_call event structure
+	if err := validateToolEvent(event); err != nil {
+		return nil, err
 	}
 
 	subtype := jsonutil.GetString(event, "subtype")
@@ -232,7 +241,7 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 	}
 
 	if name == "" {
-		return nil
+		return nil, fmt.Errorf("tool_call event missing tool name: expected either 'tool_call' object (new format) or 'name' field (legacy format)")
 	}
 
 	// Extract call_id for matching start/end events
@@ -248,7 +257,84 @@ func ParseToolEvent(jsonLine string) *ToolEvent {
 		Started:    started,
 		Timestamp:  time.Now(),
 		Attributes: attrs,
+	}, nil
+}
+
+// validateToolEvent validates a tool_call event structure and returns a detailed error
+// if validation fails. It distinguishes between different format variations and missing fields.
+func validateToolEvent(event map[string]interface{}) error {
+	// Check subtype
+	subtype, ok := event["subtype"].(string)
+	if !ok || subtype == "" {
+		return fmt.Errorf("tool_call event missing required 'subtype' field")
 	}
+	if subtype != "started" && subtype != "completed" && subtype != "ended" {
+		return fmt.Errorf("tool_call event has invalid 'subtype' %q: expected 'started', 'completed' (new format), or 'ended' (legacy format)", subtype)
+	}
+
+	// Check for format indicators
+	hasToolCall := false
+	hasName := false
+	
+	if toolCall, ok := event["tool_call"]; ok {
+		if toolCall == nil {
+			return fmt.Errorf("tool_call event has null 'tool_call' field")
+		}
+		if _, ok := toolCall.(map[string]interface{}); !ok {
+			return fmt.Errorf("tool_call event has 'tool_call' field with invalid type: expected object")
+		}
+		hasToolCall = true
+	}
+	
+	if name, ok := event["name"]; ok {
+		if name == nil {
+			return fmt.Errorf("tool_call event has null 'name' field")
+		}
+		if _, ok := name.(string); !ok {
+			return fmt.Errorf("tool_call event has 'name' field with invalid type: expected string")
+		}
+		hasName = true
+	}
+
+	// Validate format-specific requirements
+	if hasToolCall {
+		// New format: validate tool_call structure
+		toolCall, _ := event["tool_call"].(map[string]interface{})
+		if len(toolCall) == 0 {
+			return fmt.Errorf("tool_call event 'tool_call' object is empty: expected one typed tool call (e.g., shellToolCall, readToolCall)")
+		}
+		
+		// Check for at least one recognized tool call type
+		recognizedTypes := []string{
+			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
+			"strReplaceToolCall", "grepToolCall", "globToolCall",
+			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
+			"todoWriteToolCall",
+		}
+		found := false
+		for _, toolType := range recognizedTypes {
+			if _, ok := toolCall[toolType]; ok {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// List available keys for better error message
+			keys := make([]string, 0, len(toolCall))
+			for k := range toolCall {
+				keys = append(keys, k)
+			}
+			return fmt.Errorf("tool_call event 'tool_call' object contains unrecognized tool type: found %v, expected one of %v", keys, recognizedTypes)
+		}
+	} else if hasName {
+		// Legacy format: name is present, which is sufficient
+		// Arguments are optional in legacy format
+	} else {
+		// Neither format indicator present
+		return fmt.Errorf("tool_call event missing tool identifier: expected either 'tool_call' object (new format) or 'name' field (legacy format)")
+	}
+
+	return nil
 }
 
 // parseNewToolCallFormat extracts tool name and attributes from the new agent CLI format.
@@ -358,7 +444,13 @@ func (w *toolEventWriter) Write(p []byte) (n int, err error) {
 		line = strings.TrimSuffix(line, "\n")
 
 		// Try to parse as tool event
-		event := ParseToolEvent(line)
+		event, err := ParseToolEvent(line)
+		if err != nil {
+			// Log validation errors for tool_call events
+			// This helps debug format issues without breaking the stream
+			fmt.Fprintf(os.Stderr, "tool event validation error: %v\n", err)
+			continue
+		}
 		if event != nil {
 			if event.Started {
 				w.observer.OnToolStart(*event)
