@@ -218,7 +218,13 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 		if c.MaxParallel > 0 && batchSize > c.MaxParallel {
 			batchSize = c.MaxParallel
 		}
-		batch := ready[:batchSize]
+		batchReady := ready[:batchSize]
+		
+		// Extract beads from ReadyBead for execution
+		batch := make([]beads.Bead, len(batchReady))
+		for i, rb := range batchReady {
+			batch[i] = rb.Bead
+		}
 
 		results := c.executeParallel(ctx, wtMgr, batch, out)
 
@@ -340,7 +346,8 @@ type beadExecResult struct {
 // readyBeads fetches beads that are ready to work on.
 // If RootBead is set, returns ready children of that bead.
 // If no children are found, checks if RootBead itself is ready (for single-bead targeting).
-func (c *Core) readyBeads() ([]beads.Bead, error) {
+// Children are returned with AgentTypeCoder, parent fallback with AgentTypeVerifier.
+func (c *Core) readyBeads() ([]ReadyBead, error) {
 	runner := c.RunBD
 	if runner == nil {
 		runner = bd.Run
@@ -361,14 +368,32 @@ func (c *Core) readyBeads() ([]beads.Bead, error) {
 		return nil, err
 	}
 
-	// If we have children, return them
+	// If we have children, return them with AgentTypeCoder
 	if len(ready) > 0 {
-		return ready, nil
+		result := make([]ReadyBead, len(ready))
+		for i, bead := range ready {
+			result[i] = ReadyBead{
+				Bead:      bead,
+				AgentType: AgentTypeCoder,
+			}
+		}
+		return result, nil
 	}
 
 	// No children - check if RootBead itself is ready (single-bead targeting)
+	// Return with AgentTypeVerifier
 	if c.RootBead != "" {
-		return c.getBeadIfReady(runner, c.RootBead)
+		beads, err := c.getBeadIfReady(runner, c.RootBead)
+		if err != nil {
+			return nil, err
+		}
+		if len(beads) == 0 {
+			return nil, nil
+		}
+		return []ReadyBead{{
+			Bead:      beads[0],
+			AgentType: AgentTypeVerifier,
+		}}, nil
 	}
 
 	return nil, nil
