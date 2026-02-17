@@ -64,8 +64,7 @@ func (o *Outcome) UnmarshalJSON(data []byte) error {
 // bdShowEntry mirrors the JSON shape emitted by `bd show <id> --json`.
 // Only the fields we need for assessment are included.
 type bdShowEntry struct {
-	ID           string      `json:"id"`
-	Status       string      `json:"status"`
+	bdShowBase
 	Dependencies []bdShowDep `json:"dependencies"`
 	Dependents   []bdShowDep `json:"dependents"`
 }

@@ -354,17 +354,7 @@ func (c *Core) getBeadIfReady(runner BDRunner, beadID string) ([]beads.Bead, err
 		return nil, fmt.Errorf("bd show %s: %w", beadID, err)
 	}
 
-	var entries []struct {
-		ID              string    `json:"id"`
-		Title           string    `json:"title"`
-		Description     string    `json:"description"`
-		Status          string    `json:"status"`
-		Priority        int       `json:"priority"`
-		Labels          []string  `json:"labels"`
-		CreatedAt       time.Time `json:"created_at"`
-		IssueType       string    `json:"issue_type"`
-		DependencyCount int       `json:"dependency_count"`
-	}
+	var entries []bdShowReadyEntry
 	if err := json.Unmarshal(out, &entries); err != nil {
 		return nil, fmt.Errorf("parsing bd show output: %w", err)
 	}

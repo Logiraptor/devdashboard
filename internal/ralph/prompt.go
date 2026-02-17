@@ -19,9 +19,7 @@ type PromptData struct {
 // bdShowFull mirrors the JSON shape emitted by `bd show <id> --json`,
 // including the description field needed for prompt rendering.
 type bdShowFull struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	bdShowBase
 }
 
 // FetchPromptData runs `bd show <id> --json` and extracts the fields needed

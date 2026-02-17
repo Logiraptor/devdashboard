@@ -38,8 +38,10 @@ func TestAssess_Timeout(t *testing.T) {
 
 func TestAssess_Success(t *testing.T) {
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "closed",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "closed",
+		},
 	})
 
 	result := &AgentResult{
@@ -60,8 +62,10 @@ func TestAssess_Success(t *testing.T) {
 
 func TestAssess_QuestionCreated(t *testing.T) {
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "open",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "open",
+		},
 		Dependencies: []bdShowDep{
 			{
 				ID:             "test-1.q1",
@@ -91,8 +95,10 @@ func TestAssess_QuestionCreated(t *testing.T) {
 func TestAssess_QuestionInDependents(t *testing.T) {
 	// Question beads may also appear as dependents.
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "open",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "open",
+		},
 		Dependents: []bdShowDep{
 			{
 				ID:             "test-1.q2",
@@ -118,8 +124,10 @@ func TestAssess_QuestionInDependents(t *testing.T) {
 
 func TestAssess_Failure_NonZeroExit(t *testing.T) {
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "open",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "open",
+		},
 	})
 
 	result := &AgentResult{
@@ -140,8 +148,10 @@ func TestAssess_Failure_NonZeroExit(t *testing.T) {
 
 func TestAssess_Failure_BeadStillOpen(t *testing.T) {
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "in_progress",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "in_progress",
+		},
 	})
 
 	result := &AgentResult{
@@ -194,8 +204,10 @@ func TestAssess_Failure_InvalidJSON(t *testing.T) {
 func TestAssess_ClosedQuestionNotCounted(t *testing.T) {
 	// A needs-human dep that is already closed should not count as a question.
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "open",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "open",
+		},
 		Dependencies: []bdShowDep{
 			{
 				ID:             "test-1.q1",
@@ -221,8 +233,10 @@ func TestAssess_ClosedQuestionNotCounted(t *testing.T) {
 func TestAssess_TimeoutTakesPriority(t *testing.T) {
 	// Even if the bead is closed, timeout should take priority.
 	bdShow := mockBDShow(&bdShowEntry{
-		ID:     "test-1",
-		Status: "closed",
+		bdShowBase: bdShowBase{
+			ID:     "test-1",
+			Status: "closed",
+		},
 	})
 
 	result := &AgentResult{
