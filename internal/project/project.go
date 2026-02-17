@@ -581,24 +581,6 @@ func mergePRs(a, b []PRInfo) []PRInfo {
 	return result
 }
 
-// CountPRs returns the number of open PRs across the project's repos.
-func (m *Manager) CountPRs(projectName string) int {
-	repos, err := m.ListProjectRepos(projectName)
-	if err != nil || len(repos) == 0 {
-		return 0
-	}
-	count := 0
-	for _, repoName := range repos {
-		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
-		prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-		if err != nil {
-			continue
-		}
-		count += len(prs)
-	}
-	return count
-}
-
 // DashboardSummary holds pre-computed data for the dashboard view.
 // It is produced by LoadProjectSummary which fetches open PRs once
 // per repo, avoiding redundant gh pr list calls.
@@ -939,51 +921,6 @@ func (m *Manager) buildResourcesFromReposAndPRs(repos []string, projDir string, 
 	}
 
 	return resources
-}
-
-// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
-// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
-// Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
-// Use this for dashboard/bead counting where merged PRs are not needed.
-func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
-	repos, _ := m.ListProjectRepos(projectName)
-	projDir := m.projectDir(projectName)
-
-	// Fetch open PRs concurrently across repos.
-	type repoResult struct {
-		repoName string
-		prs      []PRInfo
-		err      error
-	}
-	resultChan := make(chan repoResult, len(repos))
-	var wg sync.WaitGroup
-
-	for _, repoName := range repos {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-			worktreePath := filepath.Join(projDir, name)
-			prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-			resultChan <- repoResult{repoName: name, prs: prs, err: err}
-		}(repoName)
-	}
-
-	// Close channel when all goroutines complete.
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// Collect results and build resource list.
-	repoPRs := make(map[string][]PRInfo)
-	for result := range resultChan {
-		if result.err != nil {
-			continue
-		}
-		repoPRs[result.repoName] = result.prs
-	}
-
-	return m.buildResourcesFromReposAndPRs(repos, projDir, repoPRs)
 }
 
 // ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
