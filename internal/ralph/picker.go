@@ -4,20 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"time"
 
 	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
 )
 
 // bdReadyEntry mirrors the JSON shape emitted by `bd ready --json`.
+// It embeds BDEntryBase for common fields.
 type bdReadyEntry struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	Priority  int       `json:"priority"`
-	Labels    []string  `json:"labels"`
-	CreatedAt time.Time `json:"created_at"`
+	beads.BDEntryBase
 }
 
 // BDRunner is the function signature for executing bd commands.

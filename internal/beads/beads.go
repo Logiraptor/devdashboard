@@ -32,15 +32,21 @@ type bdDependency struct {
 	Type        string `json:"type"`
 }
 
+// BDEntryBase contains fields shared by bd ready and bd list JSON output.
+type BDEntryBase struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Priority  int       `json:"priority"`
+	Labels    []string  `json:"labels"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // bdListEntry mirrors the JSON shape emitted by `bd list --json`.
+// It embeds BDEntryBase for common fields and adds variant-specific fields.
 type bdListEntry struct {
-	ID           string         `json:"id"`
-	Title        string         `json:"title"`
+	BDEntryBase
 	Description  string         `json:"description"`
-	Status       string         `json:"status"`
-	Priority     int            `json:"priority"`
-	Labels       []string       `json:"labels"`
-	CreatedAt    time.Time      `json:"created_at"`
 	IssueType    string         `json:"issue_type"`
 	Dependencies []bdDependency `json:"dependencies"`
 }
