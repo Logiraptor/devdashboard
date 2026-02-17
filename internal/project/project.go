@@ -627,6 +627,21 @@ const mergedPRsLimit = 5
 // mergedPRMaxAge is the maximum age of merged PRs to show (20 hours).
 const mergedPRMaxAge = 20 * time.Hour
 
+// PR Loading Consolidation
+//
+// All PR loading goes through LoadPRs(), which is the unified method for fetching PRs.
+// The following convenience wrapper methods exist for backward compatibility and
+// specific use cases:
+//
+//   - CountPRs() - returns PR count only
+//   - LoadProjectSummary() - returns DashboardSummary (PRCount + Resources) for dashboard
+//   - ListProjectPRs() - returns []RepoPRs grouped by repository
+//   - ListProjectResources() - returns []Resource (repos + PRs) for detail view
+//
+// All wrappers use LoadPRs() internally, ensuring consistent behavior and caching.
+// PR fetching is parallelized across repos, and within each repo, open and merged
+// PRs are fetched concurrently when both are requested.
+
 // PRFormat specifies the output format for LoadPRs.
 type PRFormat int
 
@@ -1075,22 +1090,6 @@ func (m *Manager) buildResourcesFromReposAndPRs(repos []string, projDir string, 
 	return resources
 }
 
-// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
-// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
-// Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
-// Use this for dashboard/bead counting where merged PRs are not needed.
-// This is a wrapper around LoadPRs for backward compatibility.
-func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
-	result, err := m.LoadPRs(projectName, PRLoadOptions{
-		State:         "open",
-		Filtered:      true,
-		BuildResources: true,
-	})
-	if err != nil {
-		return []Resource{}
-	}
-	return result.Resources
-}
 
 // ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
 // Resources are ordered repo-first: each repo Resource is followed by
