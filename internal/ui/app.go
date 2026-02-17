@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/progress"
@@ -363,13 +362,11 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 	allPanes := a.Sessions.AllPanes()
 
 	// Sort panes: repos first, then PRs, then by creation time within each group
-	// Resource key format: "repo:name" or "pr:name:#number"
 	var repoPanes []session.TrackedPane
 	var prPanes []session.TrackedPane
 
 	for _, pane := range allPanes {
-		parts := strings.Split(pane.ResourceKey, ":")
-		if len(parts) >= 2 && parts[0] == "pr" {
+		if pane.ResourceKey.Kind() == "pr" {
 			prPanes = append(prPanes, pane)
 		} else {
 			repoPanes = append(repoPanes, pane)
@@ -400,24 +397,13 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 // getPaneDisplayName returns a human-readable name for a pane.
 // Works globally without requiring Detail view.
 func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
-	// Parse resource key to get repo/PR info
-	// Format: "repo:name" or "pr:name:#number"
-	parts := strings.Split(pane.ResourceKey, ":")
-	if len(parts) < 2 {
-		return pane.PaneID
-	}
-
-	kind := parts[0]
-	repoName := parts[1]
-
 	var name string
-	if kind == "pr" && len(parts) >= 3 {
-		// PR resource: "pr:name:#number"
-		prNum := strings.TrimPrefix(parts[2], "#")
-		name = fmt.Sprintf("%s-pr-%s", repoName, prNum)
+	if pane.ResourceKey.Kind() == "pr" {
+		// PR resource
+		name = fmt.Sprintf("%s-pr-%d", pane.ResourceKey.RepoName(), pane.ResourceKey.PRNumber())
 	} else {
 		// Repo resource
-		name = repoName
+		name = pane.ResourceKey.RepoName()
 	}
 
 	// Add pane type
@@ -463,11 +449,11 @@ func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 }
 
 // resourceKeyFromResource builds a session.ResourceKey from a project.Resource.
-func resourceKeyFromResource(r project.Resource) string {
+func resourceKeyFromResource(r project.Resource) session.ResourceKey {
 	if r.Kind == project.ResourcePR && r.PR != nil {
-		return session.ResourceKey("pr", r.RepoName, r.PR.Number)
+		return session.NewPRKey(r.RepoName, r.PR.Number)
 	}
-	return session.ResourceKey("repo", r.RepoName, 0)
+	return session.NewRepoKey(r.RepoName)
 }
 
 // AppModelOption configures NewAppModel
