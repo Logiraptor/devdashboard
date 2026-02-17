@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,6 +22,17 @@ func NewManager(srcRepo string) (*Manager, error) {
 		return nil, fmt.Errorf("source repo %s: %w", srcRepo, err)
 	}
 	return &Manager{srcRepo: srcRepo}, nil
+}
+
+// NewManagerFromWorkDir creates a new worktree manager from a workdir path.
+// If workDir is a worktree, it resolves the source repository.
+// If workDir is the main repo, it uses workDir as the source repository.
+func NewManagerFromWorkDir(workDir string) (*Manager, error) {
+	srcRepo, err := ResolveSourceRepo(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source repo: %w", err)
+	}
+	return NewManager(srcRepo)
 }
 
 // AddOptions configures how a worktree is added.
@@ -103,7 +115,7 @@ func (m *Manager) Remove(worktreePath string, idempotent bool) error {
 	if err := cmd.Run(); err != nil {
 		if idempotent {
 			msg := strings.TrimSpace(stderr.String())
-			if msg != "" && (strings.Contains(msg, "not found") || strings.Contains(msg, "No such file")) {
+			if msg != "" && (strings.Contains(msg, "not found") || strings.Contains(msg, "No such file") || strings.Contains(msg, "is not a working tree")) {
 				return nil
 			}
 		}
@@ -118,7 +130,8 @@ func (m *Manager) Remove(worktreePath string, idempotent bool) error {
 
 // FindByBranch scans git worktree list output for a worktree that has the given branch checked out.
 // Returns the worktree path or empty string if not found.
-func (m *Manager) FindByBranch(branchName string) string {
+// If excludeSrcRepo is true, the source repository path itself is excluded from results.
+func (m *Manager) FindByBranch(branchName string, excludeSrcRepo bool) string {
 	cmd := exec.Command("git", "-C", m.srcRepo, "worktree", "list", "--porcelain")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -136,8 +149,28 @@ func (m *Manager) FindByBranch(branchName string) string {
 		}
 		if strings.HasPrefix(line, "branch ") {
 			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" && currentPath != m.srcRepo {
-				return currentPath
+			if branch == branchName && currentPath != "" {
+				if excludeSrcRepo {
+					// Normalize paths for comparison - resolve symlinks and make absolute
+					normalizedSrc, err1 := filepath.EvalSymlinks(m.srcRepo)
+					if err1 != nil {
+						normalizedSrc, _ = filepath.Abs(m.srcRepo)
+					}
+					normalizedPath, err2 := filepath.EvalSymlinks(currentPath)
+					if err2 != nil {
+						normalizedPath, _ = filepath.Abs(currentPath)
+					}
+					// Use Clean to handle any trailing slashes or . references
+					normalizedSrc = filepath.Clean(normalizedSrc)
+					normalizedPath = filepath.Clean(normalizedPath)
+					if normalizedPath != normalizedSrc {
+						return currentPath
+					}
+					// Path matches srcRepo, skip it
+					continue
+				} else {
+					return currentPath
+				}
 			}
 		}
 	}

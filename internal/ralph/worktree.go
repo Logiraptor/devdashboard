@@ -103,8 +103,8 @@ func (w *WorktreeManager) MergeRepo(targetBranch string) string {
 	if currentBranch, err := getCurrentBranch(w.baseWorkDir); err == nil && currentBranch == targetBranch {
 		return w.baseWorkDir
 	}
-	// Find worktree with target branch
-	if wtPath := worktree.FindWorktreeForBranch(w.mgr.SrcRepo(), targetBranch, false); wtPath != "" {
+	// Find worktree with target branch (excludeSrcRepo=false to allow finding main repo)
+	if wtPath := w.mgr.FindByBranch(targetBranch, false); wtPath != "" {
 		return wtPath
 	}
 	// Fallback to srcRepo (may fail if branch is checked out elsewhere)
