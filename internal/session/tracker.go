@@ -18,21 +18,64 @@ const (
 	PaneAgent PaneType = "agent"
 )
 
-// TrackedPane holds metadata about one active tmux pane.
-type TrackedPane struct {
-	PaneID      string    // tmux pane ID (e.g. "%42")
-	Type        PaneType  // shell or agent
-	ResourceKey string    // resource this pane belongs to (e.g. "repo:devdeploy" or "pr:devdeploy:#42")
-	CreatedAt   time.Time // when the pane was registered
+// ResourceKey represents a unique identifier for a project resource (repo or PR).
+// It can be serialized to/from strings in the format:
+//   - Repos: "repo:<name>"
+//   - PRs: "pr:<repo>:#<number>"
+type ResourceKey struct {
+	kind     string // "repo" or "pr"
+	repoName string
+	prNumber int
 }
 
-// ResourceKey builds a canonical key for a resource.
-// Repos: "repo:<name>", PRs: "pr:<repo>:#<number>".
-func ResourceKey(kind string, repoName string, prNumber int) string {
-	if kind == "pr" && prNumber > 0 {
-		return fmt.Sprintf("pr:%s:#%d", repoName, prNumber)
+// NewRepoKey creates a ResourceKey for a repository.
+func NewRepoKey(repoName string) ResourceKey {
+	return ResourceKey{
+		kind:     "repo",
+		repoName: repoName,
+		prNumber: 0,
 	}
-	return fmt.Sprintf("repo:%s", repoName)
+}
+
+// NewPRKey creates a ResourceKey for a pull request.
+func NewPRKey(repoName string, prNumber int) ResourceKey {
+	return ResourceKey{
+		kind:     "pr",
+		repoName: repoName,
+		prNumber: prNumber,
+	}
+}
+
+// String returns the string representation of the resource key.
+// Format: "repo:<name>" for repos, "pr:<repo>:#<number>" for PRs.
+func (rk ResourceKey) String() string {
+	if rk.kind == "pr" && rk.prNumber > 0 {
+		return fmt.Sprintf("pr:%s:#%d", rk.repoName, rk.prNumber)
+	}
+	return fmt.Sprintf("repo:%s", rk.repoName)
+}
+
+// Kind returns the resource kind: "repo" or "pr".
+func (rk ResourceKey) Kind() string {
+	return rk.kind
+}
+
+// RepoName returns the repository name.
+func (rk ResourceKey) RepoName() string {
+	return rk.repoName
+}
+
+// PRNumber returns the PR number. Returns 0 for repo keys.
+func (rk ResourceKey) PRNumber() int {
+	return rk.prNumber
+}
+
+// TrackedPane holds metadata about one active tmux pane.
+type TrackedPane struct {
+	PaneID      string      // tmux pane ID (e.g. "%42")
+	Type        PaneType    // shell or agent
+	ResourceKey ResourceKey // resource this pane belongs to
+	CreatedAt   time.Time   // when the pane was registered
 }
 
 // LivenessChecker returns the set of currently live tmux pane IDs.
@@ -43,7 +86,7 @@ type LivenessChecker func() (map[string]bool, error)
 // Safe for concurrent use.
 type Tracker struct {
 	mu       sync.RWMutex
-	panes    map[string][]TrackedPane // resourceKey -> panes
+	panes    map[ResourceKey][]TrackedPane // resourceKey -> panes
 	liveness LivenessChecker
 }
 
@@ -51,13 +94,13 @@ type Tracker struct {
 // If liveness is nil, Prune becomes a no-op.
 func New(liveness LivenessChecker) *Tracker {
 	return &Tracker{
-		panes:    make(map[string][]TrackedPane),
+		panes:    make(map[ResourceKey][]TrackedPane),
 		liveness: liveness,
 	}
 }
 
 // Register adds a pane to the tracker for the given resource.
-func (t *Tracker) Register(resourceKey, paneID string, paneType PaneType) {
+func (t *Tracker) Register(resourceKey ResourceKey, paneID string, paneType PaneType) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.panes[resourceKey] = append(t.panes[resourceKey], TrackedPane{
@@ -89,7 +132,7 @@ func (t *Tracker) Unregister(paneID string) bool {
 
 // PanesForResource returns tracked panes for a resource key.
 // Returns nil if no panes are tracked.
-func (t *Tracker) PanesForResource(resourceKey string) []TrackedPane {
+func (t *Tracker) PanesForResource(resourceKey ResourceKey) []TrackedPane {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	panes := t.panes[resourceKey]
@@ -124,7 +167,7 @@ func (t *Tracker) Count() int {
 }
 
 // CountForResource returns (shells, agents) for a given resource key.
-func (t *Tracker) CountForResource(resourceKey string) (shells, agents int) {
+func (t *Tracker) CountForResource(resourceKey ResourceKey) (shells, agents int) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	for _, p := range t.panes[resourceKey] {
@@ -173,7 +216,7 @@ func (t *Tracker) Prune() (int, error) {
 
 // UnregisterAll removes all panes for a resource key.
 // Returns the number of panes removed.
-func (t *Tracker) UnregisterAll(resourceKey string) int {
+func (t *Tracker) UnregisterAll(resourceKey ResourceKey) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	n := len(t.panes[resourceKey])
