@@ -108,12 +108,12 @@ The project detail view includes a **Bead Details** section at the bottom that d
 **Behavior**:
 - Shows when the cursor is positioned on a bead item (not a resource header)
 - Displays placeholder text `(select a bead to see details)` when no bead is selected
-- Fixed height (7 lines) to prevent layout jumping when selection changes
+- Dynamic height (5-15 lines) based on terminal size, consistent within session to prevent layout jumping
 
 **Content displayed**:
 - **Title**: Bead ID and title (e.g., `devdeploy-abc  Fix the thing`)
 - **Status**: Status and issue type (e.g., `in_progress  task`)
-- **Description**: Full description text, truncated to fit width (max 2 lines)
+- **Description**: Full description text, shows as much as will fit (calculated from section height)
 - **Labels**: Comma-separated list of labels, truncated if too long
 
 **Implementation**:
