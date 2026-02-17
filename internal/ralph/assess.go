@@ -36,29 +36,34 @@ func (o Outcome) String() string {
 	}
 }
 
+// parseOutcome converts a string to an Outcome value.
+func parseOutcome(s string) (Outcome, error) {
+	switch s {
+	case "success":
+		return OutcomeSuccess, nil
+	case "question":
+		return OutcomeQuestion, nil
+	case "failure":
+		return OutcomeFailure, nil
+	case "timeout":
+		return OutcomeTimeout, nil
+	default:
+		return 0, ParseEnumError("Outcome", s)
+	}
+}
+
 // MarshalJSON implements json.Marshaler.
 func (o Outcome) MarshalJSON() ([]byte, error) {
-	return json.Marshal(o.String())
+	return MarshalEnumJSON(o)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (o *Outcome) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
+	parsed, err := UnmarshalEnumJSON(data, parseOutcome)
+	if err != nil {
 		return err
 	}
-	switch s {
-	case "success":
-		*o = OutcomeSuccess
-	case "question":
-		*o = OutcomeQuestion
-	case "failure":
-		*o = OutcomeFailure
-	case "timeout":
-		*o = OutcomeTimeout
-	default:
-		return fmt.Errorf("unknown Outcome: %s", s)
-	}
+	*o = parsed
 	return nil
 }
 
