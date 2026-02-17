@@ -27,7 +27,49 @@ const (
 	minListHeight         = 5  // Minimum lines to reserve for the resource list
 )
 
-// cursorDelegate is a custom list delegate that adds '▸' cursor prefix for selected items.
+// cursorDelegate is a custom list delegate that adds a visual cursor indicator ('▸')
+// prefix for the currently selected item in the list.
+//
+// Why this custom delegate exists:
+//
+// The bubbles list.DefaultDelegate provides standard list rendering but does not
+// include a visual cursor indicator. The project detail view requires a clear visual
+// indicator to show which item is selected, especially when navigating through the
+// hierarchical structure of resources and beads (see dev-log/ui.md for the design
+// requirements). The '▸' prefix provides immediate visual feedback about the current
+// selection position.
+//
+// How it differs from DefaultDelegate:
+//
+// 1. Visual cursor: Adds a '▸' prefix before the selected item's title, which
+//    DefaultDelegate does not provide.
+// 2. List model reference: Maintains a reference to the list.Model to check the
+//    currently selected index during rendering. DefaultDelegate does not need this
+//    as it doesn't customize rendering based on selection state.
+// 3. Composition: Embeds DefaultDelegate and delegates to it for the actual item
+//    rendering, only adding the cursor prefix before calling the default renderer.
+//
+// When to use:
+//
+// Use cursorDelegate when you need a visual cursor indicator in a list view. This
+// is particularly appropriate for:
+// - Hierarchical lists where selection position matters (e.g., resources with nested
+//   beads in the project detail view)
+// - Views where the selected item drives other UI updates (e.g., the Bead Details
+//   section that shows information about the selected bead)
+// - Navigation-heavy interfaces where users need clear visual feedback about their
+//   current position
+//
+// For simple lists without selection-dependent UI or where the default highlighting
+// is sufficient, use NewCompactListDelegate() instead.
+//
+// Design requirements:
+//
+// This pattern aligns with the UI design documented in dev-log/ui.md, which specifies
+// that the project detail view should display resources and beads with clear visual
+// hierarchy and selection indicators. The cursor prefix ensures users can quickly
+// identify which item is active, supporting the multi-agent parallel TUI workflow
+// where selection drives the Bead Details section display.
 type cursorDelegate struct {
 	list.DefaultDelegate
 	listModel *list.Model
@@ -44,6 +86,8 @@ func (d cursorDelegate) renderCursorPrefix(index int) string {
 }
 
 // Render implements list.ItemDelegate and adds '▸' prefix for selected items.
+// It checks if the current item index matches the list's selected index, and if so,
+// writes the cursor prefix before delegating to the default renderer.
 func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	prefix := d.renderCursorPrefix(index)
 	if prefix != "" {
@@ -54,7 +98,27 @@ func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	d.DefaultDelegate.Render(w, m, index, item)
 }
 
-// newCursorDelegate creates a delegate that adds '▸' cursor for selected items.
+// newCursorDelegate creates a cursorDelegate with consistent styling configuration.
+//
+// This factory function configures the delegate with:
+// - Zero spacing between items (compact layout)
+// - Descriptions disabled (title-only display)
+// - Theme-consistent styles matching the rest of the UI (see Styles in styles.go)
+//
+// The listModel parameter is required so the delegate can check which item is
+// currently selected during rendering. This reference must be to the same list.Model
+// instance that will use this delegate.
+//
+// Usage pattern:
+//
+//   l := list.New(nil, tempDelegate, 0, 0)
+//   delegate := newCursorDelegate(&l)
+//   l.SetDelegate(delegate)
+//
+// Note: The list must be created first (even with a temporary delegate) so that
+// a reference to it can be passed to newCursorDelegate. This creates a circular
+// reference that is safe because the delegate only reads from the list model and
+// the list model owns the delegate.
 func newCursorDelegate(listModel *list.Model) cursorDelegate {
 	d := list.NewDefaultDelegate()
 	d.SetSpacing(0)
