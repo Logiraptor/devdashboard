@@ -7,6 +7,7 @@ import (
 
 	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
+	"devdeploy/internal/jsonutil"
 )
 
 // Outcome represents the result of an agent iteration.
@@ -143,12 +144,9 @@ func Assess(workDir string, beadID string, result *AgentResult, bdShow BDShowFun
 // parseBDShow decodes the JSON array from `bd show <id> --json` and returns
 // the first entry. bd show --json always returns a single-element array.
 func parseBDShow(data []byte) (*bdShowEntry, error) {
-	var entries []bdShowEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
-	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("empty result from bd show")
+	entries, err := jsonutil.UnmarshalArray[bdShowEntry](data, "parsing bd show output")
+	if err != nil {
+		return nil, err
 	}
 	return &entries[0], nil
 }

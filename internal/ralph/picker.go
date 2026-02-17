@@ -1,13 +1,13 @@
 package ralph
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
 	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
+	"devdeploy/internal/jsonutil"
 )
 
 // bdReadyEntry mirrors the JSON shape emitted by `bd ready --json`.
@@ -61,9 +61,9 @@ func ReadyBeadsWithRunner(runBD BDRunner, workDir, parentBead string) ([]beads.B
 
 // parseReadyBeads decodes JSON output from `bd ready --json` into Bead slices.
 func parseReadyBeads(data []byte) ([]beads.Bead, error) {
-	var entries []bdReadyEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
+	entries, err := jsonutil.UnmarshalArrayAllowEmpty[bdReadyEntry](data, "parsing bd ready output")
+	if err != nil {
+		return nil, err
 	}
 
 	result := make([]beads.Bead, 0, len(entries))
