@@ -20,6 +20,7 @@ This directory contains architecture documentation for the devdeploy project.
 | [2026-02-08-ralph-loop-tool.md](2026-02-08-ralph-loop-tool.md) | Ralph loop tool: dedicated CLI for autonomous agent work loops |
 | [2026-02-16-pr-loading-consolidation.md](2026-02-16-pr-loading-consolidation.md) | PR loading consolidation: unified API design with options pattern |
 | [2026-02-16-observer-pattern-analysis.md](2026-02-16-observer-pattern-analysis.md) | Observer pattern simplification: analysis and refactoring proposals |
+| [2026-02-16-resource-key-typing-investigation.md](2026-02-16-resource-key-typing-investigation.md) | Resource key typing: investigation and design for replacing string keys with typed struct |
 
 ## Adding New Decisions
 
