@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -27,41 +26,6 @@ const (
 	minListHeight         = 5  // Minimum lines to reserve for the resource list
 )
 
-// cursorDelegate is a custom list delegate that adds '▸' cursor prefix for selected items.
-type cursorDelegate struct {
-	list.DefaultDelegate
-	listModel *list.Model
-}
-
-// Render implements list.ItemDelegate and adds '▸' prefix for selected items.
-func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	// Check if this item is selected by comparing index with the list's selected index
-	isSelected := d.listModel != nil && index == d.listModel.Index()
-
-	// Write cursor prefix if selected
-	if isSelected {
-		_, _ = fmt.Fprint(w, "▸ ")
-	}
-
-	// Delegate to default renderer
-	d.DefaultDelegate.Render(w, m, index, item)
-}
-
-// newCursorDelegate creates a delegate that adds '▸' cursor for selected items.
-func newCursorDelegate(listModel *list.Model) cursorDelegate {
-	d := list.NewDefaultDelegate()
-	d.SetSpacing(0)
-	d.ShowDescription = false
-	d.Styles.SelectedTitle = Styles.Selected
-	d.Styles.SelectedDesc = Styles.Selected
-	d.Styles.NormalTitle = Styles.Muted
-	d.Styles.NormalDesc = Styles.Muted
-
-	return cursorDelegate{
-		DefaultDelegate: d,
-		listModel:       listModel,
-	}
-}
 
 // itemType distinguishes between resource and bead items in the flat list.
 type itemType int
@@ -79,6 +43,7 @@ type detailItem struct {
 	resource    *project.Resource
 	bead        *project.BeadInfo  // nil for resource items
 	view        *ProjectDetailView // reference to view for loading state
+	index       int // index in view.items array (for checking selection)
 }
 
 func (d detailItem) FilterValue() string {
@@ -96,10 +61,18 @@ func (d detailItem) FilterValue() string {
 }
 
 func (d detailItem) Title() string {
+	var title string
 	if d.itemType == itemTypeResource {
-		return d.renderResourceTitleWithLoading()
+		title = d.renderResourceTitleWithLoading()
+	} else {
+		title = d.renderBeadTitle()
 	}
-	return d.renderBeadTitle()
+	
+	// Add '▸' cursor prefix if this item is selected
+	if d.view != nil && d.index == d.view.list.Index() {
+		return "▸ " + title
+	}
+	return title
 }
 
 func (d detailItem) Description() string {
@@ -192,14 +165,8 @@ var _ View = (*ProjectDetailView)(nil)
 
 // NewProjectDetailView creates a detail view for a project.
 func NewProjectDetailView(name string) *ProjectDetailView {
-	// Create list with temporary delegate first
-	tempDelegate := NewCompactListDelegate()
-	l := list.New(nil, tempDelegate, 0, 0)
-
-	// Create custom delegate that adds '▸' cursor for selected items
-	// Pass reference to the list so delegate can check selected index
-	delegate := newCursorDelegate(&l)
-	l.SetDelegate(delegate)
+	delegate := NewCompactListDelegate()
+	l := list.New(nil, delegate, 0, 0)
 	l.Title = ""
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -278,6 +245,7 @@ func (p *ProjectDetailView) buildItems() {
 			resource:    &p.Resources[i],
 			bead:        nil,
 			view:        p,
+			index:       resourceItemIdx,
 		})
 		p.itemToIndex[resourceItemIdx] = i
 
@@ -291,6 +259,7 @@ func (p *ProjectDetailView) buildItems() {
 				resource:    &p.Resources[i],
 				bead:        &p.Resources[i].Beads[bi],
 				view:        p,
+				index:       beadItemIdx,
 			})
 			p.itemToIndex[beadItemIdx] = i
 		}
