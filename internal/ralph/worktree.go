@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"devdeploy/internal/worktree"
 )
 
 // WorktreeManager manages temporary git worktrees for concurrent agent execution.
@@ -21,37 +23,10 @@ type WorktreeManager struct {
 // NewWorktreeManager creates a new worktree manager for the given workdir.
 // It resolves the source repository and current branch.
 func NewWorktreeManager(workDir string) (*WorktreeManager, error) {
-	// Resolve the source repository.
-	// If workDir is a worktree, .git is a file pointing to the main repo.
-	// If workDir is the main repo, .git is a directory.
-	gitPath := filepath.Join(workDir, ".git")
-	info, err := os.Stat(gitPath)
+	// Resolve the source repository
+	srcRepo, err := worktree.ResolveSourceRepo(workDir)
 	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %w", err)
-	}
-
-	var srcRepo string
-	if info.IsDir() {
-		// This is the main repository
-		srcRepo = workDir
-	} else {
-		// This is a worktree; read the .git file to find the main repo
-		data, err := os.ReadFile(gitPath)
-		if err != nil {
-			return nil, fmt.Errorf("reading .git file: %w", err)
-		}
-		// Format: "gitdir: /path/to/main/repo/.git/worktrees/worktree-name"
-		gitdir := strings.TrimSpace(string(data))
-		if !strings.HasPrefix(gitdir, "gitdir: ") {
-			return nil, fmt.Errorf("invalid .git file format: %q", gitdir)
-		}
-		gitdir = strings.TrimPrefix(gitdir, "gitdir: ")
-		// Extract the main repo path: remove "/.git/worktrees/..." suffix
-		parts := strings.Split(gitdir, "/.git/worktrees/")
-		if len(parts) == 0 {
-			return nil, fmt.Errorf("cannot parse gitdir: %q", gitdir)
-		}
-		srcRepo = parts[0]
+		return nil, err
 	}
 
 	// Get the current branch name
@@ -95,13 +70,13 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 	// Create a unique branch name for this worktree
 	branchName = fmt.Sprintf("ralph/%s", beadID)
 
-	// Empty dir for core.hooksPath to disable hooks
-	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
+	// Disable hooks
+	hooksConfig, cleanupHooks, err := worktree.DisableHooksConfig()
 	if err != nil {
-		return "", "", fmt.Errorf("create temp hooks dir: %w", err)
+		return "", "", fmt.Errorf("disable hooks: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
-	gitNoHooks := []string{"-C", w.srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
+	defer func() { _ = cleanupHooks() }()
+	gitNoHooks := append([]string{"-C", w.srcRepo}, hooksConfig...)
 
 	// Check if branch already exists
 	var addStderr strings.Builder
@@ -136,29 +111,7 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 // Returns the worktree path, or empty string if not found.
 // Searches from the source repository.
 func (w *WorktreeManager) FindWorktreeForBranch(branchName string) string {
-	cmd := exec.Command("git", "-C", w.srcRepo, "worktree", "list", "--porcelain")
-	var out strings.Builder
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-
-	// Porcelain format: blocks separated by blank lines.
-	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
-	var currentPath string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-		}
-		if strings.HasPrefix(line, "branch ") {
-			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" {
-				return currentPath
-			}
-		}
-	}
-	return ""
+	return worktree.FindWorktreeForBranch(w.srcRepo, branchName, "")
 }
 
 // MergeRepo returns the repository path to use for merging.

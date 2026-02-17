@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"devdeploy/internal/worktree"
 )
 
 const (
@@ -275,13 +277,13 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	base := strings.ToLower(strings.ReplaceAll(projectName, " ", "-"))
 	branch := "devdeploy/" + base + "-" + randAlnum(3)
 
-	// Empty dir for core.hooksPath to disable hooks (avoids post-checkout etc. failing)
-	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
+	// Disable hooks (avoids post-checkout etc. failing)
+	hooksConfig, cleanupHooks, err := worktree.DisableHooksConfig()
 	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
+		return fmt.Errorf("disable hooks: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
-	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
+	defer func() { _ = cleanupHooks() }()
+	gitNoHooks := append([]string{"-C", srcRepo}, hooksConfig...)
 
 	// Fetch to ensure we have latest default branch
 	fetchCmd := exec.Command("git", "-C", srcRepo, "fetch", "origin")
@@ -326,7 +328,12 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 		return fmt.Errorf("git worktree add: %s", msg)
 	}
 	// Update the new worktree's branch with main (disable hooks for merge too)
-	mergeNoHooks := []string{"-C", dstPath, "-c", "core.hooksPath=" + emptyHooksDir}
+	mergeHooksConfig, cleanupMergeHooks, err := worktree.DisableHooksConfig()
+	if err != nil {
+		return fmt.Errorf("disable hooks for merge: %w", err)
+	}
+	defer func() { _ = cleanupMergeHooks() }()
+	mergeNoHooks := append([]string{"-C", dstPath}, mergeHooksConfig...)
 	mergeCmd := exec.Command("git", append(mergeNoHooks, "merge", mainRef, "--no-edit")...)
 	mergeCmd.Stderr = &addStderr
 	if err := mergeCmd.Run(); err != nil {
@@ -961,7 +968,7 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	}
 
 	// Scan existing worktrees for one already on this branch.
-	if existing := m.findWorktreeForBranch(srcRepo, branchName); existing != "" {
+	if existing := worktree.FindWorktreeForBranch(srcRepo, branchName, ""); existing != "" {
 		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
 		// The worktree is usable even if rule injection fails.
 		_ = InjectWorktreeRules(existing)
@@ -973,13 +980,13 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	fetchCmd.Stderr = nil
 	_ = fetchCmd.Run() // best-effort; branch may already be local
 
-	// Empty dir for core.hooksPath to disable hooks during worktree add.
-	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
+	// Disable hooks during worktree add
+	hooksConfig, cleanupHooks, err := worktree.DisableHooksConfig()
 	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
+		return "", fmt.Errorf("disable hooks: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
-	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
+	defer func() { _ = cleanupHooks() }()
+	gitNoHooks := append([]string{"-C", srcRepo}, hooksConfig...)
 
 	// Try the local branch first; fall back to origin/<branch>.
 	ref := branchName
@@ -1024,33 +1031,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	return dstPath, nil
 }
 
-// findWorktreeForBranch scans git worktree list output for a worktree
-// that has the given branch checked out. Returns the worktree path or "".
-func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
-	cmd := exec.Command("git", "-C", srcRepo, "worktree", "list", "--porcelain")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-
-	// Porcelain format: blocks separated by blank lines.
-	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
-	var currentPath string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-		}
-		if strings.HasPrefix(line, "branch ") {
-			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" && currentPath != srcRepo {
-				return currentPath
-			}
-		}
-	}
-	return ""
-}
 
 // buildResourcesFromReposAndPRs builds a flat []Resource from repos and PRs.
 // Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
