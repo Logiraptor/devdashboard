@@ -27,6 +27,7 @@ type toolCallNewFormat struct {
 	WebFetchToolCall       *toolCallArgs `json:"webFetchToolCall,omitempty"`
 	TodoWriteToolCall      *toolCallArgs `json:"todoWriteToolCall,omitempty"`
 	UpdateTodosToolCall    *toolCallArgs `json:"updateTodosToolCall,omitempty"` // Alias for TodoWriteToolCall
+	ReadLintsToolCall      *toolCallArgs `json:"readLintsToolCall,omitempty"`
 }
 
 // toolCallArgs represents the args field within a typed tool call.
