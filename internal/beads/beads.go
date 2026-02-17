@@ -114,17 +114,7 @@ func parseBeads(data []byte) ([]Bead, error) {
 		if e.Status == StatusClosed {
 			continue
 		}
-		result = append(result, Bead{
-			ID:          e.ID,
-			Title:       e.Title,
-			Description: e.Description,
-			Status:      e.Status,
-			Priority:    e.Priority,
-			Labels:      e.Labels,
-			CreatedAt:   e.CreatedAt,
-			IssueType:   e.IssueType,
-			ParentID:    extractParentID(e.Dependencies),
-		})
+		result = append(result, beadFromBase(e.BDEntryBase, e.Description, e.IssueType, extractParentID(e.Dependencies)))
 	}
 	return result, nil
 }
@@ -138,6 +128,22 @@ func extractParentID(deps []bdDependency) string {
 		}
 	}
 	return ""
+}
+
+// beadFromBase creates a Bead from BDEntryBase with optional additional fields.
+// This consolidates the common pattern of mapping BDEntryBase fields to Bead.
+func beadFromBase(base BDEntryBase, description, issueType, parentID string) Bead {
+	return Bead{
+		ID:          base.ID,
+		Title:       base.Title,
+		Description: description,
+		Status:      base.Status,
+		Priority:    base.Priority,
+		Labels:      base.Labels,
+		CreatedAt:   base.CreatedAt,
+		IssueType:   issueType,
+		ParentID:    parentID,
+	}
 }
 
 // SortHierarchically reorders beads so that epics appear first, each

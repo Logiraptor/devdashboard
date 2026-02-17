@@ -63,6 +63,7 @@ func parseReadyBeads(data []byte) ([]beads.Bead, error) {
 
 	result := make([]beads.Bead, 0, len(entries))
 	for _, e := range entries {
+		// bd ready output only includes base fields, so use empty strings for optional fields
 		result = append(result, beads.Bead{
 			ID:        e.ID,
 			Title:     e.Title,
