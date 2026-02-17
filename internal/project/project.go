@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"devdeploy/internal/worktree"
 )
 
 const (
@@ -272,16 +274,14 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	if _, err := os.Stat(srcRepo); err != nil {
 		return fmt.Errorf("source repo %s: %w", srcRepo, err)
 	}
+
+	wtMgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return err
+	}
+
 	base := strings.ToLower(strings.ReplaceAll(projectName, " ", "-"))
 	branch := "devdeploy/" + base + "-" + randAlnum(3)
-
-	// Empty dir for core.hooksPath to disable hooks (avoids post-checkout etc. failing)
-	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
-	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
 
 	// Fetch to ensure we have latest default branch
 	fetchCmd := exec.Command("git", "-C", srcRepo, "fetch", "origin")
@@ -295,17 +295,19 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 		return err
 	}
 
-	var addStderr bytes.Buffer
-	if err := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", branch).Run(); err != nil {
-		// Branch doesn't exist: create it when adding worktree (-b creates branch from mainRef)
-		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", "-b", branch, dstPath, mainRef)...)
-		addCmd.Stderr = &addStderr
-		if err := addCmd.Run(); err != nil {
-			msg := strings.TrimSpace(addStderr.String())
-			if msg == "" {
-				msg = err.Error()
-			}
-			return fmt.Errorf("git worktree add: %s", msg)
+	// Check if branch exists
+	branchExists := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", branch).Run() == nil
+
+	if !branchExists {
+		// Branch doesn't exist: create it when adding worktree
+		if err := wtMgr.Add(worktree.AddOptions{
+			WorktreePath: dstPath,
+			Branch:       branch,
+			BaseRef:      mainRef,
+			CreateBranch: true,
+			DisableHooks: true,
+		}); err != nil {
+			return err
 		}
 		if err := InjectWorktreeRules(dstPath); err != nil {
 			return err
@@ -316,21 +318,26 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	}
 
 	// Branch exists: add worktree, then update it with main (without touching main repo's HEAD)
-	addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", dstPath, branch)...)
-	addCmd.Stderr = &addStderr
-	if err := addCmd.Run(); err != nil {
-		msg := strings.TrimSpace(addStderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("git worktree add: %s", msg)
+	if err := wtMgr.Add(worktree.AddOptions{
+		WorktreePath: dstPath,
+		Branch:       branch,
+		DisableHooks: true,
+	}); err != nil {
+		return err
 	}
+
 	// Update the new worktree's branch with main (disable hooks for merge too)
+	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
 	mergeNoHooks := []string{"-C", dstPath, "-c", "core.hooksPath=" + emptyHooksDir}
 	mergeCmd := exec.Command("git", append(mergeNoHooks, "merge", mainRef, "--no-edit")...)
-	mergeCmd.Stderr = &addStderr
+	var mergeStderr bytes.Buffer
+	mergeCmd.Stderr = &mergeStderr
 	if err := mergeCmd.Run(); err != nil {
-		msg := strings.TrimSpace(addStderr.String())
+		msg := strings.TrimSpace(mergeStderr.String())
 		if msg == "" {
 			msg = err.Error()
 		}
@@ -348,15 +355,14 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 func (m *Manager) RemoveRepo(projectName, repoName string) error {
 	srcRepo := filepath.Join(m.workspace, repoName)
 	worktreePath := filepath.Join(m.projectDir(projectName), repoName)
-	cmd := exec.Command("git", "-C", srcRepo, "worktree", "remove", worktreePath, "--force")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("git worktree remove: %s", msg)
+
+	wtMgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return err
+	}
+
+	if err := wtMgr.Remove(worktreePath); err != nil {
+		return err
 	}
 	// Invalidate cache for this project since a repo was removed
 	m.ClearPRCacheForProject(projectName)
@@ -376,15 +382,13 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 	}
 
 	srcRepo := filepath.Join(m.workspace, repoName)
-	cmd := exec.Command("git", "-C", srcRepo, "worktree", "remove", wtPath, "--force")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("git worktree remove (PR): %s", msg)
+	wtMgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return err
+	}
+
+	if err := wtMgr.Remove(wtPath); err != nil {
+		return fmt.Errorf("git worktree remove (PR): %w", err)
 	}
 
 	// Invalidate cache for this project since a worktree was removed
@@ -945,6 +949,11 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 		return "", fmt.Errorf("source repo %s: %w", srcRepo, err)
 	}
 
+	wtMgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return "", err
+	}
+
 	wtName := fmt.Sprintf("%s-pr-%d", repoName, prNumber)
 	dstPath := filepath.Join(m.projectDir(projectName), wtName)
 
@@ -961,7 +970,7 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	}
 
 	// Scan existing worktrees for one already on this branch.
-	if existing := m.findWorktreeForBranch(srcRepo, branchName); existing != "" {
+	if existing := wtMgr.FindByBranch(branchName); existing != "" {
 		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
 		// The worktree is usable even if rule injection fails.
 		_ = InjectWorktreeRules(existing)
@@ -973,14 +982,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	fetchCmd.Stderr = nil
 	_ = fetchCmd.Run() // best-effort; branch may already be local
 
-	// Empty dir for core.hooksPath to disable hooks during worktree add.
-	emptyHooksDir, err := os.MkdirTemp("", "devdeploy-nohooks")
-	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(emptyHooksDir) }()
-	gitNoHooks := []string{"-C", srcRepo, "-c", "core.hooksPath=" + emptyHooksDir}
-
 	// Try the local branch first; fall back to origin/<branch>.
 	ref := branchName
 	if err := exec.Command("git", "-C", srcRepo, "rev-parse", "--verify", ref).Run(); err != nil {
@@ -990,28 +991,25 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 		}
 	}
 
-	var addStderr bytes.Buffer
 	// If we have a local branch, check it out directly. If only remote, create a tracking branch.
 	if ref == branchName {
-		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", dstPath, branchName)...)
-		addCmd.Stderr = &addStderr
-		if err := addCmd.Run(); err != nil {
-			msg := strings.TrimSpace(addStderr.String())
-			if msg == "" {
-				msg = err.Error()
-			}
-			return "", fmt.Errorf("git worktree add: %s", msg)
+		if err := wtMgr.Add(worktree.AddOptions{
+			WorktreePath: dstPath,
+			Branch:       branchName,
+			DisableHooks: true,
+		}); err != nil {
+			return "", err
 		}
 	} else {
 		// Create local tracking branch from origin/<branch>
-		addCmd := exec.Command("git", append(gitNoHooks, "worktree", "add", "-b", branchName, dstPath, ref)...)
-		addCmd.Stderr = &addStderr
-		if err := addCmd.Run(); err != nil {
-			msg := strings.TrimSpace(addStderr.String())
-			if msg == "" {
-				msg = err.Error()
-			}
-			return "", fmt.Errorf("git worktree add: %s", msg)
+		if err := wtMgr.Add(worktree.AddOptions{
+			WorktreePath: dstPath,
+			Branch:       branchName,
+			BaseRef:      ref,
+			CreateBranch: true,
+			DisableHooks: true,
+		}); err != nil {
+			return "", err
 		}
 	}
 
@@ -1022,34 +1020,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	// Invalidate cache for this project since a new worktree was created
 	m.ClearPRCacheForProject(projectName)
 	return dstPath, nil
-}
-
-// findWorktreeForBranch scans git worktree list output for a worktree
-// that has the given branch checked out. Returns the worktree path or "".
-func (m *Manager) findWorktreeForBranch(srcRepo, branchName string) string {
-	cmd := exec.Command("git", "-C", srcRepo, "worktree", "list", "--porcelain")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-
-	// Porcelain format: blocks separated by blank lines.
-	// Each block has: worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n
-	var currentPath string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-		}
-		if strings.HasPrefix(line, "branch ") {
-			branch := strings.TrimPrefix(line, "branch refs/heads/")
-			if branch == branchName && currentPath != "" && currentPath != srcRepo {
-				return currentPath
-			}
-		}
-	}
-	return ""
 }
 
 // buildResourcesFromReposAndPRs builds a flat []Resource from repos and PRs.
