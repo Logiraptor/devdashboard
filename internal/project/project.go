@@ -693,6 +693,106 @@ const mergedPRsLimit = 5
 // mergedPRMaxAge is the maximum age of merged PRs to show (20 hours).
 const mergedPRMaxAge = 20 * time.Hour
 
+// PRFormat specifies the output format for LoadPRs.
+type PRFormat int
+
+const (
+	// FormatGrouped returns PRs grouped by repository ([]RepoPRs).
+	FormatGrouped PRFormat = iota
+	// FormatFlat returns a flat list of resources ([]Resource).
+	FormatFlat
+	// FormatCount returns only the count (requires CountOnly=true).
+	FormatCount
+)
+
+// PRLoadOptions configures how PRs are loaded.
+type PRLoadOptions struct {
+	// IncludeOpen includes open PRs (default: true).
+	IncludeOpen bool
+	// IncludeMerged includes merged PRs (default: false).
+	IncludeMerged bool
+	// MergedLimit limits the number of merged PRs per repo (default: 5, only applies if IncludeMerged is true).
+	MergedLimit int
+	// MergedMaxAge filters merged PRs by age (default: 20 hours, only applies if IncludeMerged is true).
+	MergedMaxAge time.Duration
+	// Format specifies the output format (default: FormatGrouped).
+	Format PRFormat
+	// IncludeRepos includes repo resources in the result (default: false, for resource lists).
+	IncludeRepos bool
+	// CountOnly returns only the count, no PR details (default: false, requires Format=FormatCount).
+	CountOnly bool
+}
+
+// PRLoadResult contains the results of LoadPRs.
+type PRLoadResult struct {
+	// PRCount is the total count of open PRs (always populated).
+	PRCount int
+	// PRsByRepo contains PRs grouped by repository (populated if Format=FormatGrouped).
+	PRsByRepo []RepoPRs
+	// Resources contains a flat list of resources (populated if Format=FormatFlat or IncludeRepos=true).
+	Resources []Resource
+}
+
+// LoadPRs loads PRs for a project with the given options.
+// This is a unified API that consolidates PR loading logic.
+// TODO: Implement LoadPRs - see devdeploy-fbf.1.1
+func (m *Manager) LoadPRs(projectName string, opts PRLoadOptions) (PRLoadResult, error) {
+	// Stub implementation - to be implemented in devdeploy-fbf.1.1
+	// Initialize result with proper zero values for testing
+	result := PRLoadResult{
+		PRCount:   0,
+		PRsByRepo: []RepoPRs{},
+		Resources: []Resource{},
+	}
+
+	// Apply defaults
+	if opts.Format == 0 {
+		opts.Format = FormatGrouped
+	}
+	if !opts.IncludeOpen && !opts.IncludeMerged {
+		opts.IncludeOpen = true // default
+	}
+	if opts.MergedLimit == 0 && opts.IncludeMerged {
+		opts.MergedLimit = mergedPRsLimit
+	}
+	if opts.MergedMaxAge == 0 && opts.IncludeMerged {
+		opts.MergedMaxAge = mergedPRMaxAge
+	}
+
+	// Stub: Handle IncludeRepos case (filesystem-only, no gh needed)
+	if opts.IncludeRepos {
+		repos, _ := m.ListProjectRepos(projectName)
+		projDir := m.projectDir(projectName)
+		for _, repoName := range repos {
+			worktreePath := filepath.Join(projDir, repoName)
+			result.Resources = append(result.Resources, Resource{
+				Kind:         ResourceRepo,
+				RepoName:     repoName,
+				WorktreePath: worktreePath,
+			})
+		}
+	}
+
+	// Stub: Initialize PRsByRepo for FormatGrouped (empty for now)
+	if opts.Format == FormatGrouped {
+		repos, _ := m.ListProjectRepos(projectName)
+		for _, repoName := range repos {
+			result.PRsByRepo = append(result.PRsByRepo, RepoPRs{
+				Repo: repoName,
+				PRs:  []PRInfo{},
+			})
+		}
+	}
+
+	// Full implementation will:
+	// - Fetch PRs via listFilteredPRsInRepo (with caching)
+	// - Apply parallelization across repos
+	// - Filter merged PRs by limit and max age
+	// - Populate PR resources with worktree detection
+	// - Handle all format types properly
+	return result, nil
+}
+
 // ListProjectPRs returns PRs grouped by repo (open + recently merged).
 // PRs are fetched in parallel across repos, and within each repo, open and merged PRs
 // are fetched concurrently for optimal performance.
