@@ -104,6 +104,7 @@ func loadProjectDetailResourcesCmd(m *project.Manager, projectName string) tea.C
 
 // loadProjectPRsCmd returns a command that loads PRs asynchronously (phase 2: async data).
 // Runs ListProjectPRs in a goroutine and returns ProjectPRsLoadedMsg with PRs grouped by repo.
+// DEPRECATED: Use loadProjectResourcesCmd instead for unified API.
 func loadProjectPRsCmd(m *project.Manager, projectName string) tea.Cmd {
 	return func() tea.Msg {
 		if m == nil {
@@ -111,6 +112,19 @@ func loadProjectPRsCmd(m *project.Manager, projectName string) tea.Cmd {
 		}
 		prsByRepo, _ := m.ListProjectPRs(projectName)
 		return ProjectPRsLoadedMsg{ProjectName: projectName, PRsByRepo: prsByRepo}
+	}
+}
+
+// loadProjectResourcesCmd returns a command that loads resources (repos + PRs) asynchronously (phase 2: async data).
+// Uses the unified ListProjectResources API which loads PRs and returns resources directly.
+// This replaces the old pattern of loadProjectPRsCmd + manual merging.
+func loadProjectResourcesCmd(m *project.Manager, projectName string) tea.Cmd {
+	return func() tea.Msg {
+		if m == nil {
+			return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: nil}
+		}
+		resources := m.ListProjectResources(projectName)
+		return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: resources}
 	}
 }
 

@@ -582,21 +582,16 @@ func mergePRs(a, b []PRInfo) []PRInfo {
 }
 
 // CountPRs returns the number of open PRs across the project's repos.
+// This is a wrapper around LoadPRs for backward compatibility.
 func (m *Manager) CountPRs(projectName string) int {
-	repos, err := m.ListProjectRepos(projectName)
-	if err != nil || len(repos) == 0 {
+	result, err := m.LoadPRs(projectName, PRLoadOptions{
+		State:    "open",
+		Filtered: true,
+	})
+	if err != nil {
 		return 0
 	}
-	count := 0
-	for _, repoName := range repos {
-		worktreePath := filepath.Join(m.projectDir(projectName), repoName)
-		prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-		if err != nil {
-			continue
-		}
-		count += len(prs)
-	}
-	return count
+	return result.PRCount
 }
 
 // DashboardSummary holds pre-computed data for the dashboard view.
@@ -613,78 +608,17 @@ type DashboardSummary struct {
 // detail view), this method only fetches open PRs — sufficient for
 // the dashboard where merged PRs are not displayed.
 // PR fetching is parallelized across repos for better performance.
+// This is a wrapper around LoadPRs for backward compatibility.
 func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
-	repos, _ := m.ListProjectRepos(projectName)
-	projDir := m.projectDir(projectName)
-
-	// Pre-allocate repo resources (filesystem-only, no network calls).
-	resources := make([]Resource, 0, len(repos))
-	for _, repoName := range repos {
-		worktreePath := filepath.Join(projDir, repoName)
-		resources = append(resources, Resource{
-			Kind:         ResourceRepo,
-			RepoName:     repoName,
-			WorktreePath: worktreePath,
-		})
+	result, err := m.LoadPRs(projectName, PRLoadOptions{
+		State:         "open",
+		Filtered:      true,
+		BuildResources: true,
+	})
+	if err != nil {
+		return DashboardSummary{PRCount: 0, Resources: []Resource{}}
 	}
-
-	// Fetch PRs concurrently across repos.
-	type repoResult struct {
-		repoName string
-		prs      []PRInfo
-		err      error
-	}
-	resultChan := make(chan repoResult, len(repos))
-	var wg sync.WaitGroup
-
-	for _, repoName := range repos {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-			worktreePath := filepath.Join(projDir, name)
-			prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-			resultChan <- repoResult{repoName: name, prs: prs, err: err}
-		}(repoName)
-	}
-
-	// Close channel when all goroutines complete.
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// Collect results and build resource list.
-	prCount := 0
-	repoPRs := make(map[string][]PRInfo)
-	for result := range resultChan {
-		if result.err != nil {
-			continue
-		}
-		repoPRs[result.repoName] = result.prs
-		prCount += len(result.prs)
-	}
-
-	// Append PR resources in repo order (matching the repo resource order).
-	for _, repoName := range repos {
-		prs := repoPRs[repoName]
-		for i := range prs {
-			pr := &prs[i]
-			// Check if a PR worktree already exists on disk.
-			prWT := filepath.Join(projDir, fmt.Sprintf("%s-pr-%d", repoName, pr.Number))
-			var wtPath string
-			if info, err := os.Stat(prWT); err == nil && info.IsDir() {
-				wtPath = prWT
-			}
-			resources = append(resources, Resource{
-				Kind:         ResourcePR,
-				RepoName:     repoName,
-				PR:           pr,
-				WorktreePath: wtPath,
-			})
-		}
-	}
-
-	return DashboardSummary{PRCount: prCount, Resources: resources}
+	return DashboardSummary{PRCount: result.PRCount, Resources: result.Resources}
 }
 
 // mergedPRsLimit is how many recently merged PRs to show per repo.
@@ -693,17 +627,139 @@ const mergedPRsLimit = 5
 // mergedPRMaxAge is the maximum age of merged PRs to show (20 hours).
 const mergedPRMaxAge = 20 * time.Hour
 
-// ListProjectPRs returns PRs grouped by repo (open + recently merged).
-// PRs are fetched in parallel across repos, and within each repo, open and merged PRs
-// are fetched concurrently for optimal performance.
-func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
-	repos, err := m.ListProjectRepos(projectName)
-	if err != nil {
-		return nil, err
+// PR Loading Consolidation
+//
+// All PR loading goes through LoadPRs(), which is the unified method for fetching PRs.
+// The following convenience wrapper methods exist for backward compatibility and
+// specific use cases:
+//
+//   - CountPRs() - returns PR count only
+//   - LoadProjectSummary() - returns DashboardSummary (PRCount + Resources) for dashboard
+//   - ListProjectPRs() - returns []RepoPRs grouped by repository
+//   - ListProjectResources() - returns []Resource (repos + PRs) for detail view
+//
+// All wrappers use LoadPRs() internally, ensuring consistent behavior and caching.
+// PR fetching is parallelized across repos, and within each repo, open and merged
+// PRs are fetched concurrently when both are requested.
+
+// PRFormat specifies the output format for LoadPRs.
+type PRFormat int
+
+const (
+	// FormatGrouped returns PRs grouped by repository ([]RepoPRs).
+	FormatGrouped PRFormat = iota
+	// FormatFlat returns a flat list of resources ([]Resource).
+	FormatFlat
+	// FormatCount returns only the count (requires CountOnly=true).
+	FormatCount
+)
+
+// PRLoadOptions configures how PRs are loaded.
+type PRLoadOptions struct {
+	// RepoNames optionally filters to specific repos. If empty, loads for all repos.
+	RepoNames []string
+
+	// State filters PRs by state: "open", "merged", "closed", or "all".
+	// Empty string defaults to "open". When IncludeOpen is true, this is used for the primary state.
+	State string
+
+	// Limit is the maximum number of PRs to fetch per repo (0 = default 30).
+	Limit int
+
+	// IncludeOpen includes open PRs (default: true).
+	IncludeOpen bool
+	// IncludeMerged includes merged PRs (default: false).
+	IncludeMerged bool
+	// MergedLimit limits the number of merged PRs per repo (default: 5, only applies if IncludeMerged is true).
+	MergedLimit int
+	// MergedMaxAge filters merged PRs by age (default: 20 hours, only applies if IncludeMerged is true).
+	MergedMaxAge time.Duration
+	// Format specifies the output format (default: FormatGrouped).
+	Format PRFormat
+	// IncludeRepos includes repo resources in the result (default: false, for resource lists).
+	IncludeRepos bool
+	// CountOnly returns only the count, no PR details (default: false, requires Format=FormatCount).
+	CountOnly bool
+
+	// Filtered controls whether to filter PRs by author (@me) and team review requests.
+	// When true, uses listFilteredPRsInRepo; when false, uses listPRsInRepo.
+	Filtered bool
+
+	// BuildResources controls whether to build Resource list from repos and PRs.
+	// When true, Resources field in PRLoadResult will be populated.
+	BuildResources bool
+}
+
+// PRLoadResult holds the results of loading PRs.
+type PRLoadResult struct {
+	// PRCount is the total number of PRs across all repos.
+	PRCount int
+	// PRsByRepo contains PRs grouped by repository (populated if Format=FormatGrouped).
+	PRsByRepo []RepoPRs
+	// Resources contains a flat list of resources (populated if Format=FormatFlat or IncludeRepos=true or BuildResources=true).
+	Resources []Resource
+}
+
+// LoadPRs loads PRs according to the provided options.
+// This is the unified API for loading PRs; existing methods are wrappers around this.
+func (m *Manager) LoadPRs(projectName string, opts PRLoadOptions) (PRLoadResult, error) {
+	if projectName == "" {
+		return PRLoadResult{}, fmt.Errorf("projectName is required")
 	}
+
+	// Apply defaults
+	if opts.Format == 0 {
+		opts.Format = FormatGrouped
+	}
+	if !opts.IncludeOpen && !opts.IncludeMerged {
+		opts.IncludeOpen = true // default
+	}
+	if opts.MergedLimit == 0 && opts.IncludeMerged {
+		opts.MergedLimit = mergedPRsLimit
+	}
+	if opts.MergedMaxAge == 0 && opts.IncludeMerged {
+		opts.MergedMaxAge = mergedPRMaxAge
+	}
+
+	// Resolve repos to load
+	var repos []string
+	var err error
+	if len(opts.RepoNames) > 0 {
+		repos = opts.RepoNames
+	} else {
+		repos, err = m.ListProjectRepos(projectName)
+		if err != nil {
+			return PRLoadResult{}, err
+		}
+	}
+
 	if len(repos) == 0 {
-		return nil, nil
+		return PRLoadResult{
+			PRsByRepo: []RepoPRs{},
+			Resources: []Resource{},
+			PRCount:   0,
+		}, nil
 	}
+
+	// Set defaults for state and limit
+	state := opts.State
+	if state == "" {
+		state = "open"
+	}
+	limit := opts.Limit
+	if limit == 0 {
+		limit = 30 // gh pr list default
+	}
+	mergedLimit := opts.MergedLimit
+	if mergedLimit == 0 {
+		mergedLimit = mergedPRsLimit
+	}
+	mergedMaxAge := opts.MergedMaxAge
+	if mergedMaxAge == 0 {
+		mergedMaxAge = mergedPRMaxAge
+	}
+
+	projDir := m.projectDir(projectName)
 
 	// Parallelize across repos
 	type repoResult struct {
@@ -718,44 +774,91 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 		wg.Add(1)
 		go func(name string) {
 			defer wg.Done()
-			worktreePath := filepath.Join(m.projectDir(projectName), name)
+			worktreePath := filepath.Join(projDir, name)
 
-			// Fetch open and merged PRs concurrently within each repo
-			var openPRs []PRInfo
-			var mergedPRs []PRInfo
-			var openErr, mergedErr error
-
-			var prWg sync.WaitGroup
-			prWg.Add(2)
-
-			go func() {
-				defer prWg.Done()
-				openPRs, openErr = m.listFilteredPRsInRepo(worktreePath, "open", 0)
-			}()
-
-			go func() {
-				defer prWg.Done()
-				mergedPRs, mergedErr = m.listFilteredPRsInRepo(worktreePath, "merged", mergedPRsLimit)
-			}()
-
-			prWg.Wait()
-
-			// Combine results, ignoring errors (best-effort)
 			var allPRs []PRInfo
-			if openErr == nil {
-				allPRs = append(allPRs, openPRs...)
-			}
-			if mergedErr == nil {
-				// Filter merged PRs to only include those merged within mergedPRMaxAge
-				cutoff := time.Now().Add(-mergedPRMaxAge)
-				for _, pr := range mergedPRs {
-					if pr.MergedAt != nil && pr.MergedAt.After(cutoff) {
-						allPRs = append(allPRs, pr)
+			var primaryErr error
+
+			// Determine what to fetch
+			shouldFetchOpen := opts.IncludeOpen && (state == "open" || state == "")
+			shouldFetchMerged := opts.IncludeMerged
+
+			if shouldFetchOpen && shouldFetchMerged {
+				// Fetch open and merged PRs concurrently
+				var openPRs []PRInfo
+				var mergedPRs []PRInfo
+				var mergedErr error
+
+				var prWg sync.WaitGroup
+				prWg.Add(2)
+
+				go func() {
+					defer prWg.Done()
+					if opts.Filtered {
+						openPRs, primaryErr = m.listFilteredPRsInRepo(worktreePath, "open", limit)
+					} else {
+						openPRs, primaryErr = m.listPRsInRepo(worktreePath, "open", limit)
 					}
+				}()
+
+				go func() {
+					defer prWg.Done()
+					if opts.Filtered {
+						mergedPRs, mergedErr = m.listFilteredPRsInRepo(worktreePath, "merged", mergedLimit)
+					} else {
+						mergedPRs, mergedErr = m.listPRsInRepo(worktreePath, "merged", mergedLimit)
+					}
+				}()
+
+				prWg.Wait()
+
+				// Combine results
+				if primaryErr == nil {
+					allPRs = append(allPRs, openPRs...)
+				}
+				if mergedErr == nil {
+					// Filter merged PRs by age
+					cutoff := time.Now().Add(-mergedMaxAge)
+					for _, pr := range mergedPRs {
+						if pr.MergedAt != nil && pr.MergedAt.After(cutoff) {
+							allPRs = append(allPRs, pr)
+						}
+					}
+				}
+			} else if shouldFetchOpen {
+				// Fetch only open PRs
+				if opts.Filtered {
+					allPRs, primaryErr = m.listFilteredPRsInRepo(worktreePath, "open", limit)
+				} else {
+					allPRs, primaryErr = m.listPRsInRepo(worktreePath, "open", limit)
+				}
+			} else if shouldFetchMerged {
+				// Fetch only merged PRs
+				var mergedPRs []PRInfo
+				if opts.Filtered {
+					mergedPRs, primaryErr = m.listFilteredPRsInRepo(worktreePath, "merged", mergedLimit)
+				} else {
+					mergedPRs, primaryErr = m.listPRsInRepo(worktreePath, "merged", mergedLimit)
+				}
+				if primaryErr == nil {
+					// Filter merged PRs by age
+					cutoff := time.Now().Add(-mergedMaxAge)
+					for _, pr := range mergedPRs {
+						if pr.MergedAt != nil && pr.MergedAt.After(cutoff) {
+							allPRs = append(allPRs, pr)
+						}
+					}
+				}
+			} else if state != "" && state != "open" {
+				// Fallback: use state if specified (for backward compatibility)
+				if opts.Filtered {
+					allPRs, primaryErr = m.listFilteredPRsInRepo(worktreePath, state, limit)
+				} else {
+					allPRs, primaryErr = m.listPRsInRepo(worktreePath, state, limit)
 				}
 			}
 
-			resultChan <- repoResult{repoName: name, prs: allPRs, err: nil}
+			resultChan <- repoResult{repoName: name, prs: allPRs, err: primaryErr}
 		}(repoName)
 	}
 
@@ -766,22 +869,68 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 	}()
 
 	// Collect results
-	repoPRsMap := make(map[string][]PRInfo)
+	prsByRepo := make(map[string][]PRInfo)
 	for result := range resultChan {
 		if result.err == nil && len(result.prs) > 0 {
-			repoPRsMap[result.repoName] = result.prs
+			prsByRepo[result.repoName] = result.prs
 		}
 	}
 
-	// Build output in repo order
-	var out []RepoPRs
+	// Build RepoPRs for backward compatibility and FormatGrouped
+	var repoPRs []RepoPRs
 	for _, repoName := range repos {
-		if prs, ok := repoPRsMap[repoName]; ok {
-			out = append(out, RepoPRs{Repo: repoName, PRs: prs})
+		if prs, ok := prsByRepo[repoName]; ok {
+			repoPRs = append(repoPRs, RepoPRs{Repo: repoName, PRs: prs})
+		} else if opts.Format == FormatGrouped {
+			// Include repos with no PRs for FormatGrouped
+			repoPRs = append(repoPRs, RepoPRs{Repo: repoName, PRs: []PRInfo{}})
 		}
 	}
 
-	return out, nil
+	// Calculate PR count
+	prCount := 0
+	for _, prs := range prsByRepo {
+		prCount += len(prs)
+	}
+
+	// Build resources if requested
+	var resources []Resource
+	if opts.BuildResources || opts.IncludeRepos || opts.Format == FormatFlat {
+		resources = m.buildResourcesFromReposAndPRs(repos, projDir, prsByRepo)
+	}
+
+	result := PRLoadResult{
+		PRCount:   prCount,
+		Resources: resources,
+	}
+
+	// Set PRsByRepo based on format
+	if opts.Format == FormatGrouped {
+		result.PRsByRepo = repoPRs
+	} else {
+		result.PRsByRepo = []RepoPRs{}
+	}
+
+	return result, nil
+}
+
+// ListProjectPRs returns PRs grouped by repo (open + recently merged).
+// PRs are fetched in parallel across repos, and within each repo, open and merged PRs
+// are fetched concurrently for optimal performance.
+// This is a wrapper around LoadPRs for backward compatibility.
+func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
+	result, err := m.LoadPRs(projectName, PRLoadOptions{
+		State:         "open",
+		IncludeMerged: true,
+		MergedLimit:   mergedPRsLimit,
+		MergedMaxAge:  mergedPRMaxAge,
+		Filtered:      true,
+		Format:        FormatGrouped,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.PRsByRepo, nil
 }
 
 // EnsurePRWorktree creates or reuses a worktree for a PR branch.
@@ -941,64 +1090,23 @@ func (m *Manager) buildResourcesFromReposAndPRs(repos []string, projDir string, 
 	return resources
 }
 
-// ListProjectResourcesLight builds a flat []Resource from repos and open PRs only.
-// Unlike ListProjectResources, this does not fetch merged PRs, reducing gh API calls.
-// Resources are ordered repo-first: each repo Resource is followed by its PR Resources.
-// Use this for dashboard/bead counting where merged PRs are not needed.
-func (m *Manager) ListProjectResourcesLight(projectName string) []Resource {
-	repos, _ := m.ListProjectRepos(projectName)
-	projDir := m.projectDir(projectName)
-
-	// Fetch open PRs concurrently across repos.
-	type repoResult struct {
-		repoName string
-		prs      []PRInfo
-		err      error
-	}
-	resultChan := make(chan repoResult, len(repos))
-	var wg sync.WaitGroup
-
-	for _, repoName := range repos {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-			worktreePath := filepath.Join(projDir, name)
-			prs, err := m.listFilteredPRsInRepo(worktreePath, "open", 0)
-			resultChan <- repoResult{repoName: name, prs: prs, err: err}
-		}(repoName)
-	}
-
-	// Close channel when all goroutines complete.
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// Collect results and build resource list.
-	repoPRs := make(map[string][]PRInfo)
-	for result := range resultChan {
-		if result.err != nil {
-			continue
-		}
-		repoPRs[result.repoName] = result.prs
-	}
-
-	return m.buildResourcesFromReposAndPRs(repos, projDir, repoPRs)
-}
 
 // ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
 // Resources are ordered repo-first: each repo Resource is followed by
 // its PR Resources, enabling tree-style rendering in the UI.
 // Use this for the project detail view where merged PRs are displayed.
+// This is a wrapper around LoadPRs for backward compatibility.
 func (m *Manager) ListProjectResources(projectName string) []Resource {
-	repos, _ := m.ListProjectRepos(projectName)
-	prsByRepo, _ := m.ListProjectPRs(projectName)
-
-	prMap := make(map[string][]PRInfo, len(prsByRepo))
-	for _, rp := range prsByRepo {
-		prMap[rp.Repo] = rp.PRs
+	result, err := m.LoadPRs(projectName, PRLoadOptions{
+		State:         "open",
+		IncludeMerged: true,
+		MergedLimit:   mergedPRsLimit,
+		MergedMaxAge:  mergedPRMaxAge,
+		Filtered:      true,
+		BuildResources: true,
+	})
+	if err != nil {
+		return []Resource{}
 	}
-
-	projDir := m.projectDir(projectName)
-	return m.buildResourcesFromReposAndPRs(repos, projDir, prMap)
+	return result.Resources
 }

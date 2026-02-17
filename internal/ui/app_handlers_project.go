@@ -226,7 +226,7 @@ func (a *appModelAdapter) handleProjectDetailResourcesLoaded(msg ProjectDetailRe
 		if a.ProjectManager != nil {
 			return a, tea.Batch(
 				a.Detail.spinnerTickCmd(),
-				loadProjectPRsCmd(a.ProjectManager, msg.ProjectName),
+				loadProjectResourcesCmd(a.ProjectManager, msg.ProjectName),
 			)
 		}
 		return a, a.Detail.spinnerTickCmd()

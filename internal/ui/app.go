@@ -293,7 +293,7 @@ func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cm
 	}
 	// Return command to trigger async enrichment (PRs, then beads)
 	if a.ProjectManager != nil {
-		cmds = append(cmds, loadProjectPRsCmd(a.ProjectManager, name))
+		cmds = append(cmds, loadProjectResourcesCmd(a.ProjectManager, name))
 		return v, tea.Batch(cmds...)
 	}
 	if len(cmds) > 0 {
