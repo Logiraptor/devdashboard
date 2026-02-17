@@ -94,13 +94,6 @@ func (w *WorktreeManager) CreateWorktree(beadID string) (worktreePath string, br
 	return worktreePath, branchName, nil
 }
 
-// FindWorktreeForBranch finds the worktree that has the given branch checked out.
-// Returns the worktree path, or empty string if not found.
-// Searches from the source repository.
-func (w *WorktreeManager) FindWorktreeForBranch(branchName string) string {
-	return worktree.FindWorktreeForBranch(w.mgr.SrcRepo(), branchName, "")
-}
-
 // MergeRepo returns the repository path to use for merging.
 // If baseWorkDir is already on the target branch, use it.
 // Otherwise, find the worktree that has the target branch.
@@ -111,7 +104,7 @@ func (w *WorktreeManager) MergeRepo(targetBranch string) string {
 		return w.baseWorkDir
 	}
 	// Find worktree with target branch
-	if wtPath := w.FindWorktreeForBranch(targetBranch); wtPath != "" {
+	if wtPath := worktree.FindWorktreeForBranch(w.mgr.SrcRepo(), targetBranch, false); wtPath != "" {
 		return wtPath
 	}
 	// Fallback to srcRepo (may fail if branch is checked out elsewhere)
