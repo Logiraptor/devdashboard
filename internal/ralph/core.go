@@ -53,7 +53,7 @@ type ToolObserver interface {
 }
 
 // ProgressObserver receives progress updates from Core execution.
-// It composes LoopObserver, BeadObserver, and ToolObserver.
+// It defines six optional methods for monitoring loop lifecycle, bead execution, and tool calls.
 // All methods are optional — implement only what you need.
 // Methods are called synchronously from the execution goroutine.
 type ProgressObserver interface {
@@ -64,7 +64,6 @@ type ProgressObserver interface {
 
 // NoopObserver is a ProgressObserver that does nothing.
 // Embed this in your observer to avoid implementing unused methods.
-// It implements LoopObserver, BeadObserver, and ToolObserver.
 type NoopObserver struct{}
 
 // Ensure NoopObserver implements all observer interfaces.
