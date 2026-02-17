@@ -219,14 +219,8 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 			batchSize = c.MaxParallel
 		}
 		batchReady := ready[:batchSize]
-		
-		// Extract beads from ReadyBead for execution
-		batch := make([]beads.Bead, len(batchReady))
-		for i, rb := range batchReady {
-			batch[i] = rb.Bead
-		}
 
-		results := c.executeParallel(ctx, wtMgr, batch, out)
+		results := c.executeParallel(ctx, wtMgr, batchReady, out)
 
 		// 3. Process results and merge back
 		c.processBeadResults(ctx, wtMgr, results, result, out)
@@ -432,26 +426,28 @@ func (c *Core) getBeadIfReady(runner BDRunner, beadID string) ([]beads.Bead, err
 	}}, nil
 }
 
-// executeParallel runs agents for a batch of beads concurrently.
-func (c *Core) executeParallel(ctx context.Context, wtMgr *WorktreeManager, batch []beads.Bead, out io.Writer) []beadExecResult {
+// executeParallel runs agents for a batch of ready beads concurrently.
+func (c *Core) executeParallel(ctx context.Context, wtMgr *WorktreeManager, batch []ReadyBead, out io.Writer) []beadExecResult {
 	results := make([]beadExecResult, len(batch))
 	var wg sync.WaitGroup
 
-	for i, bead := range batch {
+	for i, readyBead := range batch {
 		wg.Add(1)
-		go func(idx int, b beads.Bead) {
+		go func(idx int, rb ReadyBead) {
 			defer wg.Done()
-			results[idx] = c.executeBead(ctx, wtMgr, &b, out)
-		}(i, bead)
+			results[idx] = c.executeBead(ctx, wtMgr, rb, out)
+		}(i, readyBead)
 	}
 
 	wg.Wait()
 	return results
 }
 
-// executeBead runs an agent for a single bead.
-func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *beads.Bead, out io.Writer) beadExecResult {
+// executeBead runs an agent for a single bead, switching on AgentType to determine
+// prompt fetching, rendering, model selection, and worktree usage.
+func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, readyBead ReadyBead, out io.Writer) beadExecResult {
 	start := time.Now()
+	bead := readyBead.Bead
 	result := beadExecResult{BeadID: bead.ID}
 
 	// For observer notifications
@@ -459,7 +455,7 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 	notifyComplete := func(outcome Outcome, errMsg string) {
 		if c.Observer != nil {
 			br := BeadResult{
-				Bead:     *bead,
+				Bead:     bead,
 				Outcome:  outcome,
 				Duration: result.Duration,
 			}
@@ -477,12 +473,13 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 
 	// Notify observer of bead start
 	if c.Observer != nil {
-		c.Observer.OnBeadStart(*bead)
+		c.Observer.OnBeadStart(bead)
 	}
 
-	// Determine execution directory
+	// Determine execution directory and worktree handling based on agent type
 	execDir := c.WorkDir
-	if wtMgr != nil {
+	if readyBead.AgentType == AgentTypeCoder && wtMgr != nil {
+		// Coder agents use worktrees for isolation
 		worktreePath, branchName, err := wtMgr.CreateWorktree(bead.ID)
 		if err != nil {
 			writef(out, "[%s] failed to create worktree: %v\n", bead.ID, err)
@@ -495,36 +492,71 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 		result.WorktreePath = worktreePath
 		result.BranchName = branchName
 	}
+	// Verifier agents run in main repo (no worktree) since children's work is already merged
 
-	// Fetch prompt data
-	fetchPrompt := c.FetchPrompt
-	if fetchPrompt == nil {
-		fetchPrompt = FetchPromptData
-	}
-	promptData, err := fetchPrompt(c.RunBD, c.WorkDir, bead.ID)
-	if err != nil {
-		writef(out, "[%s] failed to fetch prompt: %v\n", bead.ID, err)
+	// Fetch and render prompt based on agent type
+	var prompt string
+	var err error
+	switch readyBead.AgentType {
+	case AgentTypeVerifier:
+		// Use verification prompt with child summary
+		verificationData, err := FetchVerificationPromptData(c.RunBD, c.WorkDir, bead.ID)
+		if err != nil {
+			writef(out, "[%s] failed to fetch verification prompt: %v\n", bead.ID, err)
+			result.Outcome = OutcomeFailure
+			result.Duration = time.Since(start)
+			notifyComplete(result.Outcome, err.Error())
+			return result
+		}
+
+		// Render verification prompt
+		prompt, err = RenderVerificationPrompt(verificationData)
+		if err != nil {
+			writef(out, "[%s] failed to render verification prompt: %v\n", bead.ID, err)
+			result.Outcome = OutcomeFailure
+			result.Duration = time.Since(start)
+			notifyComplete(result.Outcome, err.Error())
+			return result
+		}
+
+	case AgentTypeCoder:
+		// Use standard prompt for coding tasks
+		fetchPrompt := c.FetchPrompt
+		if fetchPrompt == nil {
+			fetchPrompt = FetchPromptData
+		}
+		promptData, fetchErr := fetchPrompt(c.RunBD, c.WorkDir, bead.ID)
+		if fetchErr != nil {
+			writef(out, "[%s] failed to fetch prompt: %v\n", bead.ID, fetchErr)
+			result.Outcome = OutcomeFailure
+			result.Duration = time.Since(start)
+			notifyComplete(result.Outcome, fetchErr.Error())
+			return result
+		}
+
+		// Render prompt
+		render := c.Render
+		if render == nil {
+			render = RenderPrompt
+		}
+		prompt, err = render(promptData)
+		if err != nil {
+			writef(out, "[%s] failed to render prompt: %v\n", bead.ID, err)
+			result.Outcome = OutcomeFailure
+			result.Duration = time.Since(start)
+			notifyComplete(result.Outcome, err.Error())
+			return result
+		}
+
+	default:
+		writef(out, "[%s] unknown agent type: %v\n", bead.ID, readyBead.AgentType)
 		result.Outcome = OutcomeFailure
 		result.Duration = time.Since(start)
-		notifyComplete(result.Outcome, err.Error())
+		notifyComplete(result.Outcome, fmt.Sprintf("unknown agent type: %v", readyBead.AgentType))
 		return result
 	}
 
-	// Render prompt
-	render := c.Render
-	if render == nil {
-		render = RenderPrompt
-	}
-	prompt, err := render(promptData)
-	if err != nil {
-		writef(out, "[%s] failed to render prompt: %v\n", bead.ID, err)
-		result.Outcome = OutcomeFailure
-		result.Duration = time.Since(start)
-		notifyComplete(result.Outcome, err.Error())
-		return result
-	}
-
-	// Execute agent
+	// Execute agent with model selection based on agent type
 	if c.Execute != nil {
 		agentResult, err = c.Execute(ctx, execDir, prompt)
 	} else {
@@ -542,7 +574,13 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 			// and stdout is still captured in the buffer for parsing.
 			opts = append(opts, WithStdoutWriter(io.Discard))
 		}
-		agentResult, err = RunAgent(ctx, execDir, prompt, opts...)
+
+		// Select model based on agent type
+		if readyBead.AgentType == AgentTypeVerifier {
+			agentResult, err = RunAgentOpus(ctx, execDir, prompt, opts...)
+		} else {
+			agentResult, err = RunAgent(ctx, execDir, prompt, opts...)
+		}
 	}
 	if err != nil {
 		writef(out, "[%s] agent execution error: %v\n", bead.ID, err)
@@ -564,7 +602,7 @@ func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, bead *be
 	result.Outcome = outcome
 	result.Duration = agentResult.Duration
 
-	writef(out, "[%s] %s → %s (%s)\n", bead.ID, bead.Title, outcome, FormatDuration(result.Duration))
+	writef(out, "[%s] %s → %s (%s) [%s]\n", bead.ID, bead.Title, outcome, FormatDuration(result.Duration), readyBead.AgentType)
 	if summary != "" && outcome != OutcomeSuccess {
 		writef(out, "  %s\n", summary)
 	}
