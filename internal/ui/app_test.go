@@ -703,7 +703,7 @@ func TestRemoveResourceMsg_KillsPanesAndUnregisters(t *testing.T) {
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
-	rk := session.ResourceKey("repo", "myrepo", 0)
+	rk := session.NewResourceKey("repo", "myrepo", 0)
 	ta.Sessions.Register(rk, "%10", session.PaneShell)
 	ta.Sessions.Register(rk, "%11", session.PaneAgent)
 
@@ -762,7 +762,7 @@ func TestRemoveResourceMsg_PR(t *testing.T) {
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
-	rk := session.ResourceKey("pr", "myrepo", 42)
+	rk := session.NewResourceKey("pr", "myrepo", 42)
 	ta.Sessions.Register(rk, "%20", session.PaneAgent)
 
 	prResource := project.Resource{
@@ -922,9 +922,9 @@ func TestResourceKeyFromResource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resourceKeyFromResource(tt.resource)
-			if got != tt.want {
-				t.Errorf("resourceKeyFromResource() = %q, want %q", got, tt.want)
+		got := resourceKeyFromResource(tt.resource)
+		if string(got) != tt.want {
+			t.Errorf("resourceKeyFromResource() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -979,7 +979,7 @@ func TestProjectSwitchPanesPersist(t *testing.T) {
 	ta := newTestApp(t)
 
 	// Register panes for a resource.
-	rk := "repo:myrepo"
+	rk := session.NewResourceKey("repo", "myrepo", 0)
 	ta.Sessions.Register(rk, "%10", session.PaneShell)
 	ta.Sessions.Register(rk, "%11", session.PaneAgent)
 
@@ -1021,7 +1021,7 @@ func TestDeleteProjectMsg_KillsPanesForAllResources(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: /x"), 0644)
 
 	// Register panes for the resource.
-	rk := "repo:myrepo"
+	rk := session.NewResourceKey("repo", "myrepo", 0)
 	ta.Sessions.Register(rk, "%20", session.PaneShell)
 	ta.Sessions.Register(rk, "%21", session.PaneAgent)
 
@@ -1064,7 +1064,7 @@ func TestRefreshDetailPanes_PrunesDeadPanes(t *testing.T) {
 	ta := newTestApp(t)
 	ta.Sessions = tracker
 
-	rk := "repo:myrepo"
+	rk := session.NewResourceKey("repo", "myrepo", 0)
 	ta.Sessions.Register(rk, "%1", session.PaneShell)
 	ta.Sessions.Register(rk, "%2", session.PaneAgent) // dead
 

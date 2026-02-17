@@ -368,7 +368,7 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 	var prPanes []session.TrackedPane
 
 	for _, pane := range allPanes {
-		parts := strings.Split(pane.ResourceKey, ":")
+		parts := strings.Split(string(pane.ResourceKey), ":")
 		if len(parts) >= 2 && parts[0] == "pr" {
 			prPanes = append(prPanes, pane)
 		} else {
@@ -402,7 +402,7 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 	// Parse resource key to get repo/PR info
 	// Format: "repo:name" or "pr:name:#number"
-	parts := strings.Split(pane.ResourceKey, ":")
+	parts := strings.Split(string(pane.ResourceKey), ":")
 	if len(parts) < 2 {
 		return pane.PaneID
 	}
@@ -463,11 +463,11 @@ func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 }
 
 // resourceKeyFromResource builds a session.ResourceKey from a project.Resource.
-func resourceKeyFromResource(r project.Resource) string {
+func resourceKeyFromResource(r project.Resource) session.ResourceKey {
 	if r.Kind == project.ResourcePR && r.PR != nil {
-		return session.ResourceKey("pr", r.RepoName, r.PR.Number)
+		return session.NewResourceKey("pr", r.RepoName, r.PR.Number)
 	}
-	return session.ResourceKey("repo", r.RepoName, 0)
+	return session.NewResourceKey("repo", r.RepoName, 0)
 }
 
 // AppModelOption configures NewAppModel
