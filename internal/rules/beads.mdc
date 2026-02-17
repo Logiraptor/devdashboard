@@ -35,6 +35,29 @@ bd sync                               # Sync with git remote
 4. Mark complete: `bd close <id>`
 5. Sync: `bd sync` (or let git hooks handle it)
 
+## Task Granularity - Right-Sizing Work
+
+**The unit of work is a coherent change, not an atomic code change.**
+
+### Good task scope (what an agent session can do well):
+- "Implement user login form with validation" (not 5 separate tasks for form, input, validation, submit, styling)
+- "Add CRUD endpoints for users resource" (not 4 tasks for create/read/update/delete)
+- "Refactor auth module to use new token format" (not per-file or per-function tasks)
+
+### Anti-patterns to avoid:
+- One task per getter/setter/method
+- One task per file touched
+- Tasks that take <15 minutes of focused work
+- Tasks so atomic they create merge conflicts when parallelized
+
+### Right-sizing heuristic:
+**A task should represent a complete, testable behavior change.** If you can't meaningfully test/verify the task in isolation, it's too small. If it requires multiple distinct behaviors, it's too big.
+
+### When breaking down epics:
+- Each child should be independently deployable/testable
+- Prefer 3-7 children over 15-20
+- Ask: "Would this task make sense as a PR?"
+
 ## Human-Question Protocol
 
 When you encounter ambiguity or need information from a human to proceed, **do not guess**. Instead, create a blocking "question" bead and move on.
