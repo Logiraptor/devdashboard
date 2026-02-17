@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"devdeploy/internal/agent"
 	"devdeploy/internal/progress"
@@ -363,13 +362,12 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 	allPanes := a.Sessions.AllPanes()
 
 	// Sort panes: repos first, then PRs, then by creation time within each group
-	// Resource key format: "repo:name" or "pr:name:#number"
 	var repoPanes []session.TrackedPane
 	var prPanes []session.TrackedPane
 
 	for _, pane := range allPanes {
-		parts := strings.Split(string(pane.ResourceKey), ":")
-		if len(parts) >= 2 && parts[0] == "pr" {
+		if pane.ResourceKey.Kind() == "pr" {
+
 			prPanes = append(prPanes, pane)
 		} else {
 			repoPanes = append(repoPanes, pane)
@@ -400,21 +398,14 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 // getPaneDisplayName returns a human-readable name for a pane.
 // Works globally without requiring Detail view.
 func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
-	// Parse resource key to get repo/PR info
-	// Format: "repo:name" or "pr:name:#number"
-	parts := strings.Split(string(pane.ResourceKey), ":")
-	if len(parts) < 2 {
-		return pane.PaneID
-	}
+	rk := pane.ResourceKey
+	repoName := rk.RepoName()
 
-	kind := parts[0]
-	repoName := parts[1]
 
 	var name string
-	if kind == "pr" && len(parts) >= 3 {
-		// PR resource: "pr:name:#number"
-		prNum := strings.TrimPrefix(parts[2], "#")
-		name = fmt.Sprintf("%s-pr-%s", repoName, prNum)
+	if rk.Kind() == "pr" && rk.PRNumber() > 0 {
+		// PR resource
+		name = fmt.Sprintf("%s-pr-%d", repoName, rk.PRNumber())
 	} else {
 		// Repo resource
 		name = repoName

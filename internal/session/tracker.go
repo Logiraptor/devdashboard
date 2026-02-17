@@ -19,10 +19,10 @@ const (
 
 // TrackedPane holds metadata about one active tmux pane.
 type TrackedPane struct {
-	PaneID      string    // tmux pane ID (e.g. "%42")
-	Type        PaneType  // shell or agent
+	PaneID      string      // tmux pane ID (e.g. "%42")
+	Type        PaneType    // shell or agent
 	ResourceKey ResourceKey // resource this pane belongs to (e.g. "repo:devdeploy" or "pr:devdeploy:#42")
-	CreatedAt   time.Time // when the pane was registered
+	CreatedAt   time.Time   // when the pane was registered
 }
 
 // LivenessChecker returns the set of currently live tmux pane IDs.
