@@ -308,7 +308,7 @@ func validateToolEventTyped(raw *toolEventRaw, eventMap map[string]interface{}) 
 			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
 			"strReplaceToolCall", "grepToolCall", "globToolCall",
 			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
-			"todoWriteToolCall",
+			"todoWriteToolCall", "updateTodosToolCall",
 		}
 		found := false
 		for _, toolType := range recognizedTypes {
@@ -386,7 +386,7 @@ func validateToolEvent(event map[string]interface{}) error {
 			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
 			"strReplaceToolCall", "grepToolCall", "globToolCall",
 			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
-			"todoWriteToolCall",
+			"todoWriteToolCall", "updateTodosToolCall",
 		}
 		found := false
 		for _, toolType := range recognizedTypes {
@@ -432,6 +432,7 @@ func parseNewToolCallFormatTyped(toolCall map[string]interface{}) (string, map[s
 		"deleteToolCall":         "Delete",
 		"webFetchToolCall":       "WebFetch",
 		"todoWriteToolCall":      "TodoWrite",
+		"updateTodosToolCall":    "TodoWrite", // Alias - models sometimes use this name
 	}
 
 	for toolType, canonicalName := range toolTypeMap {
