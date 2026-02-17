@@ -30,68 +30,20 @@ const (
 // cursorDelegate is a custom list delegate that adds a visual cursor indicator ('▸')
 // prefix for the currently selected item in the list.
 //
-// Why this custom delegate exists:
-//
-// The bubbles list.DefaultDelegate provides standard list rendering but does not
-// include a visual cursor indicator. The project detail view requires a clear visual
-// indicator to show which item is selected, especially when navigating through the
-// hierarchical structure of resources and beads (see dev-log/ui.md for the design
-// requirements). The '▸' prefix provides immediate visual feedback about the current
-// selection position.
-//
-// How it differs from DefaultDelegate:
-//
-// 1. Visual cursor: Adds a '▸' prefix before the selected item's title, which
-//    DefaultDelegate does not provide.
-// 2. List model reference: Maintains a reference to the list.Model to check the
-//    currently selected index during rendering. DefaultDelegate does not need this
-//    as it doesn't customize rendering based on selection state.
-// 3. Composition: Embeds DefaultDelegate and delegates to it for the actual item
-//    rendering, only adding the cursor prefix before calling the default renderer.
-//
-// When to use:
-//
-// Use cursorDelegate when you need a visual cursor indicator in a list view. This
-// is particularly appropriate for:
-// - Hierarchical lists where selection position matters (e.g., resources with nested
-//   beads in the project detail view)
-// - Views where the selected item drives other UI updates (e.g., the Bead Details
-//   section that shows information about the selected bead)
-// - Navigation-heavy interfaces where users need clear visual feedback about their
-//   current position
-//
-// For simple lists without selection-dependent UI or where the default highlighting
-// is sufficient, use NewCompactListDelegate() instead.
-//
-// Design requirements:
-//
-// This pattern aligns with the UI design documented in dev-log/ui.md, which specifies
-// that the project detail view should display resources and beads with clear visual
-// hierarchy and selection indicators. The cursor prefix ensures users can quickly
-// identify which item is active, supporting the multi-agent parallel TUI workflow
-// where selection drives the Bead Details section display.
+// This delegate wraps list.DefaultDelegate to add a '▸' prefix before the selected
+// item's title, providing clear visual feedback about the current selection position.
+// The bubbles list API provides the list.Model as a parameter to Render(), so we
+// can check the selected index without storing a reference to the list model.
 type cursorDelegate struct {
 	list.DefaultDelegate
-	listModel *list.Model
-}
-
-// renderCursorPrefix returns the cursor prefix string ("▸ ") if the item at the given
-// index is selected, otherwise returns an empty string.
-func (d cursorDelegate) renderCursorPrefix(index int) string {
-	isSelected := d.listModel != nil && index == d.listModel.Index()
-	if isSelected {
-		return "▸ "
-	}
-	return ""
 }
 
 // Render implements list.ItemDelegate and adds '▸' prefix for selected items.
 // It checks if the current item index matches the list's selected index, and if so,
 // writes the cursor prefix before delegating to the default renderer.
 func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	prefix := d.renderCursorPrefix(index)
-	if prefix != "" {
-		_, _ = fmt.Fprint(w, prefix)
+	if index == m.Index() {
+		_, _ = fmt.Fprint(w, "▸ ")
 	}
 
 	// Delegate to default renderer
@@ -104,22 +56,7 @@ func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 // - Zero spacing between items (compact layout)
 // - Descriptions disabled (title-only display)
 // - Theme-consistent styles matching the rest of the UI (see Styles in styles.go)
-//
-// The listModel parameter is required so the delegate can check which item is
-// currently selected during rendering. This reference must be to the same list.Model
-// instance that will use this delegate.
-//
-// Usage pattern:
-//
-//   l := list.New(nil, tempDelegate, 0, 0)
-//   delegate := newCursorDelegate(&l)
-//   l.SetDelegate(delegate)
-//
-// Note: The list must be created first (even with a temporary delegate) so that
-// a reference to it can be passed to newCursorDelegate. This creates a circular
-// reference that is safe because the delegate only reads from the list model and
-// the list model owns the delegate.
-func newCursorDelegate(listModel *list.Model) cursorDelegate {
+func newCursorDelegate() cursorDelegate {
 	d := list.NewDefaultDelegate()
 	d.SetSpacing(0)
 	d.ShowDescription = false
@@ -130,7 +67,6 @@ func newCursorDelegate(listModel *list.Model) cursorDelegate {
 
 	return cursorDelegate{
 		DefaultDelegate: d,
-		listModel:       listModel,
 	}
 }
 
@@ -144,12 +80,12 @@ const (
 
 // detailItem is a unified item type for the flat list (resources + beads).
 type detailItem struct {
-	itemType    itemType
-	resourceIdx int // index into Resources (for both resource and bead items)
-	beadIdx     int // -1 for resource items, >=0 for bead items
-	resource    *project.Resource
-	bead        *project.BeadInfo  // nil for resource items
-	view        *ProjectDetailView // reference to view for loading state
+	itemType     itemType
+	resourceIdx  int // index into Resources (for both resource and bead items)
+	beadIdx      int // -1 for resource items, >=0 for bead items
+	resource     *project.Resource
+	bead         *project.BeadInfo // nil for resource items
+	loadingBeads bool              // true when beads are being loaded (for status display)
 }
 
 func (d detailItem) FilterValue() string {
@@ -179,7 +115,7 @@ func (d detailItem) Description() string {
 
 // renderResourceTitleWithLoading renders the title for a resource item with loading indicators.
 func (d detailItem) renderResourceTitleWithLoading() string {
-	status := resourceStatusWithLoading(*d.resource, d.view)
+	status := resourceStatusWithLoading(*d.resource, d.loadingBeads)
 
 	switch d.resource.Kind {
 	case project.ResourceRepo:
@@ -263,14 +199,9 @@ var _ View = (*ProjectDetailView)(nil)
 
 // NewProjectDetailView creates a detail view for a project.
 func NewProjectDetailView(name string) *ProjectDetailView {
-	// Create list with temporary delegate first
-	tempDelegate := NewCompactListDelegate()
-	l := list.New(nil, tempDelegate, 0, 0)
-
-	// Create custom delegate that adds '▸' cursor for selected items
-	// Pass reference to the list so delegate can check selected index
-	delegate := newCursorDelegate(&l)
-	l.SetDelegate(delegate)
+	// Create list with custom delegate that adds '▸' cursor for selected items
+	delegate := newCursorDelegate()
+	l := list.New(nil, delegate, 0, 0)
 	l.Title = ""
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -343,12 +274,12 @@ func (p *ProjectDetailView) buildItems() {
 		// Add resource item
 		resourceItemIdx := len(p.items)
 		p.items = append(p.items, detailItem{
-			itemType:    itemTypeResource,
-			resourceIdx: i,
-			beadIdx:     -1,
-			resource:    &p.Resources[i],
-			bead:        nil,
-			view:        p,
+			itemType:     itemTypeResource,
+			resourceIdx:  i,
+			beadIdx:      -1,
+			resource:     &p.Resources[i],
+			bead:         nil,
+			loadingBeads: p.loadingBeads,
 		})
 		p.itemToIndex[resourceItemIdx] = i
 
@@ -356,12 +287,12 @@ func (p *ProjectDetailView) buildItems() {
 		for bi := range r.Beads {
 			beadItemIdx := len(p.items)
 			p.items = append(p.items, detailItem{
-				itemType:    itemTypeBead,
-				resourceIdx: i,
-				beadIdx:     bi,
-				resource:    &p.Resources[i],
-				bead:        &p.Resources[i].Beads[bi],
-				view:        p,
+				itemType:     itemTypeBead,
+				resourceIdx:  i,
+				beadIdx:      bi,
+				resource:     &p.Resources[i],
+				bead:         &p.Resources[i].Beads[bi],
+				loadingBeads: p.loadingBeads,
 			})
 			p.itemToIndex[beadItemIdx] = i
 		}
@@ -404,6 +335,8 @@ func (p *ProjectDetailView) Update(msg tea.Msg) (View, tea.Cmd) {
 	// Pass all messages to list.Model - it handles j/k/g/G navigation and filtering natively
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
+	// Update filter styles after list updates (filter state may have changed)
+	p.updateFilterStyles()
 	cmds = append(cmds, cmd)
 	return p, tea.Batch(cmds...)
 }
@@ -516,25 +449,9 @@ func (p *ProjectDetailView) IsFiltering() bool {
 	return p.list.FilterState() == list.Filtering
 }
 
-// View implements View.
-func (p *ProjectDetailView) View() string {
-	// Set default dimensions if not set (for tests)
-	if p.list.Width() == 0 {
-		p.list.SetWidth(80)
-	}
-	if p.list.Height() == 0 {
-		// If termHeight is 0 (no scrolling), set height to show all items
-		// Otherwise, set a reasonable default for tests
-		if p.termHeight == 0 {
-			// Set height to a very large number to show all items without pagination
-			p.list.SetHeight(10000)
-		} else {
-			p.list.SetHeight(20)
-		}
-	}
-
-	// Style filter input based on filter state to hide it when not actively filtering
-	// This prevents the "blue square" from showing when filter is enabled but not active
+// updateFilterStyles updates the filter input styles based on the current filter state.
+// This hides the filter prompt when not actively filtering to prevent the "blue square" from showing.
+func (p *ProjectDetailView) updateFilterStyles() {
 	filterState := p.list.FilterState()
 	if filterState == list.Filtering {
 		// Show filter prompt when actively filtering (user is typing)
@@ -556,6 +473,27 @@ func (p *ProjectDetailView) View() string {
 			Foreground(lipgloss.NoColor{}).
 			Background(lipgloss.NoColor{})
 	}
+}
+
+// View implements View.
+func (p *ProjectDetailView) View() string {
+	// Set default dimensions if not set (for tests)
+	if p.list.Width() == 0 {
+		p.list.SetWidth(80)
+	}
+	if p.list.Height() == 0 {
+		// If termHeight is 0 (no scrolling), set height to show all items
+		// Otherwise, set a reasonable default for tests
+		if p.termHeight == 0 {
+			// Set height to a very large number to show all items without pagination
+			p.list.SetHeight(10000)
+		} else {
+			p.list.SetHeight(20)
+		}
+	}
+
+	// Ensure filter styles are up to date (fallback in case Update() wasn't called)
+	p.updateFilterStyles()
 
 	// Rebuild items if Resources have changed or loading state changed
 	expectedItems := 0
@@ -735,11 +673,11 @@ func resourceStatus(r project.Resource) string {
 }
 
 // resourceStatusWithLoading returns a status string with loading indicators for beads.
-func resourceStatusWithLoading(r project.Resource, view *ProjectDetailView) string {
+func resourceStatusWithLoading(r project.Resource, loadingBeads bool) string {
 	status := resourceStatus(r)
 
 	// Show "…" for bead counts when beads are loading
-	if view != nil && view.loadingBeads && r.WorktreePath != "" {
+	if loadingBeads && r.WorktreePath != "" {
 		beadCount := len(r.Beads)
 		if beadCount == 0 {
 			// Show loading indicator when beads haven't loaded yet
