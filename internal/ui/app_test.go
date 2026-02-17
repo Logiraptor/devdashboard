@@ -703,7 +703,7 @@ func TestRemoveResourceMsg_KillsPanesAndUnregisters(t *testing.T) {
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
-	rk := session.ResourceKey("repo", "myrepo", 0)
+	rk := session.NewRepoKey("myrepo").String()
 	ta.Sessions.Register(rk, "%10", session.PaneShell)
 	ta.Sessions.Register(rk, "%11", session.PaneAgent)
 
@@ -762,7 +762,7 @@ func TestRemoveResourceMsg_PR(t *testing.T) {
 	ta := newTestApp(t)
 	_ = ta.ProjectManager.CreateProject("test-proj")
 
-	rk := session.ResourceKey("pr", "myrepo", 42)
+	rk := session.NewPRKey("myrepo", 42).String()
 	ta.Sessions.Register(rk, "%20", session.PaneAgent)
 
 	prResource := project.Resource{

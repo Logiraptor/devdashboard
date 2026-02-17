@@ -465,9 +465,9 @@ func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 // resourceKeyFromResource builds a session.ResourceKey from a project.Resource.
 func resourceKeyFromResource(r project.Resource) string {
 	if r.Kind == project.ResourcePR && r.PR != nil {
-		return session.ResourceKey("pr", r.RepoName, r.PR.Number)
+		return session.NewPRKey(r.RepoName, r.PR.Number).String()
 	}
-	return session.ResourceKey("repo", r.RepoName, 0)
+	return session.NewRepoKey(r.RepoName).String()
 }
 
 // AppModelOption configures NewAppModel

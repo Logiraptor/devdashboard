@@ -5,7 +5,6 @@
 package session
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -26,14 +25,6 @@ type TrackedPane struct {
 	CreatedAt   time.Time // when the pane was registered
 }
 
-// ResourceKey builds a canonical key for a resource.
-// Repos: "repo:<name>", PRs: "pr:<repo>:#<number>".
-func ResourceKey(kind string, repoName string, prNumber int) string {
-	if kind == "pr" && prNumber > 0 {
-		return fmt.Sprintf("pr:%s:#%d", repoName, prNumber)
-	}
-	return fmt.Sprintf("repo:%s", repoName)
-}
 
 // LivenessChecker returns the set of currently live tmux pane IDs.
 // In production this calls tmux.ListPaneIDs(); tests can inject a stub.

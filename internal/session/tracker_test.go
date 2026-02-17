@@ -17,28 +17,37 @@ func stubLiveness(live ...string) LivenessChecker {
 
 func TestResourceKey(t *testing.T) {
 	tests := []struct {
+		name     string
 		kind     string
 		repo     string
 		prNumber int
 		want     string
 	}{
-		{"repo", "devdeploy", 0, "repo:devdeploy"},
-		{"pr", "devdeploy", 42, "pr:devdeploy:#42"},
-		{"repo", "grafana", 0, "repo:grafana"},
-		{"pr", "grafana", 7, "pr:grafana:#7"},
+		{"repo", "repo", "devdeploy", 0, "repo:devdeploy"},
+		{"PR", "pr", "devdeploy", 42, "pr:devdeploy:#42"},
+		{"repo grafana", "repo", "grafana", 0, "repo:grafana"},
+		{"PR grafana", "pr", "grafana", 7, "pr:grafana:#7"},
 	}
 	for _, tt := range tests {
-		got := ResourceKey(tt.kind, tt.repo, tt.prNumber)
-		if got != tt.want {
-			t.Errorf("ResourceKey(%q, %q, %d) = %q, want %q", tt.kind, tt.repo, tt.prNumber, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			var rk ResourceKey
+			if tt.kind == "pr" {
+				rk = NewPRKey(tt.repo, tt.prNumber)
+			} else {
+				rk = NewRepoKey(tt.repo)
+			}
+			got := rk.String()
+			if got != tt.want {
+				t.Errorf("ResourceKey.String() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestRegisterAndQuery(t *testing.T) {
 	tr := New(nil)
 
-	key := ResourceKey("repo", "devdeploy", 0)
+	key := NewRepoKey("devdeploy").String()
 	tr.Register(key, "%1", PaneShell)
 	tr.Register(key, "%2", PaneAgent)
 
@@ -66,7 +75,7 @@ func TestRegisterAndQuery(t *testing.T) {
 func TestUnregister(t *testing.T) {
 	tr := New(nil)
 
-	key := ResourceKey("repo", "devdeploy", 0)
+	key := NewRepoKey("devdeploy").String()
 	tr.Register(key, "%1", PaneShell)
 	tr.Register(key, "%2", PaneAgent)
 
@@ -92,8 +101,8 @@ func TestUnregister(t *testing.T) {
 func TestUnregisterAll(t *testing.T) {
 	tr := New(nil)
 
-	key1 := ResourceKey("repo", "devdeploy", 0)
-	key2 := ResourceKey("repo", "grafana", 0)
+	key1 := NewRepoKey("devdeploy").String()
+	key2 := NewRepoKey("grafana").String()
 	tr.Register(key1, "%1", PaneShell)
 	tr.Register(key1, "%2", PaneAgent)
 	tr.Register(key2, "%3", PaneShell)
@@ -114,8 +123,8 @@ func TestPrune(t *testing.T) {
 	// Only %1 and %3 are alive; %2 is dead
 	tr := New(stubLiveness("%1", "%3"))
 
-	key1 := ResourceKey("repo", "devdeploy", 0)
-	key2 := ResourceKey("repo", "grafana", 0)
+	key1 := NewRepoKey("devdeploy").String()
+	key2 := NewRepoKey("grafana").String()
 	tr.Register(key1, "%1", PaneShell)
 	tr.Register(key1, "%2", PaneAgent) // dead
 	tr.Register(key2, "%3", PaneShell)
@@ -142,7 +151,7 @@ func TestPruneRemovesEntireResource(t *testing.T) {
 	// No panes are alive
 	tr := New(stubLiveness())
 
-	key := ResourceKey("repo", "devdeploy", 0)
+	key := NewRepoKey("devdeploy").String()
 	tr.Register(key, "%1", PaneShell)
 	tr.Register(key, "%2", PaneAgent)
 
