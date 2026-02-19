@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"devdeploy/internal/project"
+	"devdeploy/internal/ui/textutil"
 )
 
 // reservedChromeLines is the number of terminal lines reserved for app chrome
@@ -38,15 +39,23 @@ type cursorDelegate struct {
 	list.DefaultDelegate
 }
 
+const (
+	cursorSymbol = "▸"
+	cursorPrefix = cursorSymbol + " "
+)
+
 // Render implements list.ItemDelegate and adds '▸' prefix for selected items.
 // It checks if the current item index matches the list's selected index, and if so,
 // writes the cursor prefix before delegating to the default renderer.
-// Non-selected items get equivalent spacing to maintain alignment.
+// Non-selected items get equivalent spacing to maintain alignment using visual width.
 func (d cursorDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	if index == m.Index() {
-		_, _ = fmt.Fprint(w, "▸ ")
+		_, _ = fmt.Fprint(w, cursorPrefix)
 	} else {
-		_, _ = fmt.Fprint(w, "  ") // Same width as "▸ " to maintain alignment
+		// Use visual width padding to match the cursor prefix width
+		cursorWidth := textutil.VisualWidth(cursorPrefix)
+		padding := textutil.PadRightVisual("", cursorWidth)
+		_, _ = fmt.Fprint(w, padding)
 	}
 
 	// Delegate to default renderer
@@ -616,9 +625,10 @@ func (p *ProjectDetailView) renderBeadDetailsSection() string {
 				if i >= maxDescLines {
 					break
 				}
-				// Truncate long lines
-				if len(line) > width-4 {
-					line = line[:width-7] + "..."
+				// Truncate long lines using visual width (accounting for "  " prefix)
+				maxLineWidth := width - 2 // Reserve 2 columns for "  " prefix
+				if maxLineWidth > 0 {
+					line = textutil.Truncate(line, maxLineWidth)
 				}
 				content.WriteString("  " + Styles.Normal.Render(line) + "\n")
 			}
@@ -627,8 +637,10 @@ func (p *ProjectDetailView) renderBeadDetailsSection() string {
 		// Labels (if any)
 		if len(bead.Labels) > 0 {
 			labelsStr := strings.Join(bead.Labels, ", ")
-			if len(labelsStr) > width-4 {
-				labelsStr = labelsStr[:width-7] + "..."
+			// Truncate using visual width (accounting for "  " prefix)
+			maxLabelsWidth := width - 2 // Reserve 2 columns for "  " prefix
+			if maxLabelsWidth > 0 {
+				labelsStr = textutil.Truncate(labelsStr, maxLabelsWidth)
 			}
 			content.WriteString("  " + Styles.Muted.Render(labelsStr) + "\n")
 		}

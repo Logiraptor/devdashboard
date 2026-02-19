@@ -10,6 +10,7 @@ import (
 
 	"devdeploy/internal/beads"
 	"devdeploy/internal/ralph"
+	"devdeploy/internal/ui/textutil"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -423,7 +424,7 @@ func (m *Model) View() string {
 }
 
 // extractToolDetail extracts a display-friendly detail from tool attributes.
-// Uses shortenPath and truncate from trace_view.go.
+// Uses shortenPath from trace_view.go and textutil.Truncate for unicode-aware truncation.
 func extractToolDetail(toolName string, attrs map[string]string) string {
 	switch toolName {
 	case "Read", "read":
@@ -442,14 +443,21 @@ func extractToolDetail(toolName string, attrs map[string]string) string {
 		}
 	case "Shell", "shell", "Bash":
 		if cmd, ok := attrs["command"]; ok {
-			return truncateCmd(cmd, 50)
+			// Normalize whitespace and truncate using visual width
+			cmd = strings.ReplaceAll(cmd, "\n", " ")
+			cmd = strings.ReplaceAll(cmd, "\t", " ")
+			for strings.Contains(cmd, "  ") {
+				cmd = strings.ReplaceAll(cmd, "  ", " ")
+			}
+			cmd = strings.TrimSpace(cmd)
+			return textutil.Truncate(cmd, 50)
 		}
 	case "Grep", "grep", "SemanticSearch", "search":
 		if q, ok := attrs["query"]; ok {
-			return truncate(q, 40)
+			return textutil.Truncate(q, 40)
 		}
 		if p, ok := attrs["pattern"]; ok {
-			return truncate(p, 40)
+			return textutil.Truncate(p, 40)
 		}
 	case "Glob", "glob":
 		if p, ok := attrs["glob_pattern"]; ok {

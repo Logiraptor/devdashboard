@@ -6,6 +6,7 @@ import (
 
 	"devdeploy/internal/ralph"
 	"devdeploy/internal/trace"
+	"devdeploy/internal/ui/textutil"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -118,14 +119,14 @@ func (v *TraceViewModel) renderIteration(span *trace.Span, prefix string, isLast
 		beadTitle = span.Name
 	}
 
-	// Truncate title
-	maxTitleLen := v.width - len(prefix) - 40
-	if maxTitleLen < 20 {
-		maxTitleLen = 20
+	// Truncate title using visual width
+	prefixWidth := textutil.VisualWidth(prefix)
+	overhead := 40 // connector + iteration info + bead ID + icon + duration + spaces
+	maxTitleWidth := v.width - prefixWidth - overhead
+	if maxTitleWidth < 20 {
+		maxTitleWidth = 20
 	}
-	if len(beadTitle) > maxTitleLen {
-		beadTitle = beadTitle[:maxTitleLen-3] + "..."
-	}
+	beadTitle = textutil.Truncate(beadTitle, maxTitleWidth)
 
 	// Determine status
 	var outcome ralph.Outcome
@@ -203,15 +204,15 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 		connector = "└─"
 	}
 
-	// Calculate available space for detail text
-	prefixLen := len(prefix)
+	// Calculate available space for detail text using visual width
+	prefixWidth := textutil.VisualWidth(prefix)
 	overhead := 25 // connector + tool name + icon + duration + spaces
-	maxDetail := v.width - prefixLen - overhead
-	if maxDetail < 20 {
-		maxDetail = 20
+	maxDetailWidth := v.width - prefixWidth - overhead
+	if maxDetailWidth < 20 {
+		maxDetailWidth = 20
 	}
-	if maxDetail > 80 {
-		maxDetail = 80
+	if maxDetailWidth > 80 {
+		maxDetailWidth = 80
 	}
 
 	// Tool name and key attribute
@@ -229,13 +230,13 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 			}
 		case "shell":
 			if cmd, ok := span.Attributes["command"]; ok {
-				detail = truncateCmd(cmd, maxDetail)
+				detail = truncateCmd(cmd, maxDetailWidth)
 			}
 		case "search", "grep":
 			if q, ok := span.Attributes["query"]; ok {
-				detail = truncate(q, maxDetail)
+				detail = textutil.Truncate(q, maxDetailWidth)
 			} else if p, ok := span.Attributes["pattern"]; ok {
-				detail = truncate(p, maxDetail)
+				detail = textutil.Truncate(p, maxDetailWidth)
 			}
 		}
 	}
@@ -280,14 +281,9 @@ func shortenPath(path string) string {
 	return path
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max-3] + "..."
-	}
-	return s
-}
-
-func truncateCmd(cmd string, max int) string {
+// truncateCmd truncates a command string to fit within maxWidth visual columns.
+// It normalizes whitespace and uses unicode-aware truncation.
+func truncateCmd(cmd string, maxWidth int) string {
 	// Replace newlines with spaces for display
 	cmd = strings.ReplaceAll(cmd, "\n", " ")
 	cmd = strings.ReplaceAll(cmd, "\t", " ")
@@ -296,7 +292,7 @@ func truncateCmd(cmd string, max int) string {
 		cmd = strings.ReplaceAll(cmd, "  ", " ")
 	}
 	cmd = strings.TrimSpace(cmd)
-	return truncate(cmd, max)
+	return textutil.Truncate(cmd, maxWidth)
 }
 
 func parseOutcome(s string) ralph.Outcome {
