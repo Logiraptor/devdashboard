@@ -11,12 +11,11 @@ import (
 type StopReason int
 
 const (
-	StopNormal           StopReason = iota // No more beads or all iterations completed.
+	StopNormal           StopReason = iota // Bead closed successfully.
 	StopMaxIterations                      // Hit --max-iterations cap.
-	StopConsecutiveFails                   // Too many consecutive failures.
-	StopWallClock                          // Total --timeout wall-clock exceeded.
 	StopContextCancelled                   // Context cancelled (e.g. SIGINT).
-	StopAllBeadsSkipped                    // All available beads were skipped (retry detection).
+	StopQuestion                           // Agent created needs-human question.
+	StopTimeout                            // Agent timed out.
 )
 
 // String returns a human-readable label for the stop reason.
@@ -26,14 +25,12 @@ func (r StopReason) String() string {
 		return "normal"
 	case StopMaxIterations:
 		return "max-iterations"
-	case StopConsecutiveFails:
-		return "consecutive-failures"
-	case StopWallClock:
-		return "wall-clock-timeout"
 	case StopContextCancelled:
 		return "context-cancelled"
-	case StopAllBeadsSkipped:
-		return "all-beads-skipped"
+	case StopQuestion:
+		return "question"
+	case StopTimeout:
+		return "timeout"
 	default:
 		return "unknown"
 	}
@@ -46,14 +43,12 @@ func (r StopReason) ExitCode() int {
 		return 0
 	case StopMaxIterations:
 		return 2
-	case StopConsecutiveFails:
+	case StopQuestion:
 		return 3
-	case StopWallClock:
+	case StopTimeout:
 		return 4
 	case StopContextCancelled:
 		return 5
-	case StopAllBeadsSkipped:
-		return 6
 	default:
 		return 1
 	}
@@ -66,14 +61,12 @@ func parseStopReason(s string) (StopReason, error) {
 		return StopNormal, nil
 	case "max-iterations":
 		return StopMaxIterations, nil
-	case "consecutive-failures":
-		return StopConsecutiveFails, nil
-	case "wall-clock-timeout":
-		return StopWallClock, nil
 	case "context-cancelled":
 		return StopContextCancelled, nil
-	case "all-beads-skipped":
-		return StopAllBeadsSkipped, nil
+	case "question":
+		return StopQuestion, nil
+	case "timeout":
+		return StopTimeout, nil
 	default:
 		return 0, ParseEnumError("StopReason", s)
 	}
@@ -94,16 +87,6 @@ func (r *StopReason) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// DefaultConsecutiveFailureLimit is the number of consecutive failures before
-// the loop stops. Set to 3 to allow for transient failures (e.g., network issues,
-// flaky tests) while still catching persistent problems quickly.
-const DefaultConsecutiveFailureLimit = 3
-
-// DefaultWallClockTimeout is the maximum total duration for a ralph session.
-// Set to 2 hours to allow for substantial work while preventing runaway sessions.
-// Individual agent timeouts are controlled separately via Core.AgentTimeout.
-const DefaultWallClockTimeout = 2 * time.Hour
-
 // BeadResult holds the result of executing a single bead.
 type BeadResult struct {
 	Bead     beads.Bead
@@ -115,18 +98,6 @@ type BeadResult struct {
 	ErrorMessage string // Error message from the agent
 	ExitCode     int    // Agent process exit code
 	Stderr       string // Stderr output from the agent
-}
-
-// RunSummary holds aggregate results across all iterations.
-type RunSummary struct {
-	Iterations int
-	Succeeded  int
-	Questions  int
-	Failed     int
-	TimedOut   int
-	Skipped    int
-	StopReason StopReason
-	Duration   time.Duration
 }
 
 // FormatDuration formats a duration in a human-readable way (e.g., "2m34s", "1h12m").

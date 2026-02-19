@@ -15,30 +15,30 @@ import (
 
 // config holds the parsed CLI configuration for a ralph run.
 type config struct {
-	workdir      string
-	bead         string        // root bead (epic or single task) to complete
-	maxParallel  int           // max concurrent agents
-	agentTimeout time.Duration // per-agent timeout
-	verbose      bool          // detailed logging
+	workdir       string
+	bead          string        // bead ID to work on
+	maxIterations int           // max agent iterations
+	agentTimeout  time.Duration // per-agent timeout
+	verbose       bool          // detailed logging
 }
 
 func parseFlags() config {
 	var cfg config
 
 	flag.StringVar(&cfg.workdir, "workdir", "", "path to the repository to operate in (required)")
-	flag.StringVar(&cfg.bead, "bead", "", "root bead ID - epic or single task to complete (required)")
-	flag.IntVar(&cfg.maxParallel, "max-parallel", 4, "maximum parallel agents (use 1 for sequential)")
+	flag.StringVar(&cfg.bead, "bead", "", "bead ID to work on (required)")
+	flag.IntVar(&cfg.maxIterations, "max-iterations", ralph.DefaultMaxIterations, "maximum agent iterations before giving up")
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "enable detailed logging")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: ralph --workdir=<path> --bead=<id> [flags]\n\n")
-		fmt.Fprintf(os.Stderr, "Ralph is an autonomous agent work loop that processes beads\n")
-		fmt.Fprintf(os.Stderr, "and dispatches agents to complete them in parallel.\n\n")
+		fmt.Fprintf(os.Stderr, "Ralph iteratively runs an agent on a bead until the bead is closed\n")
+		fmt.Fprintf(os.Stderr, "or the iteration limit is reached.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExit codes:\n")
-		fmt.Fprintf(os.Stderr, "  0  Normal completion (all beads processed)\n")
+		fmt.Fprintf(os.Stderr, "  0  Normal completion (bead closed)\n")
 		fmt.Fprintf(os.Stderr, "  1  Runtime error\n")
 		fmt.Fprintf(os.Stderr, "  5  Interrupted (SIGINT)\n")
 	}
@@ -79,11 +79,11 @@ func run(cfg config) (int, error) {
 
 	// Create core with TUI (observer will be set by tui.Run)
 	core := &ralph.Core{
-		WorkDir:      cfg.workdir,
-		RootBead:     cfg.bead,
-		MaxParallel:  cfg.maxParallel,
-		AgentTimeout: cfg.agentTimeout,
-		Output:       io.Discard,
+		WorkDir:       cfg.workdir,
+		RootBead:      cfg.bead,
+		MaxIterations: cfg.maxIterations,
+		AgentTimeout:  cfg.agentTimeout,
+		Output:        io.Discard,
 	}
 
 	// Run with TUI, combining tracing observer with TUI observer
@@ -105,8 +105,6 @@ func run(cfg config) (int, error) {
 		return 5, nil // Interrupted
 	}
 
-	// Consider any failures as partial success (exit 0) since Core
-	// processes all available beads. The summary shows failure counts.
 	return 0, nil
 }
 

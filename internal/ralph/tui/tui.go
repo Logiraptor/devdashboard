@@ -16,35 +16,37 @@ import (
 
 // Model is the Bubble Tea model for ralph TUI.
 type Model struct {
-	core           *ralph.Core
-	multiAgentView *MultiAgentView
-	styles         Styles
-	summary        summary
-	status         string
-	err            error
-	loopStarted    bool
-	loopDone       bool
-	width          int
-	height         int
-	program        *tea.Program
-	ctx            context.Context
-	cancel         context.CancelFunc
-	loopStart      time.Time
+	core      *ralph.Core
+	styles    Styles
+	status    string
+	err       error
+	loopStart time.Time
 
-	// Failure tracking for display
-	lastFailure *ralph.BeadResult
+	// Bead info
+	beadID    string
+	beadTitle string
+
+	// Iteration tracking
+	iteration    int
+	maxIter      int
+	currentTool  string
+	toolStart    time.Time
+
+	// State
+	loopStarted bool
+	loopDone    bool
+	duration    time.Duration
+	outcome     ralph.Outcome
+
+	// UI dimensions
+	width  int
+	height int
+
+	program *tea.Program
+	ctx     context.Context
+	cancel  context.CancelFunc
 
 	mu sync.Mutex // Protects fields updated from observer goroutine
-}
-
-// summary tracks aggregate results
-type summary struct {
-	Iterations int
-	Succeeded  int
-	Questions  int
-	Failed     int
-	TimedOut   int
-	Duration   time.Duration
 }
 
 // Compile-time interface compliance check
@@ -52,31 +54,19 @@ var _ tea.Model = (*Model)(nil)
 
 // Message types for TUI updates
 type (
-	loopStartedMsg   struct{ RootBead string }
-	beadStartMsg     struct{ Bead beads.Bead }
-	beadCompleteMsg  struct{ Result ralph.BeadResult }
-	loopEndMsg       struct{ Result *ralph.CoreResult }
-	loopErrorMsg     struct{ Err error }
-	durationTickMsg  struct{}
+	loopStartedMsg     struct{ RootBead string }
+	beadStartMsg       struct{ Bead beads.Bead }
+	beadCompleteMsg    struct{ Result ralph.BeadResult }
+	loopEndMsg         struct{ Result *ralph.CoreResult }
+	loopErrorMsg       struct{ Err error }
+	durationTickMsg    struct{}
+	iterationStartMsg  struct{ Iteration int }
 )
 
 // toolEventMsg wraps a tool event for the TUI
 type toolEventMsg struct {
 	Event   ralph.ToolEvent
 	Started bool
-}
-
-// mergeStartMsg indicates a merge operation has started
-type mergeStartMsg struct {
-	BeadID     string
-	BranchName string
-}
-
-// mergeCompleteMsg indicates a merge operation has completed
-type mergeCompleteMsg struct {
-	BeadID  string
-	Success bool
-	ErrMsg  string
 }
 
 // Observer implements ralph.ProgressObserver and forwards events to the TUI.
@@ -130,27 +120,23 @@ func (o *Observer) OnToolEnd(event ralph.ToolEvent) {
 	}
 }
 
-// OnMergeStart is called when a worktree merge begins.
-func (o *Observer) OnMergeStart(beadID, branchName string) {
+// OnIterationStart is called when an iteration begins.
+func (o *Observer) OnIterationStart(iteration int) {
 	if o.program != nil {
-		o.program.Send(mergeStartMsg{BeadID: beadID, BranchName: branchName})
-	}
-}
-
-// OnMergeComplete is called when a worktree merge finishes.
-func (o *Observer) OnMergeComplete(beadID string, success bool, errMsg string) {
-	if o.program != nil {
-		o.program.Send(mergeCompleteMsg{BeadID: beadID, Success: success, ErrMsg: errMsg})
+		o.program.Send(iterationStartMsg{Iteration: iteration})
 	}
 }
 
 // NewModel creates a new TUI model for the given Core.
 func NewModel(core *ralph.Core) *Model {
-	styles := DefaultStyles()
+	maxIter := core.MaxIterations
+	if maxIter <= 0 {
+		maxIter = ralph.DefaultMaxIterations
+	}
 	return &Model{
-		core:           core,
-		multiAgentView: NewMultiAgentView(),
-		styles:         styles,
+		core:    core,
+		styles:  DefaultStyles(),
+		maxIter: maxIter,
 	}
 }
 
@@ -211,7 +197,6 @@ func Run(ctx context.Context, core *ralph.Core, additionalObserver ralph.Progres
 		}
 
 		// Ensure loopEnd is sent even if observer didn't fire
-		// (in case of early exit or error)
 		if result != nil {
 			p.Send(loopEndMsg{Result: result})
 		}
@@ -242,93 +227,52 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Reserve space for header/footer
-		viewHeight := msg.Height - 6
-		if viewHeight < 10 {
-			viewHeight = 10
-		}
-		m.multiAgentView.SetSize(msg.Width, viewHeight)
 
 	case loopStartedMsg:
 		m.mu.Lock()
 		m.loopStarted = true
-		m.status = fmt.Sprintf("Loop started: %s", msg.RootBead)
+		m.beadID = msg.RootBead
+		m.status = "Starting..."
 		m.mu.Unlock()
 
 	case beadStartMsg:
 		m.mu.Lock()
-		m.status = fmt.Sprintf("Working on %s: %s", msg.Bead.ID, msg.Bead.Title)
+		m.beadID = msg.Bead.ID
+		m.beadTitle = msg.Bead.Title
+		m.status = "Working"
 		m.mu.Unlock()
 
-		// Start tracking this agent in the view
-		m.multiAgentView.StartAgent(msg.Bead)
+	case iterationStartMsg:
+		m.mu.Lock()
+		m.iteration = msg.Iteration + 1 // Convert to 1-based
+		m.currentTool = ""
+		m.mu.Unlock()
+
+	case toolEventMsg:
+		m.mu.Lock()
+		if msg.Started {
+			m.currentTool = msg.Event.Name
+			m.toolStart = msg.Event.Timestamp
+		} else if m.currentTool == msg.Event.Name {
+			m.currentTool = ""
+		}
+		m.mu.Unlock()
 
 	case beadCompleteMsg:
 		m.mu.Lock()
-		r := msg.Result
-		switch r.Outcome {
-		case ralph.OutcomeSuccess:
-			m.summary.Succeeded++
-		case ralph.OutcomeFailure:
-			m.summary.Failed++
-			m.lastFailure = &r
-		case ralph.OutcomeTimeout:
-			m.summary.TimedOut++
-			m.lastFailure = &r
-		case ralph.OutcomeQuestion:
-			m.summary.Questions++
-		}
-		m.summary.Iterations++
+		m.outcome = msg.Result.Outcome
+		m.currentTool = ""
 		m.mu.Unlock()
-
-		// Update the agent view
-		status := "success"
-		switch r.Outcome {
-		case ralph.OutcomeFailure:
-			status = "failed"
-		case ralph.OutcomeTimeout:
-			status = "timeout"
-		case ralph.OutcomeQuestion:
-			status = "question"
-		}
-		m.multiAgentView.CompleteAgent(r.Bead.ID, status)
-
-	case toolEventMsg:
-		// Route tool event to the appropriate agent using BeadID (set by beadContextObserver)
-		if msg.Event.BeadID != "" {
-			m.multiAgentView.AddToolEvent(msg.Event.BeadID, msg.Event.Name, msg.Started, msg.Event.Attributes)
-		}
-
-	case mergeStartMsg:
-		// Show merge in progress for this bead
-		m.multiAgentView.SetMerging(msg.BeadID, msg.BranchName)
-
-	case mergeCompleteMsg:
-		// Update bead with merge result
-		m.multiAgentView.CompleteMerge(msg.BeadID, msg.Success, msg.ErrMsg)
-		if !msg.Success {
-			// If merge failed, increment failed count (it was counted as success before)
-			m.mu.Lock()
-			m.summary.Succeeded--
-			m.summary.Failed++
-			m.mu.Unlock()
-		}
 
 	case loopEndMsg:
 		m.mu.Lock()
 		m.loopDone = true
 		if msg.Result != nil {
-			m.summary.Duration = msg.Result.Duration
-			m.summary.Succeeded = msg.Result.Succeeded
-			m.summary.Questions = msg.Result.Questions
-			m.summary.Failed = msg.Result.Failed
-			m.summary.TimedOut = msg.Result.TimedOut
+			m.duration = msg.Result.Duration
+			m.outcome = msg.Result.Outcome
+			m.iteration = msg.Result.Iterations
 		}
-		if m.summary.Iterations == 0 {
-			m.status = "No beads available"
-		} else {
-			m.status = "Complete"
-		}
+		m.status = "Complete"
 		m.mu.Unlock()
 
 	case loopErrorMsg:
@@ -338,10 +282,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case durationTickMsg:
 		if m.loopStarted && !m.loopDone {
 			m.mu.Lock()
-			m.summary.Duration = time.Since(m.loopStart)
+			m.duration = time.Since(m.loopStart)
 			m.mu.Unlock()
-			// Update running agent durations
-			m.multiAgentView.UpdateDuration()
 		}
 	}
 
@@ -356,68 +298,82 @@ func (m *Model) View() string {
 
 	var b strings.Builder
 
-	// Header with logo
-	header := renderHeader(m.styles, m.core.RootBead, m.width)
+	// Header
+	header := m.styles.Title.Render("⚡ RALPH")
+	if m.beadID != "" {
+		header += " " + m.styles.Subtitle.Render("→ "+m.beadID)
+	}
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	// Multi-agent view
-	b.WriteString(m.multiAgentView.View())
-	b.WriteString("\n\n")
-
-	// Status bar
+	// Bead info
 	m.mu.Lock()
-	loopDone := m.loopDone
+	beadTitle := m.beadTitle
+	iteration := m.iteration
+	maxIter := m.maxIter
+	currentTool := m.currentTool
 	loopStarted := m.loopStarted
-	duration := m.summary.Duration
+	loopDone := m.loopDone
+	duration := m.duration
+	outcome := m.outcome
 	m.mu.Unlock()
 
-	statusBar := renderStatusBar(m.styles, loopStarted, loopDone, m.multiAgentView.Summary(), duration, m.width)
-	b.WriteString(statusBar)
+	if beadTitle != "" {
+		b.WriteString(m.styles.Status.Render(beadTitle))
+		b.WriteString("\n\n")
+	}
+
+	// Iteration progress
+	if iteration > 0 {
+		iterText := fmt.Sprintf("Iteration %d/%d", iteration, maxIter)
+		b.WriteString(m.styles.Muted.Render(iterText))
+		b.WriteString("\n")
+	}
+
+	// Current tool
+	if currentTool != "" {
+		toolText := "⚙ " + currentTool
+		b.WriteString(m.styles.ToolName.Render(toolText))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	// Status bar
+	var parts []string
+
+	// Status indicator
+	if loopDone {
+		switch outcome {
+		case ralph.OutcomeSuccess:
+			parts = append(parts, m.styles.Success.Render("✓ Success"))
+		case ralph.OutcomeQuestion:
+			parts = append(parts, m.styles.Warning.Render("? Question"))
+		case ralph.OutcomeTimeout:
+			parts = append(parts, m.styles.Error.Render("⏱ Timeout"))
+		case ralph.OutcomeMaxIterations:
+			parts = append(parts, m.styles.Warning.Render("⚠ Max iterations"))
+		default:
+			parts = append(parts, m.styles.Error.Render("✗ Failed"))
+		}
+	} else if loopStarted {
+		parts = append(parts, m.styles.Status.Render("● Running"))
+	} else {
+		parts = append(parts, m.styles.Muted.Render("○ Waiting"))
+	}
+
+	// Duration
+	if loopStarted && duration > 0 {
+		parts = append(parts, m.styles.Muted.Render(ralph.FormatDuration(duration)))
+	}
+
+	b.WriteString(strings.Join(parts, " │ "))
 
 	// Quit hint
 	if loopDone {
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 		b.WriteString(m.styles.Muted.Render("Press q to quit"))
 	}
 
 	return b.String()
-}
-
-// renderHeader renders the top header
-func renderHeader(styles Styles, rootBead string, width int) string {
-	// Stylized header
-	title := styles.Title.Render("⚡ RALPH")
-	subtitle := ""
-	if rootBead != "" {
-		subtitle = " " + styles.Subtitle.Render("→ "+rootBead)
-	}
-
-	return title + subtitle
-}
-
-// renderStatusBar renders the bottom status bar
-func renderStatusBar(styles Styles, started, done bool, summary string, duration time.Duration, width int) string {
-	var parts []string
-
-	// Status indicator
-	if done {
-		parts = append(parts, styles.Success.Render("✓ Complete"))
-	} else if started {
-		parts = append(parts, styles.Status.Render("● Running"))
-	} else {
-		parts = append(parts, styles.Muted.Render("○ Waiting"))
-	}
-
-	// Summary from multi-agent view
-	if summary != "" {
-		parts = append(parts, styles.Status.Render(summary))
-	}
-
-	// Duration
-	if started && duration > 0 {
-		parts = append(parts, styles.Muted.Render(ralph.FormatDuration(duration)))
-	}
-
-	return strings.Join(parts, " │ ")
 }

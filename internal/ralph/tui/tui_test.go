@@ -12,40 +12,98 @@ import (
 
 func TestModel_Init(t *testing.T) {
 	core := &ralph.Core{
-		WorkDir:  "/tmp/test",
-		RootBead: "test-epic",
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
 	}
 	model := NewModel(core)
 
 	if model == nil {
 		t.Fatal("NewModel returned nil")
 	}
-	if model.multiAgentView == nil {
-		t.Error("multiAgentView should be initialized")
+	if model.maxIter != 10 {
+		t.Errorf("maxIter should be 10, got %d", model.maxIter)
 	}
 }
 
 func TestModel_HandleLoopStarted(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
 	model := NewModel(core)
 
-	msg := loopStartedMsg{RootBead: "test-epic"}
+	msg := loopStartedMsg{RootBead: "test-bead"}
 	newModel, _ := model.Update(msg)
 
 	m := newModel.(*Model)
 	if !m.loopStarted {
 		t.Error("loopStarted should be true")
 	}
-	if m.status == "" {
-		t.Error("status should be set")
+	if m.beadID != "test-bead" {
+		t.Errorf("beadID should be 'test-bead', got %q", m.beadID)
+	}
+}
+
+func TestModel_HandleBeadStart(t *testing.T) {
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
+	model := NewModel(core)
+
+	msg := beadStartMsg{
+		Bead: beads.Bead{ID: "bead-123", Title: "Test Bead"},
+	}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*Model)
+	if m.beadID != "bead-123" {
+		t.Errorf("beadID should be 'bead-123', got %q", m.beadID)
+	}
+	if m.beadTitle != "Test Bead" {
+		t.Errorf("beadTitle should be 'Test Bead', got %q", m.beadTitle)
+	}
+}
+
+func TestModel_HandleIterationStart(t *testing.T) {
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead", MaxIterations: 10}
+	model := NewModel(core)
+
+	msg := iterationStartMsg{Iteration: 2}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*Model)
+	if m.iteration != 3 { // 0-indexed to 1-indexed
+		t.Errorf("iteration should be 3, got %d", m.iteration)
+	}
+}
+
+func TestModel_HandleToolEvent(t *testing.T) {
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
+	model := NewModel(core)
+
+	// Tool start
+	startMsg := toolEventMsg{
+		Event:   ralph.ToolEvent{Name: "Read"},
+		Started: true,
+	}
+	newModel, _ := model.Update(startMsg)
+	m := newModel.(*Model)
+	if m.currentTool != "Read" {
+		t.Errorf("currentTool should be 'Read', got %q", m.currentTool)
+	}
+
+	// Tool end
+	endMsg := toolEventMsg{
+		Event:   ralph.ToolEvent{Name: "Read"},
+		Started: false,
+	}
+	newModel, _ = m.Update(endMsg)
+	m = newModel.(*Model)
+	if m.currentTool != "" {
+		t.Errorf("currentTool should be empty after tool end, got %q", m.currentTool)
 	}
 }
 
 func TestModel_HandleBeadComplete(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
 	model := NewModel(core)
 
-	// Process a successful bead
 	msg := beadCompleteMsg{
 		Result: ralph.BeadResult{
 			Bead:     beads.Bead{ID: "bead-1", Title: "Test Bead"},
@@ -56,234 +114,19 @@ func TestModel_HandleBeadComplete(t *testing.T) {
 	newModel, _ := model.Update(msg)
 
 	m := newModel.(*Model)
-	if m.summary.Succeeded != 1 {
-		t.Errorf("Succeeded should be 1, got %d", m.summary.Succeeded)
-	}
-	if m.summary.Iterations != 1 {
-		t.Errorf("Iterations should be 1, got %d", m.summary.Iterations)
-	}
-}
-
-func TestModel_HandleBeadComplete_Failure(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	msg := beadCompleteMsg{
-		Result: ralph.BeadResult{
-			Bead:     beads.Bead{ID: "bead-1", Title: "Failing Bead"},
-			Outcome:  ralph.OutcomeFailure,
-			Duration: 15 * time.Second,
-		},
-	}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.summary.Failed != 1 {
-		t.Errorf("Failed should be 1, got %d", m.summary.Failed)
-	}
-	if m.summary.Succeeded != 0 {
-		t.Errorf("Succeeded should be 0, got %d", m.summary.Succeeded)
-	}
-}
-
-func TestModel_HandleBeadComplete_FailureTracking(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	// Send a failure with ChatID and error info
-	msg := beadCompleteMsg{
-		Result: ralph.BeadResult{
-			Bead:         beads.Bead{ID: "bead-fail", Title: "Failed Bead"},
-			Outcome:      ralph.OutcomeFailure,
-			Duration:     20 * time.Second,
-			ChatID:       "chat-123abc",
-			ErrorMessage: "Agent crashed",
-			ExitCode:     1,
-		},
-	}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.lastFailure == nil {
-		t.Fatal("lastFailure should be set")
-	}
-	if m.lastFailure.ChatID != "chat-123abc" {
-		t.Errorf("ChatID = %q, want %q", m.lastFailure.ChatID, "chat-123abc")
-	}
-	if m.lastFailure.ErrorMessage != "Agent crashed" {
-		t.Errorf("ErrorMessage = %q, want %q", m.lastFailure.ErrorMessage, "Agent crashed")
-	}
-	if m.lastFailure.ExitCode != 1 {
-		t.Errorf("ExitCode = %d, want 1", m.lastFailure.ExitCode)
-	}
-}
-
-func TestModel_HandleBeadComplete_StderrFallback(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	// First start the bead so it's tracked in the view
-	startMsg := beadStartMsg{
-		Bead: beads.Bead{ID: "bead-stderr", Title: "Stderr Bead"},
-	}
-	model.Update(startMsg)
-
-	// Send a failure with Stderr but no ErrorMessage
-	msg := beadCompleteMsg{
-		Result: ralph.BeadResult{
-			Bead:     beads.Bead{ID: "bead-stderr", Title: "Stderr Bead"},
-			Outcome:  ralph.OutcomeFailure,
-			Duration: 15 * time.Second,
-			ExitCode: 1,
-			Stderr:   "panic: runtime error: invalid memory address\ngoroutine 1 [running]:\nmain.main()\n\t/app/main.go:42 +0x123",
-		},
-	}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.lastFailure == nil {
-		t.Fatal("lastFailure should be set")
-	}
-	if m.lastFailure.Stderr == "" {
-		t.Error("Stderr should be preserved")
-	}
-}
-
-func TestModel_HandleBeadComplete_NoErrorInfo(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	// First start the bead so it's tracked in the view
-	startMsg := beadStartMsg{
-		Bead: beads.Bead{ID: "bead-empty", Title: "Empty Error Bead"},
-	}
-	model.Update(startMsg)
-
-	// Send a failure with no error info at all
-	msg := beadCompleteMsg{
-		Result: ralph.BeadResult{
-			Bead:     beads.Bead{ID: "bead-empty", Title: "Empty Error Bead"},
-			Outcome:  ralph.OutcomeFailure,
-			Duration: 10 * time.Second,
-			ExitCode: 1,
-		},
-	}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.lastFailure == nil {
-		t.Fatal("lastFailure should be set")
-	}
-	// The new TUI displays failures in agent blocks, not in a separate section
-	// Just verify the failure was tracked
-	if m.lastFailure.ExitCode != 1 {
-		t.Errorf("ExitCode should be 1, got %d", m.lastFailure.ExitCode)
-	}
-}
-
-func TestModel_HandleBeadComplete_TimeoutTracking(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	// Timeouts should also be tracked
-	msg := beadCompleteMsg{
-		Result: ralph.BeadResult{
-			Bead:     beads.Bead{ID: "bead-timeout", Title: "Timeout Bead"},
-			Outcome:  ralph.OutcomeTimeout,
-			Duration: 10 * time.Minute,
-			ChatID:   "chat-timeout456",
-			ExitCode: -1,
-		},
-	}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.lastFailure == nil {
-		t.Fatal("lastFailure should be set for timeout")
-	}
-	if m.lastFailure.ChatID != "chat-timeout456" {
-		t.Errorf("ChatID = %q, want %q", m.lastFailure.ChatID, "chat-timeout456")
-	}
-}
-
-func TestModel_HandleBeadComplete_AllOutcomes(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	outcomes := []ralph.Outcome{ralph.OutcomeSuccess, ralph.OutcomeFailure, ralph.OutcomeTimeout, ralph.OutcomeQuestion}
-	for _, outcome := range outcomes {
-		msg := beadCompleteMsg{
-			Result: ralph.BeadResult{
-				Bead:     beads.Bead{ID: "bead-1", Title: "Test"},
-				Outcome:  outcome,
-				Duration: 10 * time.Second,
-			},
-		}
-		newModel, _ := model.Update(msg)
-		model = newModel.(*Model)
-	}
-
-	m := model
-	if m.summary.Succeeded != 1 {
-		t.Errorf("Succeeded should be 1, got %d", m.summary.Succeeded)
-	}
-	if m.summary.Failed != 1 {
-		t.Errorf("Failed should be 1, got %d", m.summary.Failed)
-	}
-	if m.summary.TimedOut != 1 {
-		t.Errorf("TimedOut should be 1, got %d", m.summary.TimedOut)
-	}
-	if m.summary.Questions != 1 {
-		t.Errorf("Questions should be 1, got %d", m.summary.Questions)
-	}
-	if m.summary.Iterations != 4 {
-		t.Errorf("Iterations should be 4, got %d", m.summary.Iterations)
-	}
-}
-
-func TestModel_WindowResize(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	msg := tea.WindowSizeMsg{Width: 120, Height: 40}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.width != 120 {
-		t.Errorf("width should be 120, got %d", m.width)
-	}
-	if m.height != 40 {
-		t.Errorf("height should be 40, got %d", m.height)
-	}
-}
-
-func TestModel_HandleBeadStart(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
-	model := NewModel(core)
-
-	msg := beadStartMsg{
-		Bead: beads.Bead{ID: "bead-123", Title: "Test Bead"},
-	}
-	newModel, _ := model.Update(msg)
-
-	m := newModel.(*Model)
-	if m.status == "" {
-		t.Error("status should be set after bead start")
-	}
-	// Verify agent was added to the multi-agent view
-	if m.multiAgentView.TotalCount() != 1 {
-		t.Errorf("multiAgentView should have 1 agent, got %d", m.multiAgentView.TotalCount())
+	if m.outcome != ralph.OutcomeSuccess {
+		t.Errorf("outcome should be success, got %v", m.outcome)
 	}
 }
 
 func TestModel_HandleLoopEnd(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
 	model := NewModel(core)
 
 	result := &ralph.CoreResult{
-		Succeeded: 3,
-		Failed:    2,
-		Duration:  10 * time.Minute,
+		Outcome:    ralph.OutcomeSuccess,
+		Iterations: 3,
+		Duration:   10 * time.Minute,
 	}
 	msg := loopEndMsg{Result: result}
 	newModel, _ := model.Update(msg)
@@ -292,13 +135,19 @@ func TestModel_HandleLoopEnd(t *testing.T) {
 	if !m.loopDone {
 		t.Error("loopDone should be true")
 	}
-	if m.summary.Succeeded != 3 {
-		t.Errorf("summary.Succeeded should be 3, got %d", m.summary.Succeeded)
+	if m.outcome != ralph.OutcomeSuccess {
+		t.Errorf("outcome should be success, got %v", m.outcome)
+	}
+	if m.iteration != 3 {
+		t.Errorf("iteration should be 3, got %d", m.iteration)
+	}
+	if m.duration != 10*time.Minute {
+		t.Errorf("duration should be 10m, got %v", m.duration)
 	}
 }
 
 func TestModel_HandleLoopError(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
 	model := NewModel(core)
 
 	msg := loopErrorMsg{Err: &testError{message: "test error"}}
@@ -313,8 +162,24 @@ func TestModel_HandleLoopError(t *testing.T) {
 	}
 }
 
+func TestModel_WindowResize(t *testing.T) {
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
+	model := NewModel(core)
+
+	msg := tea.WindowSizeMsg{Width: 120, Height: 40}
+	newModel, _ := model.Update(msg)
+
+	m := newModel.(*Model)
+	if m.width != 120 {
+		t.Errorf("width should be 120, got %d", m.width)
+	}
+	if m.height != 40 {
+		t.Errorf("height should be 40, got %d", m.height)
+	}
+}
+
 func TestModel_HandleKeyQuit(t *testing.T) {
-	core := &ralph.Core{WorkDir: "/tmp/test"}
+	core := &ralph.Core{WorkDir: "/tmp/test", RootBead: "test-bead"}
 	model := NewModel(core)
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}

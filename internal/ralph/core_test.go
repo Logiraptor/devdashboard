@@ -4,37 +4,46 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
 )
 
-// mockBDForCore returns a BDRunner that returns beads one at a time.
-// Each call returns the next bead until all are exhausted.
-func mockBDForCore(beadsList []beads.Bead) BDRunner {
-	var callCount int32
+// mockBDForStatus returns a bd.Runner that returns a bead with the given status.
+func mockBDForStatus(id, status string) bd.Runner {
 	return func(dir string, args ...string) ([]byte, error) {
-		n := atomic.AddInt32(&callCount, 1)
-		idx := int(n) - 1
-		if idx < len(beadsList) {
-			// Return one bead at a time
-			b := beadsList[idx]
-			entries := []bdReadyEntry{{
-				beads.BDEntryBase{
-					ID:        b.ID,
-					Title:     b.Title,
-					Status:    b.Status,
-					Priority:  b.Priority,
-					Labels:    b.Labels,
-					CreatedAt: b.CreatedAt,
-				},
-			}}
-			return json.Marshal(entries)
+		return json.Marshal([]bdShowReadyEntry{{
+			bdShowBase: bdShowBase{
+				ID:     id,
+				Title:  "Test Bead",
+				Status: status,
+			},
+			Priority:        2,
+			DependencyCount: 0,
+		}})
+	}
+}
+
+// mockBDShowClosed returns a bd.Runner that returns closed after N calls.
+func mockBDShowClosed(id string, closeAfter int) bd.Runner {
+	callCount := 0
+	return func(dir string, args ...string) ([]byte, error) {
+		callCount++
+		status := "open"
+		if callCount > closeAfter {
+			status = "closed"
 		}
-		// All beads consumed
-		return []byte("[]"), nil
+		return json.Marshal([]bdShowReadyEntry{{
+			bdShowBase: bdShowBase{
+				ID:     id,
+				Title:  "Test Bead",
+				Status: status,
+			},
+			Priority:        2,
+			DependencyCount: 0,
+		}})
 	}
 }
 
@@ -58,18 +67,17 @@ func mockAssess(outcome Outcome) func(string, string, *AgentResult) (Outcome, st
 	}
 }
 
-func TestCore_Run_SingleBead_Success(t *testing.T) {
-	bead := beads.Bead{ID: "test-bead", Title: "Test Bead", Status: "open", Priority: 2}
+func TestCore_Run_BeadAlreadyClosed(t *testing.T) {
 	execute, prompts := mockExecute()
 
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		RootBead:    "test-epic",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{bead}),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         mockBDForStatus("test-bead", "closed"),
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
 			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
 		},
 		Render: func(data *PromptData) (string, error) {
@@ -84,24 +92,77 @@ func TestCore_Run_SingleBead_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Succeeded != 1 {
-		t.Errorf("expected 1 succeeded, got %d", result.Succeeded)
+	if result.Outcome != OutcomeSuccess {
+		t.Errorf("expected success outcome, got %v", result.Outcome)
 	}
-	if result.Failed != 0 {
-		t.Errorf("expected 0 failed, got %d", result.Failed)
+	if result.Iterations != 0 {
+		t.Errorf("expected 0 iterations (bead already closed), got %d", result.Iterations)
+	}
+	if len(*prompts) != 0 {
+		t.Errorf("expected 0 execute calls, got %d", len(*prompts))
+	}
+}
+
+func TestCore_Run_SingleIteration(t *testing.T) {
+	execute, prompts := mockExecute()
+
+	// Bead closes after first iteration
+	runBD := mockBDShowClosed("test-bead", 2)
+
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         runBD,
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt for " + data.ID, nil
+		},
+		Execute:  execute,
+		AssessFn: mockAssess(OutcomeSuccess),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Outcome != OutcomeSuccess {
+		t.Errorf("expected success outcome, got %v", result.Outcome)
+	}
+	if result.Iterations != 1 {
+		t.Errorf("expected 1 iteration, got %d", result.Iterations)
 	}
 	if len(*prompts) != 1 {
 		t.Errorf("expected 1 execute call, got %d", len(*prompts))
 	}
 }
 
-func TestCore_Run_NoBeads(t *testing.T) {
+func TestCore_Run_MaxIterations(t *testing.T) {
+	execute, prompts := mockExecute()
+
+	// Bead never closes
+	runBD := mockBDForStatus("test-bead", "open")
+
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{}),
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 3,
+		Output:        &out,
+		RunBD:         runBD,
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt", nil
+		},
+		Execute:  execute,
+		AssessFn: mockAssess(OutcomeFailure), // Agent fails to close bead
 	}
 
 	result, err := core.Run(context.Background())
@@ -109,45 +170,35 @@ func TestCore_Run_NoBeads(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Succeeded != 0 {
-		t.Errorf("expected 0 succeeded, got %d", result.Succeeded)
+	if result.Outcome != OutcomeMaxIterations {
+		t.Errorf("expected max-iterations outcome, got %v", result.Outcome)
 	}
-	if result.Duration == 0 {
-		t.Error("expected non-zero duration")
+	if result.Iterations != 3 {
+		t.Errorf("expected 3 iterations, got %d", result.Iterations)
+	}
+	if len(*prompts) != 3 {
+		t.Errorf("expected 3 execute calls, got %d", len(*prompts))
 	}
 }
 
-func TestCore_Run_MixedOutcomes(t *testing.T) {
-	beadsList := []beads.Bead{
-		{ID: "success-bead", Title: "Success", Status: "open", Priority: 1},
-		{ID: "fail-bead", Title: "Fail", Status: "open", Priority: 2},
-		{ID: "question-bead", Title: "Question", Status: "open", Priority: 3},
-	}
-
-	outcomeMap := map[string]Outcome{
-		"success-bead":  OutcomeSuccess,
-		"fail-bead":     OutcomeFailure,
-		"question-bead": OutcomeQuestion,
-	}
+func TestCore_Run_QuestionStopsLoop(t *testing.T) {
+	execute, prompts := mockExecute()
 
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore(beadsList),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
-			return &PromptData{ID: beadID}, nil
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         mockBDForStatus("test-bead", "open"),
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
 		},
 		Render: func(data *PromptData) (string, error) {
-			return "prompt", nil
+			return "mock prompt", nil
 		},
-		Execute: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
-			return &AgentResult{ExitCode: 0, Duration: 10 * time.Millisecond}, nil
-		},
-		AssessFn: func(workDir, beadID string, result *AgentResult) (Outcome, string) {
-			return outcomeMap[beadID], "test"
-		},
+		Execute:  execute,
+		AssessFn: mockAssess(OutcomeQuestion),
 	}
 
 	result, err := core.Run(context.Background())
@@ -155,14 +206,47 @@ func TestCore_Run_MixedOutcomes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Succeeded != 1 {
-		t.Errorf("expected 1 succeeded, got %d", result.Succeeded)
+	if result.Outcome != OutcomeQuestion {
+		t.Errorf("expected question outcome, got %v", result.Outcome)
 	}
-	if result.Failed != 1 {
-		t.Errorf("expected 1 failed, got %d", result.Failed)
+	if result.Iterations != 1 {
+		t.Errorf("expected 1 iteration (stop on question), got %d", result.Iterations)
 	}
-	if result.Questions != 1 {
-		t.Errorf("expected 1 question, got %d", result.Questions)
+	if len(*prompts) != 1 {
+		t.Errorf("expected 1 execute call, got %d", len(*prompts))
+	}
+}
+
+func TestCore_Run_TimeoutStopsLoop(t *testing.T) {
+	execute, _ := mockExecute()
+
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         mockBDForStatus("test-bead", "open"),
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt", nil
+		},
+		Execute:  execute,
+		AssessFn: mockAssess(OutcomeTimeout),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Outcome != OutcomeTimeout {
+		t.Errorf("expected timeout outcome, got %v", result.Outcome)
+	}
+	if result.Iterations != 1 {
+		t.Errorf("expected 1 iteration (stop on timeout), got %d", result.Iterations)
 	}
 }
 
@@ -172,10 +256,11 @@ func TestCore_Run_ContextCancellation(t *testing.T) {
 
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{{ID: "bead", Title: "Test"}}),
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         mockBDForStatus("test-bead", "open"),
 	}
 
 	result, err := core.Run(ctx)
@@ -183,22 +268,23 @@ func TestCore_Run_ContextCancellation(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should return early with no work done
-	if result.Succeeded != 0 {
-		t.Errorf("expected 0 succeeded after cancellation, got %d", result.Succeeded)
+	if result.Outcome != OutcomeTimeout {
+		t.Errorf("expected timeout outcome (context cancelled), got %v", result.Outcome)
+	}
+	if result.Iterations != 0 {
+		t.Errorf("expected 0 iterations after cancellation, got %d", result.Iterations)
 	}
 }
 
 // testObserver records all observer callbacks for verification.
 type testObserver struct {
 	NoopObserver
-	loopStartCalls    int
-	beadStartCalls    int
-	beadCompleteCalls int
-	loopEndCalls      int
-	lastBeadResult    *BeadResult
-	onToolStartFn     func(ToolEvent)
-	onToolEndFn       func(ToolEvent)
+	loopStartCalls      int
+	beadStartCalls      int
+	beadCompleteCalls   int
+	loopEndCalls        int
+	iterationStartCalls int
+	lastBeadResult      *BeadResult
 }
 
 func (o *testObserver) OnLoopStart(rootBead string) {
@@ -218,38 +304,32 @@ func (o *testObserver) OnLoopEnd(result *CoreResult) {
 	o.loopEndCalls++
 }
 
-func (o *testObserver) OnToolStart(event ToolEvent) {
-	if o.onToolStartFn != nil {
-		o.onToolStartFn(event)
-	}
-}
-
-func (o *testObserver) OnToolEnd(event ToolEvent) {
-	if o.onToolEndFn != nil {
-		o.onToolEndFn(event)
-	}
+func (o *testObserver) OnIterationStart(iteration int) {
+	o.iterationStartCalls++
 }
 
 func TestCore_Run_Observer(t *testing.T) {
-	bead := beads.Bead{ID: "observed-bead", Title: "Observed", Status: "open"}
 	observer := &testObserver{}
+	execute, _ := mockExecute()
+
+	// Bead closes after first iteration
+	runBD := mockBDShowClosed("test-bead", 2)
 
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		Observer:    observer,
-		RunBD:       mockBDForCore([]beads.Bead{bead}),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		Observer:      observer,
+		RunBD:         runBD,
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
 			return &PromptData{ID: beadID}, nil
 		},
 		Render: func(data *PromptData) (string, error) {
 			return "prompt", nil
 		},
-		Execute: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
-			return &AgentResult{ExitCode: 0, Duration: 50 * time.Millisecond}, nil
-		},
+		Execute:  execute,
 		AssessFn: mockAssess(OutcomeSuccess),
 	}
 
@@ -264,33 +344,25 @@ func TestCore_Run_Observer(t *testing.T) {
 	if observer.beadStartCalls != 1 {
 		t.Errorf("expected 1 OnBeadStart call, got %d", observer.beadStartCalls)
 	}
+	if observer.iterationStartCalls != 2 {
+		t.Errorf("expected 2 OnIterationStart calls, got %d", observer.iterationStartCalls)
+	}
 	if observer.beadCompleteCalls != 1 {
 		t.Errorf("expected 1 OnBeadComplete call, got %d", observer.beadCompleteCalls)
 	}
-	if observer.loopEndCalls != 1 {
-		t.Errorf("expected 1 OnLoopEnd call, got %d", observer.loopEndCalls)
-	}
-	if observer.lastBeadResult == nil {
-		t.Fatal("expected lastBeadResult to be set")
-	}
-	if observer.lastBeadResult.Outcome != OutcomeSuccess {
-		t.Errorf("expected success outcome, got %v", observer.lastBeadResult.Outcome)
-	}
 }
 
-func TestCore_Run_FetchPromptError(t *testing.T) {
-	bead := beads.Bead{ID: "error-bead", Title: "Error", Status: "open"}
-
+func TestCore_Run_PromptError(t *testing.T) {
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{bead}),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         mockBDForStatus("test-bead", "open"),
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
 			return nil, context.DeadlineExceeded
 		},
-		AssessFn: mockAssess(OutcomeSuccess), // Won't be called
 	}
 
 	result, err := core.Run(context.Background())
@@ -298,51 +370,20 @@ func TestCore_Run_FetchPromptError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Fetch error should result in failure
-	if result.Failed != 1 {
-		t.Errorf("expected 1 failed (prompt fetch error), got %d", result.Failed)
-	}
-}
-
-func TestCore_Run_RenderError(t *testing.T) {
-	bead := beads.Bead{ID: "render-error", Title: "Render Error", Status: "open"}
-
-	var out bytes.Buffer
-	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{bead}),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
-			return &PromptData{ID: beadID}, nil
-		},
-		Render: func(data *PromptData) (string, error) {
-			return "", context.DeadlineExceeded
-		},
-		AssessFn: mockAssess(OutcomeSuccess), // Won't be called
-	}
-
-	result, err := core.Run(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Render error should result in failure
-	if result.Failed != 1 {
-		t.Errorf("expected 1 failed (render error), got %d", result.Failed)
+	if result.Outcome != OutcomeFailure {
+		t.Errorf("expected failure outcome, got %v", result.Outcome)
 	}
 }
 
 func TestCore_Run_ExecuteError(t *testing.T) {
-	bead := beads.Bead{ID: "exec-error", Title: "Exec Error", Status: "open"}
-
 	var out bytes.Buffer
 	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{bead}),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		Output:        &out,
+		RunBD:         mockBDForStatus("test-bead", "open"),
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
 			return &PromptData{ID: beadID}, nil
 		},
 		Render: func(data *PromptData) (string, error) {
@@ -351,7 +392,6 @@ func TestCore_Run_ExecuteError(t *testing.T) {
 		Execute: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
 			return nil, context.DeadlineExceeded
 		},
-		AssessFn: mockAssess(OutcomeSuccess), // Won't be called
 	}
 
 	result, err := core.Run(context.Background())
@@ -359,50 +399,12 @@ func TestCore_Run_ExecuteError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Execute error should result in failure
-	if result.Failed != 1 {
-		t.Errorf("expected 1 failed (execute error), got %d", result.Failed)
-	}
-}
-
-func TestCore_Run_Timeout(t *testing.T) {
-	bead := beads.Bead{ID: "timeout-bead", Title: "Timeout", Status: "open"}
-
-	var out bytes.Buffer
-	core := &Core{
-		WorkDir:     "/tmp/test",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBDForCore([]beads.Bead{bead}),
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
-			return &PromptData{ID: beadID}, nil
-		},
-		Render: func(data *PromptData) (string, error) {
-			return "prompt", nil
-		},
-		Execute: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
-			return &AgentResult{ExitCode: -1, Duration: 10 * time.Minute, TimedOut: true}, nil
-		},
-		AssessFn: func(workDir, beadID string, result *AgentResult) (Outcome, string) {
-			if result.TimedOut {
-				return OutcomeTimeout, "timed out"
-			}
-			return OutcomeSuccess, ""
-		},
-	}
-
-	result, err := core.Run(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.TimedOut != 1 {
-		t.Errorf("expected 1 timed out, got %d", result.TimedOut)
+	if result.Outcome != OutcomeFailure {
+		t.Errorf("expected failure outcome, got %v", result.Outcome)
 	}
 }
 
 func TestNoopObserver(t *testing.T) {
-	// Verify NoopObserver implements all methods without panicking
 	var obs NoopObserver
 	obs.OnLoopStart("test")
 	obs.OnBeadStart(beads.Bead{})
@@ -410,177 +412,7 @@ func TestNoopObserver(t *testing.T) {
 	obs.OnLoopEnd(&CoreResult{})
 	obs.OnToolStart(ToolEvent{})
 	obs.OnToolEnd(ToolEvent{})
-	// If we get here, the test passes
-}
-
-func TestBeadContextObserver(t *testing.T) {
-	// Test that beadContextObserver properly tags tool events with bead ID
-	var receivedStart, receivedEnd ToolEvent
-
-	inner := &testObserver{
-		onToolStartFn: func(e ToolEvent) { receivedStart = e },
-		onToolEndFn:   func(e ToolEvent) { receivedEnd = e },
-	}
-
-	beadID := "test-bead-123"
-	wrapped := newBeadContextObserver(inner, beadID)
-
-	// Send a tool start event without BeadID
-	wrapped.OnToolStart(ToolEvent{
-		ID:   "tool-1",
-		Name: "Read",
-	})
-
-	if receivedStart.BeadID != beadID {
-		t.Errorf("OnToolStart: expected BeadID %q, got %q", beadID, receivedStart.BeadID)
-	}
-	if receivedStart.Name != "Read" {
-		t.Errorf("OnToolStart: expected Name %q, got %q", "Read", receivedStart.Name)
-	}
-
-	// Send a tool end event without BeadID
-	wrapped.OnToolEnd(ToolEvent{
-		ID:   "tool-1",
-		Name: "Read",
-	})
-
-	if receivedEnd.BeadID != beadID {
-		t.Errorf("OnToolEnd: expected BeadID %q, got %q", beadID, receivedEnd.BeadID)
-	}
-}
-
-func TestBeadContextObserver_NilInner(t *testing.T) {
-	// Verify that newBeadContextObserver returns nil for nil inner
-	wrapped := newBeadContextObserver(nil, "test-bead")
-	if wrapped != nil {
-		t.Error("expected nil for nil inner observer")
-	}
-}
-
-// TestCore_Run_SingleBeadFallback verifies that when RootBead has no children,
-// the bead itself is executed if it's ready.
-func TestCore_Run_SingleBeadFallback(t *testing.T) {
-	execute, prompts := mockExecute()
-
-	// Track whether the bead has been executed (simulates it being closed after work)
-	var executed atomic.Bool
-
-	// Mock that returns empty for "bd ready --parent X" but returns the bead for "bd show X"
-	mockBD := func(dir string, args ...string) ([]byte, error) {
-		if len(args) >= 2 && args[0] == "ready" {
-			// No children - return empty array
-			return []byte("[]"), nil
-		}
-		if len(args) >= 3 && args[0] == "show" {
-			// After first execution, bead is no longer ready (closed)
-			status := "open"
-			if executed.Load() {
-				status = "closed"
-			}
-			return json.Marshal([]struct {
-				ID              string `json:"id"`
-				Title           string `json:"title"`
-				Status          string `json:"status"`
-				Priority        int    `json:"priority"`
-				DependencyCount int    `json:"dependency_count"`
-			}{{
-				ID:              "single-task",
-				Title:           "Single Task",
-				Status:          status,
-				Priority:        2,
-				DependencyCount: 0,
-			}})
-		}
-		return []byte("[]"), nil
-	}
-
-	var out bytes.Buffer
-	core := &Core{
-		WorkDir:     "/tmp/test",
-		RootBead:    "single-task",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBD,
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
-			return &PromptData{ID: beadID, Title: "Single Task"}, nil
-		},
-		Render: func(data *PromptData) (string, error) {
-			return "mock prompt for " + data.ID, nil
-		},
-		Execute: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
-			executed.Store(true) // Mark as executed so next readyBeads returns empty
-			return execute(ctx, workDir, prompt)
-		},
-		AssessFn: mockAssess(OutcomeSuccess),
-	}
-
-	result, err := core.Run(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Succeeded != 1 {
-		t.Errorf("expected 1 succeeded (single bead fallback), got %d", result.Succeeded)
-	}
-	if len(*prompts) != 1 {
-		t.Errorf("expected 1 execute call, got %d", len(*prompts))
-	}
-}
-
-// TestCore_Run_SingleBeadNotReady verifies that when RootBead has no children
-// and the bead itself is not ready, nothing is executed.
-func TestCore_Run_SingleBeadNotReady(t *testing.T) {
-	execute, prompts := mockExecute()
-
-	mockBD := func(dir string, args ...string) ([]byte, error) {
-		if len(args) >= 2 && args[0] == "ready" {
-			return []byte("[]"), nil
-		}
-		if len(args) >= 3 && args[0] == "show" {
-			// Return the bead as not ready (has dependencies)
-			return json.Marshal([]struct {
-				ID              string `json:"id"`
-				Title           string `json:"title"`
-				Status          string `json:"status"`
-				DependencyCount int    `json:"dependency_count"`
-			}{{
-				ID:              "blocked-task",
-				Title:           "Blocked Task",
-				Status:          "open",
-				DependencyCount: 1, // Has a blocker
-			}})
-		}
-		return []byte("[]"), nil
-	}
-
-	var out bytes.Buffer
-	core := &Core{
-		WorkDir:     "/tmp/test",
-		RootBead:    "blocked-task",
-		MaxParallel: 1,
-		Output:      &out,
-		RunBD:       mockBD,
-		FetchPrompt: func(runBD BDRunner, workDir, beadID string) (*PromptData, error) {
-			return &PromptData{ID: beadID}, nil
-		},
-		Render: func(data *PromptData) (string, error) {
-			return "prompt", nil
-		},
-		Execute:  execute,
-		AssessFn: mockAssess(OutcomeSuccess),
-	}
-
-	result, err := core.Run(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Succeeded != 0 {
-		t.Errorf("expected 0 succeeded (bead not ready), got %d", result.Succeeded)
-	}
-	if len(*prompts) != 0 {
-		t.Errorf("expected 0 execute calls, got %d", len(*prompts))
-	}
+	obs.OnIterationStart(0)
 }
 
 func TestFormatDuration(t *testing.T) {

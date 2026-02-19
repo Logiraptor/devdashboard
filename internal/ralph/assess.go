@@ -13,10 +13,11 @@ import (
 type Outcome int
 
 const (
-	OutcomeSuccess  Outcome = iota // Bead was closed by the agent.
-	OutcomeQuestion                // Agent created needs-human blocking dependencies.
-	OutcomeFailure                 // Agent failed or bead still open with no blockers.
-	OutcomeTimeout                 // Agent was killed due to timeout.
+	OutcomeSuccess       Outcome = iota // Bead was closed by the agent.
+	OutcomeQuestion                     // Agent created needs-human blocking dependencies.
+	OutcomeFailure                      // Agent failed or bead still open with no blockers.
+	OutcomeTimeout                      // Agent was killed due to timeout.
+	OutcomeMaxIterations                // Max iterations reached without closing bead.
 )
 
 // String returns a human-readable label for the outcome.
@@ -30,6 +31,8 @@ func (o Outcome) String() string {
 		return "failure"
 	case OutcomeTimeout:
 		return "timeout"
+	case OutcomeMaxIterations:
+		return "max-iterations"
 	default:
 		return "unknown"
 	}
@@ -46,6 +49,8 @@ func parseOutcome(s string) (Outcome, error) {
 		return OutcomeFailure, nil
 	case "timeout":
 		return OutcomeTimeout, nil
+	case "max-iterations":
+		return OutcomeMaxIterations, nil
 	default:
 		return 0, ParseEnumError("Outcome", s)
 	}

@@ -1,5 +1,5 @@
 // Package ralph implements the autonomous agent work loop.
-// core.go provides a simplified parallel execution loop.
+// core.go provides a single-bead iteration loop.
 package ralph
 
 import (
@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 	"time"
 
 	"devdeploy/internal/bd"
 	"devdeploy/internal/beads"
 )
+
+// DefaultMaxIterations is the default number of agent iterations per bead.
+const DefaultMaxIterations = 10
 
 // ToolEvent represents a tool call event.
 type ToolEvent struct {
@@ -22,7 +24,7 @@ type ToolEvent struct {
 	Started    bool              // True for start events, false for end events
 	Timestamp  time.Time         // When the event occurred
 	Attributes map[string]string // Tool attributes
-	BeadID     string            // ID of the bead this event belongs to (set by context wrapper)
+	BeadID     string            // ID of the bead this event belongs to
 }
 
 // ProgressObserver receives progress updates from Core execution.
@@ -47,11 +49,8 @@ type ProgressObserver interface {
 	// OnToolEnd is called when a tool call ends.
 	OnToolEnd(event ToolEvent)
 
-	// OnMergeStart is called when a worktree merge begins.
-	OnMergeStart(beadID, branchName string)
-
-	// OnMergeComplete is called when a worktree merge finishes.
-	OnMergeComplete(beadID string, success bool, errMsg string)
+	// OnIterationStart is called when an iteration begins.
+	OnIterationStart(iteration int)
 }
 
 // NoopObserver is a ProgressObserver that does nothing.
@@ -61,84 +60,25 @@ type NoopObserver struct{}
 // Ensure NoopObserver implements ProgressObserver.
 var _ ProgressObserver = (*NoopObserver)(nil)
 
-func (NoopObserver) OnLoopStart(string)                     {}
-func (NoopObserver) OnBeadStart(beads.Bead)                 {}
-func (NoopObserver) OnBeadComplete(BeadResult)              {}
-func (NoopObserver) OnLoopEnd(*CoreResult)                  {}
-func (NoopObserver) OnToolStart(ToolEvent)                  {}
-func (NoopObserver) OnToolEnd(ToolEvent)                    {}
-func (NoopObserver) OnMergeStart(string, string)            {}
-func (NoopObserver) OnMergeComplete(string, bool, string)   {}
+func (NoopObserver) OnLoopStart(string)         {}
+func (NoopObserver) OnBeadStart(beads.Bead)     {}
+func (NoopObserver) OnBeadComplete(BeadResult)  {}
+func (NoopObserver) OnLoopEnd(*CoreResult)      {}
+func (NoopObserver) OnToolStart(ToolEvent)      {}
+func (NoopObserver) OnToolEnd(ToolEvent)        {}
+func (NoopObserver) OnIterationStart(int)       {}
 
-// beadContextObserver wraps an observer to tag tool events with a bead ID.
-// This enables correct routing of events in parallel execution scenarios.
-type beadContextObserver struct {
-	inner  ProgressObserver
-	beadID string
-}
-
-// Ensure beadContextObserver implements ProgressObserver.
-var _ ProgressObserver = (*beadContextObserver)(nil)
-
-// newBeadContextObserver creates an observer wrapper that tags tool events with the bead ID.
-func newBeadContextObserver(inner ProgressObserver, beadID string) ProgressObserver {
-	if inner == nil {
-		return nil
-	}
-	return &beadContextObserver{inner: inner, beadID: beadID}
-}
-
-// withBeadID tags a tool event with the bead ID.
-func (o *beadContextObserver) withBeadID(event ToolEvent) ToolEvent {
-	event.BeadID = o.beadID
-	return event
-}
-
-func (o *beadContextObserver) OnLoopStart(rootBead string) {
-	o.inner.OnLoopStart(rootBead)
-}
-
-func (o *beadContextObserver) OnBeadStart(bead beads.Bead) {
-	o.inner.OnBeadStart(bead)
-}
-
-func (o *beadContextObserver) OnBeadComplete(result BeadResult) {
-	o.inner.OnBeadComplete(result)
-}
-
-func (o *beadContextObserver) OnLoopEnd(result *CoreResult) {
-	o.inner.OnLoopEnd(result)
-}
-
-func (o *beadContextObserver) OnToolStart(event ToolEvent) {
-	o.inner.OnToolStart(o.withBeadID(event))
-}
-
-func (o *beadContextObserver) OnToolEnd(event ToolEvent) {
-	o.inner.OnToolEnd(o.withBeadID(event))
-}
-
-func (o *beadContextObserver) OnMergeStart(beadID, branchName string) {
-	o.inner.OnMergeStart(beadID, branchName)
-}
-
-func (o *beadContextObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
-	o.inner.OnMergeComplete(beadID, success, errMsg)
-}
-
-// Core orchestrates parallel agent execution for a bead tree.
+// Core orchestrates agent execution for a single bead.
 type Core struct {
 	// WorkDir is the root repository directory.
 	WorkDir string
 
-	// RootBead is the epic or single bead to complete.
-	// If set, only ready children of this bead are processed.
-	// If empty, all ready beads are processed.
+	// RootBead is the bead ID to work on (required).
 	RootBead string
 
-	// MaxParallel is the maximum concurrent agents.
-	// 0 or 1 means sequential execution.
-	MaxParallel int
+	// MaxIterations is the maximum agent iterations before giving up.
+	// Zero means use DefaultMaxIterations (10).
+	MaxIterations int
 
 	// AgentTimeout is the per-agent execution timeout.
 	// Zero means use DefaultTimeout (10m).
@@ -151,27 +91,22 @@ type Core struct {
 	Observer ProgressObserver
 
 	// Test hooks (nil means use real implementations)
-	RunBD       BDRunner
-	FetchPrompt func(runBD BDRunner, workDir, beadID string) (*PromptData, error)
+	RunBD       bd.Runner
+	FetchPrompt func(runBD bd.Runner, workDir, beadID string) (*PromptData, error)
 	Render      func(data *PromptData) (string, error)
 	Execute     func(ctx context.Context, workDir, prompt string) (*AgentResult, error)
 	AssessFn    func(workDir, beadID string, result *AgentResult) (Outcome, string)
 }
 
-// CoreResult holds the aggregate results of a Core.Run invocation.
+// CoreResult holds the results of a Core.Run invocation.
 type CoreResult struct {
-	Succeeded int
-	Questions int
-	Failed    int
-	TimedOut  int
-	Duration  time.Duration
+	Outcome    Outcome
+	Iterations int
+	Duration   time.Duration
 }
 
-// Run executes the ralph loop until no more beads are ready.
-// Each iteration:
-//  1. Queries ready beads (filtered by RootBead if set)
-//  2. Executes beads in parallel (up to MaxParallel)
-//  3. Merges results back to the main branch
+// Run executes the ralph loop on a single bead.
+// Iterates until the bead is closed, max iterations reached, or a stopping condition.
 func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	start := time.Now()
 	result := &CoreResult{}
@@ -181,55 +116,121 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 		out = os.Stdout
 	}
 
+	maxIter := c.MaxIterations
+	if maxIter <= 0 {
+		maxIter = DefaultMaxIterations
+	}
+
 	// Notify observer of loop start
 	if c.Observer != nil {
 		c.Observer.OnLoopStart(c.RootBead)
 	}
 
-	// Initialize worktree manager for parallel execution
-	var wtMgr *WorktreeManager
-	if c.MaxParallel > 1 {
-		var err error
-		wtMgr, err = NewWorktreeManager(c.WorkDir)
-		if err != nil {
-			return nil, fmt.Errorf("creating worktree manager: %w", err)
-		}
+	// Fetch initial bead info
+	bead, err := c.fetchBead()
+	if err != nil {
+		return nil, fmt.Errorf("fetching bead %s: %w", c.RootBead, err)
 	}
 
-	for {
+	// Notify observer of bead start
+	if c.Observer != nil {
+		c.Observer.OnBeadStart(bead)
+	}
+
+	var lastAgentResult *AgentResult
+	var lastOutcome Outcome
+	var lastSummary string
+
+	for iteration := 0; iteration < maxIter; iteration++ {
 		// Check context cancellation
 		if ctx.Err() != nil {
-			break
+			result.Outcome = OutcomeTimeout
+			result.Iterations = iteration
+			result.Duration = time.Since(start)
+			c.notifyComplete(bead, result, lastAgentResult, "context cancelled")
+			return result, nil
 		}
 
-		// 1. Query ready beads
-		ready, err := c.readyBeads()
+		// Notify observer of iteration start
+		if c.Observer != nil {
+			c.Observer.OnIterationStart(iteration)
+		}
+
+		// Check if bead is already closed
+		closed, err := c.isBeadClosed()
 		if err != nil {
-			return nil, fmt.Errorf("fetching ready beads: %w", err)
+			writef(out, "[%s] error checking bead status: %v\n", c.RootBead, err)
 		}
-		if len(ready) == 0 {
-			break // No more work
+		if closed {
+			result.Outcome = OutcomeSuccess
+			result.Iterations = iteration
+			result.Duration = time.Since(start)
+			writef(out, "[%s] bead closed after %d iteration(s)\n", c.RootBead, iteration)
+			c.notifyComplete(bead, result, lastAgentResult, "")
+			return result, nil
 		}
 
-		writef(out, "Found %d ready bead(s)\n", len(ready))
+		writef(out, "[%s] iteration %d/%d\n", c.RootBead, iteration+1, maxIter)
 
-		// 2. Execute in parallel (limited by MaxParallel)
-		batchSize := len(ready)
-		if c.MaxParallel > 0 && batchSize > c.MaxParallel {
-			batchSize = c.MaxParallel
+		// Fetch and render prompt
+		prompt, err := c.buildPrompt()
+		if err != nil {
+			writef(out, "[%s] failed to build prompt: %v\n", c.RootBead, err)
+			result.Outcome = OutcomeFailure
+			result.Iterations = iteration + 1
+			result.Duration = time.Since(start)
+			c.notifyComplete(bead, result, nil, err.Error())
+			return result, nil
 		}
-		batchReady := ready[:batchSize]
 
-		results := c.executeParallel(ctx, wtMgr, batchReady, out)
+		// Execute agent
+		agentResult, err := c.runAgent(ctx, prompt)
+		if err != nil {
+			writef(out, "[%s] agent execution error: %v\n", c.RootBead, err)
+			result.Outcome = OutcomeFailure
+			result.Iterations = iteration + 1
+			result.Duration = time.Since(start)
+			c.notifyComplete(bead, result, agentResult, err.Error())
+			return result, nil
+		}
+		lastAgentResult = agentResult
 
-		// 3. Process results and merge back
-		c.processBeadResults(ctx, wtMgr, results, result, out)
+		// Assess outcome
+		outcome, summary := c.assessOutcome(agentResult)
+		lastOutcome = outcome
+		lastSummary = summary
+
+		writef(out, "[%s] iteration %d → %s (%s)\n", c.RootBead, iteration+1, outcome, FormatDuration(agentResult.Duration))
+		if summary != "" && outcome != OutcomeSuccess {
+			writef(out, "  %s\n", summary)
+		}
+
+		// Stop on question or timeout (non-retryable)
+		if outcome == OutcomeQuestion || outcome == OutcomeTimeout {
+			result.Outcome = outcome
+			result.Iterations = iteration + 1
+			result.Duration = time.Since(start)
+			c.notifyComplete(bead, result, agentResult, summary)
+			return result, nil
+		}
+
+		// On success, check if bead is closed (will happen next iteration)
+		// On failure, continue to retry
 	}
 
+	// Max iterations reached
+	result.Outcome = OutcomeMaxIterations
+	result.Iterations = maxIter
 	result.Duration = time.Since(start)
 
-	// Print summary
-	c.logSummary(result, out)
+	// Use the last outcome if we have one
+	if lastOutcome != 0 {
+		writef(out, "[%s] max iterations reached (last outcome: %s)\n", c.RootBead, lastOutcome)
+	} else {
+		writef(out, "[%s] max iterations reached\n", c.RootBead)
+	}
+
+	c.notifyComplete(bead, result, lastAgentResult, lastSummary)
 
 	// Notify observer of loop end
 	if c.Observer != nil {
@@ -239,391 +240,127 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	return result, nil
 }
 
-// processBeadResults processes execution results, updates counters, merges worktrees, and cleans up.
-func (c *Core) processBeadResults(ctx context.Context, wtMgr *WorktreeManager, results []beadExecResult, result *CoreResult, out io.Writer) {
-	for _, r := range results {
-		switch r.Outcome {
-		case OutcomeSuccess:
-			result.Succeeded++
-		case OutcomeQuestion:
-			result.Questions++
-		case OutcomeFailure:
-			result.Failed++
-		case OutcomeTimeout:
-			result.TimedOut++
-		}
-
-		// Merge successful work back if using worktrees
-		if r.WorktreePath != "" && r.Outcome == OutcomeSuccess && r.BranchName != "" {
-			// Create worktree manager on-demand if we don't have one
-			// This handles cases where MaxParallel was 1 but worktrees were created anyway
-			mergeWtMgr := wtMgr
-			if mergeWtMgr == nil {
-				var err error
-				mergeWtMgr, err = NewWorktreeManager(c.WorkDir)
-				if err != nil {
-					writef(out, "[%s] ERROR: failed to create worktree manager for merge: %v\n", r.BeadID, err)
-					if c.Observer != nil {
-						c.Observer.OnMergeComplete(r.BeadID, false, err.Error())
-					}
-					result.Failed++
-					continue
-				}
-			}
-			writef(out, "[%s] merging %s into %s\n", r.BeadID, r.BranchName, mergeWtMgr.Branch())
-			if c.Observer != nil {
-				c.Observer.OnMergeStart(r.BeadID, r.BranchName)
-			}
-			if err := c.mergeBack(ctx, mergeWtMgr, r); err != nil {
-				writef(out, "[%s] ERROR: merge failed: %v\n", r.BeadID, err)
-				if c.Observer != nil {
-					c.Observer.OnMergeComplete(r.BeadID, false, err.Error())
-				}
-				// Don't fail the entire run, but make the error visible
-				result.Failed++
-			} else {
-				writef(out, "[%s] ✓ merged successfully\n", r.BeadID)
-				if c.Observer != nil {
-					c.Observer.OnMergeComplete(r.BeadID, true, "")
-				}
-			}
-		} else if r.BranchName != "" && r.Outcome == OutcomeSuccess {
-			// Branch was created but worktree wasn't (shouldn't happen, but handle it)
-			writef(out, "[%s] WARNING: branch %s exists but no worktree was created - merge skipped\n", r.BeadID, r.BranchName)
-		}
-
-		// Clean up worktree
-		if r.WorktreePath != "" {
-			cleanupWtMgr := wtMgr
-			if cleanupWtMgr == nil {
-				var err error
-				cleanupWtMgr, err = NewWorktreeManager(c.WorkDir)
-				if err != nil {
-					writef(out, "  warning: failed to create worktree manager for cleanup: %v\n", err)
-					continue
-				}
-			}
-			if err := cleanupWtMgr.RemoveWorktree(r.WorktreePath); err != nil {
-				writef(out, "  warning: failed to remove worktree: %v\n", err)
-			}
-		}
+// notifyComplete sends the bead complete notification to the observer.
+func (c *Core) notifyComplete(bead beads.Bead, result *CoreResult, agentResult *AgentResult, errMsg string) {
+	if c.Observer == nil {
+		return
 	}
+
+	br := BeadResult{
+		Bead:     bead,
+		Outcome:  result.Outcome,
+		Duration: result.Duration,
+	}
+	if agentResult != nil {
+		br.ChatID = agentResult.ChatID
+		br.ExitCode = agentResult.ExitCode
+		br.Stderr = agentResult.Stderr
+	}
+	if errMsg != "" {
+		br.ErrorMessage = errMsg
+	}
+	c.Observer.OnBeadComplete(br)
 }
 
-// logSummary logs the completion summary to the output writer.
-func (c *Core) logSummary(result *CoreResult, out io.Writer) {
-	writef(out, "\nCore loop complete:\n")
-	if result.Succeeded > 0 {
-		writef(out, "  ✓ %d beads completed\n", result.Succeeded)
-	}
-	if result.Questions > 0 {
-		writef(out, "  ? %d questions created\n", result.Questions)
-	}
-	if result.Failed > 0 {
-		writef(out, "  ✗ %d failures\n", result.Failed)
-	}
-	if result.TimedOut > 0 {
-		writef(out, "  ⏱ %d timeouts\n", result.TimedOut)
-	}
-	writef(out, "  Duration: %s\n", FormatDuration(result.Duration))
-}
-
-// beadExecResult holds the outcome of executing a single bead.
-type beadExecResult struct {
-	BeadID       string
-	Outcome      Outcome
-	Duration     time.Duration
-	WorktreePath string
-	BranchName   string
-}
-
-// readyBeads fetches beads that are ready to work on.
-// If RootBead is set, returns ready children of that bead.
-// If no children are found, checks if RootBead itself is ready (for single-bead targeting).
-// Children are returned with AgentTypeCoder, parent fallback with AgentTypeVerifier.
-func (c *Core) readyBeads() ([]ReadyBead, error) {
+// fetchBead retrieves the bead information from bd.
+func (c *Core) fetchBead() (beads.Bead, error) {
 	runner := c.RunBD
 	if runner == nil {
 		runner = bd.Run
 	}
 
-	args := []string{"ready", "--json"}
-	if c.RootBead != "" {
-		args = append(args, "--parent", c.RootBead)
-	}
-
-	out, err := runner(c.WorkDir, args...)
+	out, err := runner(c.WorkDir, "show", c.RootBead, "--json")
 	if err != nil {
-		return nil, err
-	}
-
-	ready, err := parseReadyBeads(out)
-	if err != nil {
-		return nil, err
-	}
-
-	// If we have children, return them with AgentTypeCoder
-	if len(ready) > 0 {
-		result := make([]ReadyBead, len(ready))
-		for i, bead := range ready {
-			result[i] = ReadyBead{
-				Bead:      bead,
-				AgentType: AgentTypeCoder,
-			}
-		}
-		return result, nil
-	}
-
-	// No children - check if RootBead itself is ready (single-bead targeting)
-	// Return with AgentTypeVerifier
-	if c.RootBead != "" {
-		beads, err := c.getBeadIfReady(runner, c.RootBead)
-		if err != nil {
-			return nil, err
-		}
-		if len(beads) == 0 {
-			return nil, nil
-		}
-		return []ReadyBead{{
-			Bead:      beads[0],
-			AgentType: AgentTypeVerifier,
-		}}, nil
-	}
-
-	return nil, nil
-}
-
-// getBeadIfReady returns the bead as a single-item slice if it's ready to work on.
-// A bead is ready if status is "open" and it has no blocking dependencies.
-func (c *Core) getBeadIfReady(runner BDRunner, beadID string) ([]beads.Bead, error) {
-	out, err := runner(c.WorkDir, "show", beadID, "--json")
-	if err != nil {
-		return nil, fmt.Errorf("bd show %s: %w", beadID, err)
+		return beads.Bead{}, fmt.Errorf("bd show %s: %w", c.RootBead, err)
 	}
 
 	var entries []bdShowReadyEntry
 	if err := json.Unmarshal(out, &entries); err != nil {
-		return nil, fmt.Errorf("parsing bd show output: %w", err)
+		return beads.Bead{}, fmt.Errorf("parsing bd show output: %w", err)
 	}
 	if len(entries) == 0 {
-		return nil, nil
+		return beads.Bead{}, fmt.Errorf("bead %s not found", c.RootBead)
 	}
 
 	e := entries[0]
-
-	// Bead is ready if open and has no blockers
-	if e.Status != "open" || e.DependencyCount > 0 {
-		return nil, nil
-	}
-
-	return []beads.Bead{{
+	return beads.Bead{
 		ID:        e.ID,
 		Title:     e.Title,
 		Status:    e.Status,
 		Priority:  e.Priority,
 		Labels:    e.Labels,
 		CreatedAt: e.CreatedAt,
-	}}, nil
+	}, nil
 }
 
-// executeParallel runs agents for a batch of ready beads concurrently.
-func (c *Core) executeParallel(ctx context.Context, wtMgr *WorktreeManager, batch []ReadyBead, out io.Writer) []beadExecResult {
-	results := make([]beadExecResult, len(batch))
-	var wg sync.WaitGroup
-
-	for i, readyBead := range batch {
-		wg.Add(1)
-		go func(idx int, rb ReadyBead) {
-			defer wg.Done()
-			results[idx] = c.executeBead(ctx, wtMgr, rb, out)
-		}(i, readyBead)
+// isBeadClosed checks if the bead has been closed.
+func (c *Core) isBeadClosed() (bool, error) {
+	runner := c.RunBD
+	if runner == nil {
+		runner = bd.Run
 	}
 
-	wg.Wait()
-	return results
-}
-
-// executeBead runs an agent for a single bead, switching on AgentType to determine
-// prompt fetching, rendering, model selection, and worktree usage.
-func (c *Core) executeBead(ctx context.Context, wtMgr *WorktreeManager, readyBead ReadyBead, out io.Writer) beadExecResult {
-	start := time.Now()
-	bead := readyBead.Bead
-	result := beadExecResult{BeadID: bead.ID}
-
-	// For observer notifications
-	var agentResult *AgentResult
-	notifyComplete := func(outcome Outcome, errMsg string) {
-		if c.Observer != nil {
-			br := BeadResult{
-				Bead:     bead,
-				Outcome:  outcome,
-				Duration: result.Duration,
-			}
-			if agentResult != nil {
-				br.ChatID = agentResult.ChatID
-				br.ExitCode = agentResult.ExitCode
-				br.Stderr = agentResult.Stderr
-			}
-			if errMsg != "" {
-				br.ErrorMessage = errMsg
-			}
-			c.Observer.OnBeadComplete(br)
-		}
-	}
-
-	// Notify observer of bead start
-	if c.Observer != nil {
-		c.Observer.OnBeadStart(bead)
-	}
-
-	// Determine execution directory and worktree handling based on agent type
-	execDir := c.WorkDir
-	if readyBead.AgentType == AgentTypeCoder && wtMgr != nil {
-		// Coder agents use worktrees for isolation
-		worktreePath, branchName, err := wtMgr.CreateWorktree(bead.ID)
-		if err != nil {
-			writef(out, "[%s] failed to create worktree: %v\n", bead.ID, err)
-			result.Outcome = OutcomeFailure
-			result.Duration = time.Since(start)
-			notifyComplete(result.Outcome, err.Error())
-			return result
-		}
-		execDir = worktreePath
-		result.WorktreePath = worktreePath
-		result.BranchName = branchName
-	}
-	// Verifier agents run in main repo (no worktree) since children's work is already merged
-
-	// Fetch and render prompt based on agent type
-	var prompt string
-	var err error
-	switch readyBead.AgentType {
-	case AgentTypeVerifier:
-		// Use verification prompt with child summary
-		verificationData, err := FetchVerificationPromptData(c.RunBD, c.WorkDir, bead.ID)
-		if err != nil {
-			writef(out, "[%s] failed to fetch verification prompt: %v\n", bead.ID, err)
-			result.Outcome = OutcomeFailure
-			result.Duration = time.Since(start)
-			notifyComplete(result.Outcome, err.Error())
-			return result
-		}
-
-		// Render verification prompt
-		prompt, err = RenderVerificationPrompt(verificationData)
-		if err != nil {
-			writef(out, "[%s] failed to render verification prompt: %v\n", bead.ID, err)
-			result.Outcome = OutcomeFailure
-			result.Duration = time.Since(start)
-			notifyComplete(result.Outcome, err.Error())
-			return result
-		}
-
-	case AgentTypeCoder:
-		// Use standard prompt for coding tasks
-		fetchPrompt := c.FetchPrompt
-		if fetchPrompt == nil {
-			fetchPrompt = FetchPromptData
-		}
-		promptData, fetchErr := fetchPrompt(c.RunBD, c.WorkDir, bead.ID)
-		if fetchErr != nil {
-			writef(out, "[%s] failed to fetch prompt: %v\n", bead.ID, fetchErr)
-			result.Outcome = OutcomeFailure
-			result.Duration = time.Since(start)
-			notifyComplete(result.Outcome, fetchErr.Error())
-			return result
-		}
-
-		// Render prompt
-		render := c.Render
-		if render == nil {
-			render = RenderPrompt
-		}
-		prompt, err = render(promptData)
-		if err != nil {
-			writef(out, "[%s] failed to render prompt: %v\n", bead.ID, err)
-			result.Outcome = OutcomeFailure
-			result.Duration = time.Since(start)
-			notifyComplete(result.Outcome, err.Error())
-			return result
-		}
-
-	default:
-		writef(out, "[%s] unknown agent type: %v\n", bead.ID, readyBead.AgentType)
-		result.Outcome = OutcomeFailure
-		result.Duration = time.Since(start)
-		notifyComplete(result.Outcome, fmt.Sprintf("unknown agent type: %v", readyBead.AgentType))
-		return result
-	}
-
-	// Execute agent with model selection based on agent type
-	if c.Execute != nil {
-		agentResult, err = c.Execute(ctx, execDir, prompt)
-	} else {
-		var opts []Option
-		if c.AgentTimeout > 0 {
-			opts = append(opts, WithTimeout(c.AgentTimeout))
-		}
-		if c.Observer != nil {
-			// Wrap observer with bead context so tool events can be routed correctly
-			// in parallel execution scenarios
-			beadObserver := newBeadContextObserver(c.Observer, bead.ID)
-			opts = append(opts, WithObserver(beadObserver))
-			// Suppress stdout when observer is present (TUI mode) to avoid
-			// interfering with bubbletea. The observer handles tool events,
-			// and stdout is still captured in the buffer for parsing.
-			opts = append(opts, WithStdoutWriter(io.Discard))
-		}
-
-		// Select model based on agent type
-		if readyBead.AgentType == AgentTypeVerifier {
-			agentResult, err = RunAgentOpus(ctx, execDir, prompt, opts...)
-		} else {
-			agentResult, err = RunAgent(ctx, execDir, prompt, opts...)
-		}
-	}
+	out, err := runner(c.WorkDir, "show", c.RootBead, "--json")
 	if err != nil {
-		writef(out, "[%s] agent execution error: %v\n", bead.ID, err)
-		result.Outcome = OutcomeFailure
-		result.Duration = time.Since(start)
-		notifyComplete(result.Outcome, err.Error())
-		return result
+		return false, fmt.Errorf("bd show %s: %w", c.RootBead, err)
 	}
 
-	// Assess outcome
+	var entries []bdShowReadyEntry
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return false, fmt.Errorf("parsing bd show output: %w", err)
+	}
+	if len(entries) == 0 {
+		return false, fmt.Errorf("bead %s not found", c.RootBead)
+	}
+
+	return entries[0].Status == "closed", nil
+}
+
+// buildPrompt fetches bead data and renders the prompt.
+func (c *Core) buildPrompt() (string, error) {
+	fetchPrompt := c.FetchPrompt
+	if fetchPrompt == nil {
+		fetchPrompt = FetchPromptData
+	}
+
+	promptData, err := fetchPrompt(c.RunBD, c.WorkDir, c.RootBead)
+	if err != nil {
+		return "", fmt.Errorf("fetching prompt data: %w", err)
+	}
+
+	render := c.Render
+	if render == nil {
+		render = RenderPrompt
+	}
+
+	return render(promptData)
+}
+
+// runAgent executes the agent with the given prompt.
+func (c *Core) runAgent(ctx context.Context, prompt string) (*AgentResult, error) {
+	if c.Execute != nil {
+		return c.Execute(ctx, c.WorkDir, prompt)
+	}
+
+	var opts []Option
+	if c.AgentTimeout > 0 {
+		opts = append(opts, WithTimeout(c.AgentTimeout))
+	}
+	if c.Observer != nil {
+		opts = append(opts, WithObserver(c.Observer))
+		opts = append(opts, WithStdoutWriter(io.Discard))
+	}
+
+	return RunAgent(ctx, c.WorkDir, prompt, opts...)
+}
+
+// assessOutcome evaluates the agent result and returns the outcome.
+func (c *Core) assessOutcome(result *AgentResult) (Outcome, string) {
 	assessFn := c.AssessFn
 	if assessFn == nil {
 		assessFn = func(wd, id string, r *AgentResult) (Outcome, string) {
 			return Assess(wd, id, r, nil)
 		}
 	}
-	outcome, summary := assessFn(c.WorkDir, bead.ID, agentResult)
-
-	result.Outcome = outcome
-	result.Duration = agentResult.Duration
-
-	writef(out, "[%s] %s → %s (%s) [%s]\n", bead.ID, bead.Title, outcome, FormatDuration(result.Duration), readyBead.AgentType)
-	if summary != "" && outcome != OutcomeSuccess {
-		writef(out, "  %s\n", summary)
-	}
-
-	notifyComplete(result.Outcome, summary)
-	return result
+	return assessFn(c.WorkDir, c.RootBead, result)
 }
-
-// mergeBack merges a worktree branch back into the main branch.
-func (c *Core) mergeBack(ctx context.Context, wtMgr *WorktreeManager, r beadExecResult) error {
-	// Find the correct repository path for merging.
-	// Use the worktree that has the target branch checked out, not the main repo.
-	mergeRepo := wtMgr.MergeRepo(wtMgr.Branch())
-	return MergeWithAgentResolution(
-		ctx,
-		mergeRepo,
-		wtMgr.Branch(),
-		r.BranchName,
-		r.BeadID,
-		"", // beadTitle not needed
-		c.AgentTimeout,
-	)
-}
-

@@ -1,7 +1,7 @@
 // Package ralph implements the autonomous agent work loop for devdeploy.
 //
 // Ralph orchestrates AI agents to work through beads (issues) autonomously.
-// It processes beads in parallel using git worktrees for isolation.
+// It iterates on a single bead until completion or a limit is hit.
 //
 // # Basic Usage
 //
@@ -9,8 +9,7 @@
 //
 //	core := &ralph.Core{
 //	    WorkDir:     "/path/to/repo",
-//	    RootBead:    "my-epic",    // optional: filter to epic's children
-//	    MaxParallel: 4,            // concurrent agents
+//	    RootBead:    "my-bead",     // bead to work on
 //	}
 //	result, err := core.Run(ctx)
 //
