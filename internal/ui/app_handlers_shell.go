@@ -151,19 +151,23 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	// Escape the workdir path for shell safety (handle spaces, special chars).
 	escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
 	selectedBead := a.Detail.SelectedBead()
-	cmd := fmt.Sprintf("%s --workdir '%s'", ralphPath, escapedWorkdir)
 
-	// Always run agents in parallel with generous limits
-	// Note: --max-parallel must be > 1 for worktrees and merges to work
-	cmd += " --max-parallel 10"
-
+	// --bead is required for ralph - if no bead selected, pick the first open one
+	var beadID string
 	if selectedBead != nil {
-		escapedBead := strings.ReplaceAll(selectedBead.ID, "'", `'\''`)
-		// Use --bead flag for both regular beads and epics
-		// (epics are handled by filtering ready beads by parent)
-		cmd += fmt.Sprintf(" --bead '%s'", escapedBead)
+		beadID = selectedBead.ID
+	} else if len(r.Beads) > 0 {
+		beadID = r.Beads[0].ID
 	}
-	cmd += "\n"
+
+	if beadID == "" {
+		a.Status = "No bead to work on"
+		a.StatusIsError = true
+		return a, nil
+	}
+
+	escapedBead := strings.ReplaceAll(beadID, "'", `'\''`)
+	cmd := fmt.Sprintf("%s --workdir '%s' --bead '%s'\n", ralphPath, escapedWorkdir, escapedBead)
 	if err := tmux.SendKeys(paneID, cmd); err != nil {
 		a.Status = fmt.Sprintf("Ralph launch: %v", err)
 		a.StatusIsError = true
