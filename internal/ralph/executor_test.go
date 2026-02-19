@@ -608,16 +608,25 @@ func TestParseToolEvent_NewFormatEmptyToolCall(t *testing.T) {
 }
 
 func TestParseToolEvent_NewFormatUnrecognizedToolType(t *testing.T) {
-	jsonLine := `{"type":"tool_call","subtype":"started","tool_call":{"unknownToolCall":{"args":{}}}}`
+	jsonLine := `{"type":"tool_call","subtype":"started","tool_call":{"unknownToolCall":{"args":{"foo":"bar"}}}}`
 	event, err := ParseToolEvent(jsonLine)
-	if err == nil {
-		t.Error("ParseToolEvent should return error for unrecognized tool type")
+	if err != nil {
+		t.Errorf("ParseToolEvent should handle unrecognized tool types gracefully, got error: %v", err)
 	}
-	if event != nil {
-		t.Errorf("ParseToolEvent returned %+v, want nil", event)
+	if event == nil {
+		t.Fatal("ParseToolEvent returned nil event for unrecognized tool type")
 	}
-	if err != nil && !strings.Contains(err.Error(), "unrecognized") {
-		t.Errorf("Error message should mention unrecognized tool type, got: %v", err)
+	// Should extract name from the tool call type (unknownToolCall -> Unknown)
+	if event.Name != "Unknown" {
+		t.Errorf("Expected name 'Unknown', got %q", event.Name)
+	}
+	// Should mark as unrecognized
+	if event.Attributes["_unrecognized"] != "true" {
+		t.Error("Expected _unrecognized attribute to be 'true'")
+	}
+	// Should still extract args
+	if event.Attributes["foo"] != "bar" {
+		t.Errorf("Expected foo='bar', got %q", event.Attributes["foo"])
 	}
 }
 
