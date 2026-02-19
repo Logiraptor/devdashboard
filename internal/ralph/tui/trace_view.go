@@ -217,20 +217,26 @@ func (v *TraceViewModel) renderTool(span *trace.Span, prefix string, isLast bool
 	// Tool name and key attribute
 	toolName := span.Name
 	detail := ""
-	switch toolName {
-	case "read", "edit", "write":
-		if path, ok := span.Attributes["file_path"]; ok {
-			detail = shortenPath(path)
-		}
-	case "shell":
-		if cmd, ok := span.Attributes["command"]; ok {
-			detail = truncateCmd(cmd, maxDetail)
-		}
-	case "search", "grep":
-		if q, ok := span.Attributes["query"]; ok {
-			detail = truncate(q, maxDetail)
-		} else if p, ok := span.Attributes["pattern"]; ok {
-			detail = truncate(p, maxDetail)
+
+	// Check if this is an unrecognized tool type
+	if _, unrecognized := span.Attributes["_unrecognized"]; unrecognized {
+		detail = "<unknown>"
+	} else {
+		switch toolName {
+		case "read", "edit", "write":
+			if path, ok := span.Attributes["file_path"]; ok {
+				detail = shortenPath(path)
+			}
+		case "shell":
+			if cmd, ok := span.Attributes["command"]; ok {
+				detail = truncateCmd(cmd, maxDetail)
+			}
+		case "search", "grep":
+			if q, ok := span.Attributes["query"]; ok {
+				detail = truncate(q, maxDetail)
+			} else if p, ok := span.Attributes["pattern"]; ok {
+				detail = truncate(p, maxDetail)
+			}
 		}
 	}
 

@@ -302,29 +302,8 @@ func validateToolEventTyped(raw *toolEventRaw, eventMap map[string]interface{}) 
 		if len(raw.ToolCall) == 0 {
 			return fmt.Errorf("tool_call event 'tool_call' object is empty: expected one typed tool call (e.g., shellToolCall, readToolCall)")
 		}
-
-		// Check for at least one recognized tool call type
-		recognizedTypes := []string{
-			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
-			"strReplaceToolCall", "grepToolCall", "globToolCall",
-			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
-			"todoWriteToolCall", "updateTodosToolCall", "readLintsToolCall",
-		}
-		found := false
-		for _, toolType := range recognizedTypes {
-			if _, ok := raw.ToolCall[toolType]; ok {
-				found = true
-				break
-			}
-		}
-		if !found {
-			// List available keys for better error message
-			keys := make([]string, 0, len(raw.ToolCall))
-			for k := range raw.ToolCall {
-				keys = append(keys, k)
-			}
-			return fmt.Errorf("tool_call event 'tool_call' object contains unrecognized tool type: found %v, expected one of %v", keys, recognizedTypes)
-		}
+		// Unrecognized tool types are handled gracefully by parseNewToolCallFormatTyped
+		// which will extract a name from any *ToolCall key
 	} else if hasName {
 		// Legacy format: name is present, which is sufficient
 		// Arguments are optional in legacy format
@@ -380,29 +359,8 @@ func validateToolEvent(event map[string]interface{}) error {
 		if len(toolCall) == 0 {
 			return fmt.Errorf("tool_call event 'tool_call' object is empty: expected one typed tool call (e.g., shellToolCall, readToolCall)")
 		}
-
-		// Check for at least one recognized tool call type
-		recognizedTypes := []string{
-			"shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
-			"strReplaceToolCall", "grepToolCall", "globToolCall",
-			"semanticSearchToolCall", "deleteToolCall", "webFetchToolCall",
-			"todoWriteToolCall", "updateTodosToolCall", "readLintsToolCall",
-		}
-		found := false
-		for _, toolType := range recognizedTypes {
-			if _, ok := toolCall[toolType]; ok {
-				found = true
-				break
-			}
-		}
-		if !found {
-			// List available keys for better error message
-			keys := make([]string, 0, len(toolCall))
-			for k := range toolCall {
-				keys = append(keys, k)
-			}
-			return fmt.Errorf("tool_call event 'tool_call' object contains unrecognized tool type: found %v, expected one of %v", keys, recognizedTypes)
-		}
+		// Unrecognized tool types are handled gracefully by parseNewToolCallFormatTyped
+		// which will extract a name from any *ToolCall key
 	} else if hasName {
 		// Legacy format: name is present, which is sufficient
 		// Arguments are optional in legacy format
@@ -443,6 +401,28 @@ func parseNewToolCallFormatTyped(toolCall map[string]interface{}) (string, map[s
 				attrs = extractArgsAsAttrs(args)
 			}
 			return canonicalName, attrs
+		}
+	}
+
+	// Handle unrecognized tool types gracefully - extract the tool type name
+	// and any args we can find, so the TUI can show a placeholder
+	for toolType, toolData := range toolCall {
+		if strings.HasSuffix(toolType, "ToolCall") {
+			// Extract a readable name from the tool type (e.g., "semSearchToolCall" -> "SemSearch")
+			name := strings.TrimSuffix(toolType, "ToolCall")
+			// Capitalize first letter
+			if len(name) > 0 {
+				name = strings.ToUpper(name[:1]) + name[1:]
+			}
+			attrs["_unrecognized"] = "true"
+			// Try to extract args if available
+			if data, ok := toolData.(map[string]interface{}); ok {
+				if args, ok := data["args"].(map[string]interface{}); ok {
+					attrs = extractArgsAsAttrs(args)
+					attrs["_unrecognized"] = "true"
+				}
+			}
+			return name, attrs
 		}
 	}
 
