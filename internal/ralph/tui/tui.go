@@ -169,7 +169,7 @@ func Run(ctx context.Context, core *ralph.Core, additionalObserver ralph.Progres
 	m.cancel = cancel
 
 	// Create program
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	m.program = p
 
 	// Set up observer to forward events to TUI
