@@ -281,6 +281,18 @@ func truncate(s string, max int) string {
 	return s
 }
 
+func truncateCmd(cmd string, max int) string {
+	// Replace newlines with spaces for display
+	cmd = strings.ReplaceAll(cmd, "\n", " ")
+	cmd = strings.ReplaceAll(cmd, "\t", " ")
+	// Collapse multiple spaces
+	for strings.Contains(cmd, "  ") {
+		cmd = strings.ReplaceAll(cmd, "  ", " ")
+	}
+	cmd = strings.TrimSpace(cmd)
+	return truncate(cmd, max)
+}
+
 func parseOutcome(s string) ralph.Outcome {
 	switch s {
 	case "success":

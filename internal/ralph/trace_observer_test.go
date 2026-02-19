@@ -69,11 +69,9 @@ func TestTracingObserver_FullLifecycle(t *testing.T) {
 
 	// End loop
 	coreResult := &CoreResult{
-		Succeeded: 1,
-		Failed:    0,
-		Questions: 0,
-		TimedOut:  0,
-		Duration:  10 * time.Second,
+		Outcome:    OutcomeSuccess,
+		Iterations: 1,
+		Duration:   10 * time.Second,
 	}
 	obs.OnLoopEnd(coreResult)
 
@@ -108,7 +106,7 @@ func TestTracingObserver_MultipleIterations(t *testing.T) {
 		t.Errorf("iterNum = %d, want 2", obs.iterNum)
 	}
 
-	obs.OnLoopEnd(&CoreResult{Succeeded: 1, Failed: 1})
+	obs.OnLoopEnd(&CoreResult{Outcome: OutcomeFailure, Iterations: 2})
 }
 
 func TestTracingObserver_ToolWithoutIteration(t *testing.T) {

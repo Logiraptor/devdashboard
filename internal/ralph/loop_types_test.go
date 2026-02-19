@@ -12,15 +12,33 @@ func TestStopReason_String(t *testing.T) {
 	}{
 		{StopNormal, "normal"},
 		{StopMaxIterations, "max-iterations"},
-		{StopConsecutiveFails, "consecutive-failures"},
-		{StopWallClock, "wall-clock-timeout"},
 		{StopContextCancelled, "context-cancelled"},
-		{StopAllBeadsSkipped, "all-beads-skipped"},
+		{StopQuestion, "question"},
+		{StopTimeout, "timeout"},
 		{StopReason(99), "unknown"},
 	}
 	for _, tt := range tests {
 		if got := tt.reason.String(); got != tt.want {
 			t.Errorf("StopReason(%d).String() = %q, want %q", tt.reason, got, tt.want)
+		}
+	}
+}
+
+func TestStopReason_ExitCode(t *testing.T) {
+	tests := []struct {
+		reason StopReason
+		want   int
+	}{
+		{StopNormal, 0},
+		{StopMaxIterations, 2},
+		{StopQuestion, 3},
+		{StopTimeout, 4},
+		{StopContextCancelled, 5},
+		{StopReason(99), 1},
+	}
+	for _, tt := range tests {
+		if got := tt.reason.ExitCode(); got != tt.want {
+			t.Errorf("StopReason(%d).ExitCode() = %d, want %d", tt.reason, got, tt.want)
 		}
 	}
 }
@@ -32,10 +50,9 @@ func TestMarshalStopReason(t *testing.T) {
 	}{
 		{StopNormal, `"normal"`},
 		{StopMaxIterations, `"max-iterations"`},
-		{StopConsecutiveFails, `"consecutive-failures"`},
-		{StopWallClock, `"wall-clock-timeout"`},
 		{StopContextCancelled, `"context-cancelled"`},
-		{StopAllBeadsSkipped, `"all-beads-skipped"`},
+		{StopQuestion, `"question"`},
+		{StopTimeout, `"timeout"`},
 	}
 	for _, tt := range tests {
 		got, err := json.Marshal(tt.reason)
@@ -56,10 +73,9 @@ func TestUnmarshalStopReason(t *testing.T) {
 	}{
 		{`"normal"`, StopNormal},
 		{`"max-iterations"`, StopMaxIterations},
-		{`"consecutive-failures"`, StopConsecutiveFails},
-		{`"wall-clock-timeout"`, StopWallClock},
 		{`"context-cancelled"`, StopContextCancelled},
-		{`"all-beads-skipped"`, StopAllBeadsSkipped},
+		{`"question"`, StopQuestion},
+		{`"timeout"`, StopTimeout},
 	}
 	for _, tt := range tests {
 		var got StopReason
@@ -94,10 +110,9 @@ func TestMarshalUnmarshalStopReason_RoundTrip(t *testing.T) {
 	tests := []StopReason{
 		StopNormal,
 		StopMaxIterations,
-		StopConsecutiveFails,
-		StopWallClock,
 		StopContextCancelled,
-		StopAllBeadsSkipped,
+		StopQuestion,
+		StopTimeout,
 	}
 	for _, want := range tests {
 		data, err := json.Marshal(want)

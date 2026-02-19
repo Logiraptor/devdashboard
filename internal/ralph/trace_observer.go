@@ -139,11 +139,9 @@ func (o *TracingObserver) OnLoopEnd(result *CoreResult) {
 	}
 
 	attrs := map[string]string{
-		"succeeded": fmt.Sprintf("%d", result.Succeeded),
-		"failed":    fmt.Sprintf("%d", result.Failed),
-		"questions": fmt.Sprintf("%d", result.Questions),
-		"timed_out": fmt.Sprintf("%d", result.TimedOut),
-		"duration":  FormatDuration(result.Duration),
+		"outcome":    result.Outcome.String(),
+		"iterations": fmt.Sprintf("%d", result.Iterations),
+		"duration":   FormatDuration(result.Duration),
 	}
 
 	event := trace.TraceEvent{
@@ -160,6 +158,11 @@ func (o *TracingObserver) OnLoopEnd(result *CoreResult) {
 
 	o.traceID = ""
 	o.loopSpanID = ""
+}
+
+// OnIterationStart is called when an iteration begins.
+func (o *TracingObserver) OnIterationStart(iteration int) {
+	// Iteration tracking is handled via OnBeadStart for backward compatibility
 }
 
 // OnToolStart begins a tool call span.

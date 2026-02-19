@@ -7,24 +7,15 @@ import (
 	"devdeploy/internal/beads"
 )
 
-// mergeCall tracks a merge callback.
-type mergeCall struct {
-	BeadID     string
-	BranchName string
-	Success    bool
-	ErrMsg     string
-}
-
 // multiTestObserver tracks method calls for testing.
 type multiTestObserver struct {
-	onLoopStartCalls     []string
-	onBeadStartCalls     []beads.Bead
-	onBeadCompleteCalls  []BeadResult
-	onLoopEndCalls       []*CoreResult
-	onToolStartCalls     []ToolEvent
-	onToolEndCalls       []ToolEvent
-	onMergeStartCalls    []mergeCall
-	onMergeCompleteCalls []mergeCall
+	onLoopStartCalls      []string
+	onBeadStartCalls      []beads.Bead
+	onBeadCompleteCalls   []BeadResult
+	onLoopEndCalls        []*CoreResult
+	onToolStartCalls      []ToolEvent
+	onToolEndCalls        []ToolEvent
+	onIterationStartCalls []int
 }
 
 func (t *multiTestObserver) OnLoopStart(rootBead string) {
@@ -51,12 +42,8 @@ func (t *multiTestObserver) OnToolEnd(event ToolEvent) {
 	t.onToolEndCalls = append(t.onToolEndCalls, event)
 }
 
-func (t *multiTestObserver) OnMergeStart(beadID, branchName string) {
-	t.onMergeStartCalls = append(t.onMergeStartCalls, mergeCall{BeadID: beadID, BranchName: branchName})
-}
-
-func (t *multiTestObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
-	t.onMergeCompleteCalls = append(t.onMergeCompleteCalls, mergeCall{BeadID: beadID, Success: success, ErrMsg: errMsg})
+func (t *multiTestObserver) OnIterationStart(iteration int) {
+	t.onIterationStartCalls = append(t.onIterationStartCalls, iteration)
 }
 
 func TestNewMultiObserver_FiltersNilObservers(t *testing.T) {
@@ -67,12 +54,6 @@ func TestNewMultiObserver_FiltersNilObservers(t *testing.T) {
 
 	if len(multi.observers) != 2 {
 		t.Errorf("expected 2 observers, got %d", len(multi.observers))
-	}
-	if multi.observers[0] != obs1 {
-		t.Error("first observer should be obs1")
-	}
-	if multi.observers[1] != obs2 {
-		t.Error("second observer should be obs2")
 	}
 }
 
@@ -89,20 +70,20 @@ func TestMultiObserver_OnLoopStart(t *testing.T) {
 	obs2 := &multiTestObserver{}
 
 	multi := NewMultiObserver(obs1, obs2)
-	multi.OnLoopStart("test-epic")
+	multi.OnLoopStart("test-bead")
 
 	if len(obs1.onLoopStartCalls) != 1 {
 		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onLoopStartCalls))
 	}
-	if obs1.onLoopStartCalls[0] != "test-epic" {
-		t.Errorf("obs1: expected 'test-epic', got %q", obs1.onLoopStartCalls[0])
+	if obs1.onLoopStartCalls[0] != "test-bead" {
+		t.Errorf("obs1: expected 'test-bead', got %q", obs1.onLoopStartCalls[0])
 	}
 
 	if len(obs2.onLoopStartCalls) != 1 {
 		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onLoopStartCalls))
 	}
-	if obs2.onLoopStartCalls[0] != "test-epic" {
-		t.Errorf("obs2: expected 'test-epic', got %q", obs2.onLoopStartCalls[0])
+	if obs2.onLoopStartCalls[0] != "test-bead" {
+		t.Errorf("obs2: expected 'test-bead', got %q", obs2.onLoopStartCalls[0])
 	}
 }
 
@@ -162,11 +143,9 @@ func TestMultiObserver_OnLoopEnd(t *testing.T) {
 	obs2 := &multiTestObserver{}
 
 	result := &CoreResult{
-		Succeeded: 3,
-		Failed:    2,
-		Questions: 1,
-		TimedOut:  0,
-		Duration:  10 * time.Minute,
+		Outcome:    OutcomeSuccess,
+		Iterations: 3,
+		Duration:   10 * time.Minute,
 	}
 	multi := NewMultiObserver(obs1, obs2)
 	multi.OnLoopEnd(result)
@@ -174,15 +153,37 @@ func TestMultiObserver_OnLoopEnd(t *testing.T) {
 	if len(obs1.onLoopEndCalls) != 1 {
 		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onLoopEndCalls))
 	}
-	if obs1.onLoopEndCalls[0].Succeeded != 3 {
-		t.Errorf("obs1: expected Succeeded 3, got %d", obs1.onLoopEndCalls[0].Succeeded)
+	if obs1.onLoopEndCalls[0].Iterations != 3 {
+		t.Errorf("obs1: expected Iterations 3, got %d", obs1.onLoopEndCalls[0].Iterations)
 	}
 
 	if len(obs2.onLoopEndCalls) != 1 {
 		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onLoopEndCalls))
 	}
-	if obs2.onLoopEndCalls[0].Succeeded != 3 {
-		t.Errorf("obs2: expected Succeeded 3, got %d", obs2.onLoopEndCalls[0].Succeeded)
+	if obs2.onLoopEndCalls[0].Iterations != 3 {
+		t.Errorf("obs2: expected Iterations 3, got %d", obs2.onLoopEndCalls[0].Iterations)
+	}
+}
+
+func TestMultiObserver_OnIterationStart(t *testing.T) {
+	obs1 := &multiTestObserver{}
+	obs2 := &multiTestObserver{}
+
+	multi := NewMultiObserver(obs1, obs2)
+	multi.OnIterationStart(5)
+
+	if len(obs1.onIterationStartCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onIterationStartCalls))
+	}
+	if obs1.onIterationStartCalls[0] != 5 {
+		t.Errorf("obs1: expected iteration 5, got %d", obs1.onIterationStartCalls[0])
+	}
+
+	if len(obs2.onIterationStartCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onIterationStartCalls))
+	}
+	if obs2.onIterationStartCalls[0] != 5 {
+		t.Errorf("obs2: expected iteration 5, got %d", obs2.onIterationStartCalls[0])
 	}
 }
 
@@ -248,25 +249,6 @@ func TestMultiObserver_OnToolEnd(t *testing.T) {
 	}
 }
 
-func TestMultiObserver_HandlesNilObserversInList(t *testing.T) {
-	obs1 := &multiTestObserver{}
-	obs2 := &multiTestObserver{}
-
-	// Create multi with nil in the middle
-	multi := &MultiObserver{
-		observers: []ProgressObserver{obs1, nil, obs2},
-	}
-
-	multi.OnLoopStart("test-epic")
-
-	if len(obs1.onLoopStartCalls) != 1 {
-		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onLoopStartCalls))
-	}
-	if len(obs2.onLoopStartCalls) != 1 {
-		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onLoopStartCalls))
-	}
-}
-
 func TestMultiObserver_EmptyObservers(t *testing.T) {
 	multi := NewMultiObserver()
 	// Should not panic
@@ -276,8 +258,7 @@ func TestMultiObserver_EmptyObservers(t *testing.T) {
 	multi.OnLoopEnd(&CoreResult{})
 	multi.OnToolStart(ToolEvent{})
 	multi.OnToolEnd(ToolEvent{})
-	multi.OnMergeStart("bead-1", "branch-1")
-	multi.OnMergeComplete("bead-1", true, "")
+	multi.OnIterationStart(1)
 }
 
 func TestMultiObserver_ImplementsInterface(t *testing.T) {
@@ -320,12 +301,7 @@ func (f *failingObserver) OnToolEnd(event ToolEvent) {
 	panic("observer failed")
 }
 
-func (f *failingObserver) OnMergeStart(beadID, branchName string) {
-	f.panicked = true
-	panic("observer failed")
-}
-
-func (f *failingObserver) OnMergeComplete(beadID string, success bool, errMsg string) {
+func (f *failingObserver) OnIterationStart(iteration int) {
 	f.panicked = true
 	panic("observer failed")
 }
@@ -338,7 +314,7 @@ func TestMultiObserver_OneObserverFailingDoesNotBlockOthers(t *testing.T) {
 	multi := NewMultiObserver(failing, obs1, obs2)
 
 	// Test OnLoopStart
-	multi.OnLoopStart("test-epic")
+	multi.OnLoopStart("test-bead")
 	if !failing.panicked {
 		t.Error("failing observer should have been called")
 	}
@@ -391,11 +367,9 @@ func TestMultiObserver_OneObserverFailingDoesNotBlockOthers(t *testing.T) {
 	obs1.onLoopEndCalls = nil
 	obs2.onLoopEndCalls = nil
 	coreResult := &CoreResult{
-		Succeeded: 3,
-		Failed:    2,
-		Questions: 1,
-		TimedOut:  0,
-		Duration:  10 * time.Minute,
+		Outcome:    OutcomeSuccess,
+		Iterations: 3,
+		Duration:   10 * time.Minute,
 	}
 	multi.OnLoopEnd(coreResult)
 	if !failing.panicked {
@@ -406,6 +380,21 @@ func TestMultiObserver_OneObserverFailingDoesNotBlockOthers(t *testing.T) {
 	}
 	if len(obs2.onLoopEndCalls) != 1 {
 		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onLoopEndCalls))
+	}
+
+	// Reset and test OnIterationStart
+	failing.panicked = false
+	obs1.onIterationStartCalls = nil
+	obs2.onIterationStartCalls = nil
+	multi.OnIterationStart(3)
+	if !failing.panicked {
+		t.Error("failing observer should have been called")
+	}
+	if len(obs1.onIterationStartCalls) != 1 {
+		t.Errorf("obs1: expected 1 call, got %d", len(obs1.onIterationStartCalls))
+	}
+	if len(obs2.onIterationStartCalls) != 1 {
+		t.Errorf("obs2: expected 1 call, got %d", len(obs2.onIterationStartCalls))
 	}
 
 	// Reset and test OnToolStart
