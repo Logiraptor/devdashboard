@@ -79,13 +79,19 @@ func TestModel_HandleToolEvent(t *testing.T) {
 
 	// Tool start
 	startMsg := toolEventMsg{
-		Event:   ralph.ToolEvent{Name: "Read"},
+		Event:   ralph.ToolEvent{Name: "Read", Timestamp: time.Now()},
 		Started: true,
 	}
 	newModel, _ := model.Update(startMsg)
 	m := newModel.(*Model)
-	if m.currentTool != "Read" {
-		t.Errorf("currentTool should be 'Read', got %q", m.currentTool)
+	if len(m.toolEvents) != 1 {
+		t.Fatalf("toolEvents should have 1 event, got %d", len(m.toolEvents))
+	}
+	if m.toolEvents[0].Name != "Read" {
+		t.Errorf("toolEvents[0].Name should be 'Read', got %q", m.toolEvents[0].Name)
+	}
+	if m.toolEvents[0].Completed {
+		t.Error("toolEvents[0].Completed should be false")
 	}
 
 	// Tool end
@@ -95,8 +101,11 @@ func TestModel_HandleToolEvent(t *testing.T) {
 	}
 	newModel, _ = m.Update(endMsg)
 	m = newModel.(*Model)
-	if m.currentTool != "" {
-		t.Errorf("currentTool should be empty after tool end, got %q", m.currentTool)
+	if len(m.toolEvents) != 1 {
+		t.Fatalf("toolEvents should still have 1 event, got %d", len(m.toolEvents))
+	}
+	if !m.toolEvents[0].Completed {
+		t.Error("toolEvents[0].Completed should be true after tool end")
 	}
 }
 
