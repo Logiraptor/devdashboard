@@ -12,7 +12,20 @@ import (
 	"devdeploy/internal/ralph"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// MaxToolEvents is the number of recent tool events to display
+const MaxToolEvents = 6
+
+// ToolEventDisplay represents a tool event for display
+type ToolEventDisplay struct {
+	Name      string
+	Detail    string
+	Started   time.Time
+	Duration  time.Duration
+	Completed bool
+}
 
 // Model is the Bubble Tea model for ralph TUI.
 type Model struct {
@@ -27,10 +40,9 @@ type Model struct {
 	beadTitle string
 
 	// Iteration tracking
-	iteration    int
-	maxIter      int
-	currentTool  string
-	toolStart    time.Time
+	iteration  int
+	maxIter    int
+	toolEvents []ToolEventDisplay // Ring buffer of recent tool events
 
 	// State
 	loopStarted bool
@@ -134,9 +146,10 @@ func NewModel(core *ralph.Core) *Model {
 		maxIter = ralph.DefaultMaxIterations
 	}
 	return &Model{
-		core:    core,
-		styles:  DefaultStyles(),
-		maxIter: maxIter,
+		core:       core,
+		styles:     DefaultStyles(),
+		maxIter:    maxIter,
+		toolEvents: make([]ToolEventDisplay, 0, MaxToolEvents+1),
 	}
 }
 
@@ -245,23 +258,38 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case iterationStartMsg:
 		m.mu.Lock()
 		m.iteration = msg.Iteration + 1 // Convert to 1-based
-		m.currentTool = ""
+		m.toolEvents = m.toolEvents[:0]  // Clear tool events for new iteration
 		m.mu.Unlock()
 
 	case toolEventMsg:
 		m.mu.Lock()
 		if msg.Started {
-			m.currentTool = msg.Event.Name
-			m.toolStart = msg.Event.Timestamp
-		} else if m.currentTool == msg.Event.Name {
-			m.currentTool = ""
+			// Add new tool event
+			event := ToolEventDisplay{
+				Name:    msg.Event.Name,
+				Detail:  extractToolDetail(msg.Event.Name, msg.Event.Attributes),
+				Started: msg.Event.Timestamp,
+			}
+			m.toolEvents = append(m.toolEvents, event)
+			// Keep only the last MaxToolEvents
+			if len(m.toolEvents) > MaxToolEvents {
+				m.toolEvents = m.toolEvents[len(m.toolEvents)-MaxToolEvents:]
+			}
+		} else {
+			// Mark tool as completed by finding it in the list
+			for i := len(m.toolEvents) - 1; i >= 0; i-- {
+				if m.toolEvents[i].Name == msg.Event.Name && !m.toolEvents[i].Completed {
+					m.toolEvents[i].Completed = true
+					m.toolEvents[i].Duration = time.Since(m.toolEvents[i].Started)
+					break
+				}
+			}
 		}
 		m.mu.Unlock()
 
 	case beadCompleteMsg:
 		m.mu.Lock()
 		m.outcome = msg.Result.Outcome
-		m.currentTool = ""
 		m.mu.Unlock()
 
 	case loopEndMsg:
@@ -311,7 +339,8 @@ func (m *Model) View() string {
 	beadTitle := m.beadTitle
 	iteration := m.iteration
 	maxIter := m.maxIter
-	currentTool := m.currentTool
+	toolEvents := make([]ToolEventDisplay, len(m.toolEvents))
+	copy(toolEvents, m.toolEvents)
 	loopStarted := m.loopStarted
 	loopDone := m.loopDone
 	duration := m.duration
@@ -330,11 +359,26 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	}
 
-	// Current tool
-	if currentTool != "" {
-		toolText := "⚙ " + currentTool
-		b.WriteString(m.styles.ToolName.Render(toolText))
-		b.WriteString("\n")
+	// Recent tool events
+	if len(toolEvents) > 0 {
+		for _, event := range toolEvents {
+			var icon, durStr string
+			var style lipgloss.Style
+			if event.Completed {
+				icon = "✓"
+				style = m.styles.Success
+				durStr = " " + m.styles.Duration.Render(ralph.FormatDuration(event.Duration))
+			} else {
+				icon = "⚙"
+				style = m.styles.ToolName
+			}
+			line := style.Render(icon+" "+event.Name)
+			if event.Detail != "" {
+				line += " " + m.styles.Muted.Render(event.Detail)
+			}
+			line += durStr
+			b.WriteString(line + "\n")
+		}
 	}
 
 	b.WriteString("\n")
@@ -376,4 +420,44 @@ func (m *Model) View() string {
 	}
 
 	return b.String()
+}
+
+// extractToolDetail extracts a display-friendly detail from tool attributes.
+// Uses shortenPath and truncate from trace_view.go.
+func extractToolDetail(toolName string, attrs map[string]string) string {
+	switch toolName {
+	case "Read", "read":
+		if path, ok := attrs["file_path"]; ok {
+			return shortenPath(path)
+		}
+		if path, ok := attrs["path"]; ok {
+			return shortenPath(path)
+		}
+	case "Write", "write", "StrReplace", "edit":
+		if path, ok := attrs["file_path"]; ok {
+			return shortenPath(path)
+		}
+		if path, ok := attrs["path"]; ok {
+			return shortenPath(path)
+		}
+	case "Shell", "shell", "Bash":
+		if cmd, ok := attrs["command"]; ok {
+			return truncateCmd(cmd, 50)
+		}
+	case "Grep", "grep", "SemanticSearch", "search":
+		if q, ok := attrs["query"]; ok {
+			return truncate(q, 40)
+		}
+		if p, ok := attrs["pattern"]; ok {
+			return truncate(p, 40)
+		}
+	case "Glob", "glob":
+		if p, ok := attrs["glob_pattern"]; ok {
+			return p
+		}
+		if p, ok := attrs["pattern"]; ok {
+			return p
+		}
+	}
+	return ""
 }
