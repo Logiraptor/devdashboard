@@ -142,6 +142,7 @@ func TestFetchPromptData_Success(t *testing.T) {
 			Title:       "Fetched bead",
 			Description: "Full description from bd show.",
 		},
+		IssueType: "task",
 	})
 
 	got, err := FetchPromptData(runner, "/fake", "fetch-1")
@@ -157,6 +158,9 @@ func TestFetchPromptData_Success(t *testing.T) {
 	}
 	if got.Description != "Full description from bd show." {
 		t.Errorf("Description = %q, want %q", got.Description, "Full description from bd show.")
+	}
+	if got.IssueType != "task" {
+		t.Errorf("IssueType = %q, want %q", got.IssueType, "task")
 	}
 }
 
@@ -197,6 +201,7 @@ func TestRenderPrompt_IDAppearsMultipleTimes(t *testing.T) {
 		ID:          "repeat-42",
 		Title:       "Test",
 		Description: "Desc",
+		IssueType:   "task",
 	}
 
 	got, err := RenderPrompt(data)
@@ -208,5 +213,69 @@ func TestRenderPrompt_IDAppearsMultipleTimes(t *testing.T) {
 	// At minimum: header, claim, close, parent, dep add = 5 occurrences
 	if count < 5 {
 		t.Errorf("expected bead ID to appear at least 5 times, got %d", count)
+	}
+}
+
+func TestRenderPrompt_EpicUsesEpicTemplate(t *testing.T) {
+	data := &PromptData{
+		ID:          "epic-1",
+		Title:       "Epic Title",
+		Description: "Epic description",
+		IssueType:   "epic",
+	}
+
+	got, err := RenderPrompt(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Epic template should include epic-specific instructions
+	checks := []struct {
+		name   string
+		substr string
+	}{
+		{"epic header", "epic epic-1"},
+		{"children instruction", "bd ready --parent epic-1"},
+		{"close children first", "close each child"},
+		{"epic completion rules", "Never close an epic with open children"},
+		{"check children before closing", "bd ready --parent epic-1"},
+	}
+
+	for _, c := range checks {
+		if !strings.Contains(got, c.substr) {
+			t.Errorf("epic prompt missing %s (expected substring %q)", c.name, c.substr)
+		}
+	}
+
+	// Should NOT include regular bead instructions that don't apply to epics
+	if strings.Contains(got, "Only close THIS bead when its specific work is complete") {
+		t.Error("epic prompt should not include regular bead completion instruction")
+	}
+}
+
+func TestRenderPrompt_RegularBeadUsesRegularTemplate(t *testing.T) {
+	data := &PromptData{
+		ID:          "task-1",
+		Title:       "Task Title",
+		Description: "Task description",
+		IssueType:   "task",
+	}
+
+	got, err := RenderPrompt(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Regular template should NOT include epic-specific instructions
+	if strings.Contains(got, "bd ready --parent") {
+		t.Error("regular prompt should not include epic parent-child instructions")
+	}
+	if strings.Contains(got, "Never close an epic with open children") {
+		t.Error("regular prompt should not include epic completion rules")
+	}
+
+	// Should include regular bead instructions
+	if !strings.Contains(got, "bd close task-1") {
+		t.Error("regular prompt should include close instruction")
 	}
 }
