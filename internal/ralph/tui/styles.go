@@ -3,18 +3,9 @@ package tui
 
 import (
 	"devdeploy/internal/ralph"
+	"devdeploy/internal/ui"
 
 	"github.com/charmbracelet/lipgloss"
-)
-
-// Color constants
-const (
-	ColorPrimary   = "39"  // Blue
-	ColorSuccess   = "42"  // Green
-	ColorWarning   = "214" // Orange
-	ColorError     = "196" // Red
-	ColorMuted     = "245" // Gray
-	ColorHighlight = "212" // Pink
 )
 
 // Styles contains all styles for ralph TUI
@@ -34,35 +25,36 @@ type Styles struct {
 }
 
 // DefaultStyles returns the default ralph styles
+// Uses unified color palette from ui package
 func DefaultStyles() Styles {
 	return Styles{
 		Title: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorPrimary)),
+			Foreground(lipgloss.Color(ui.ColorAccent)),
 		Subtitle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorHighlight)),
+			Foreground(lipgloss.Color(ui.ColorHighlight)),
 		Status: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted)),
+			Foreground(lipgloss.Color(ui.ColorMuted)),
 		Success: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorSuccess)),
+			Foreground(lipgloss.Color(ui.ColorSuccess)),
 		Error: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorError)),
+			Foreground(lipgloss.Color(ui.ColorDanger)),
 		Warning: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorWarning)),
+			Foreground(lipgloss.Color(ui.ColorWarning)),
 		Muted: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted)),
+			Foreground(lipgloss.Color(ui.ColorMuted)),
 		TreeBranch: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted)),
+			Foreground(lipgloss.Color(ui.ColorMuted)),
 		BeadID: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorPrimary)),
+			Foreground(lipgloss.Color(ui.ColorAccent)),
 		Duration: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted)),
+			Foreground(lipgloss.Color(ui.ColorMuted)),
 		ToolName: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorHighlight)),
+			Foreground(lipgloss.Color(ui.ColorHighlight)),
 		Border: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(ColorMuted)),
+			BorderForeground(lipgloss.Color(ui.ColorMuted)),
 	}
 }
 

@@ -10,6 +10,7 @@ const (
 	ColorAccent    = "86"  // Cyan/green - for titles, highlights
 	ColorHighlight = "205" // Magenta - for selected items, borders
 	ColorDanger    = "196" // Red - for warnings, errors
+	ColorSuccess   = "42"  // Green - for success indicators
 	ColorMuted     = "241" // Gray - for dimmed text, hints
 	ColorText      = "252" // Light gray - for normal text
 	ColorDim       = "243" // Darker gray - for very dim text

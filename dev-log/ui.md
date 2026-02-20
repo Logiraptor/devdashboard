@@ -127,8 +127,10 @@ The artifact system (plan.md / design.md) was removed in 2026-02-08 (see `devdep
 
 ## Multi-Agent Parallel TUI
 
-**Status**: accepted  
-**Last updated**: 2026-02-16
+**Status**: deprecated  
+**Last updated**: 2026-02-19
+
+> **Note**: This section describes a component that was removed. Keeping for historical reference.
 
 The multi-agent parallel TUI displays multiple agent blocks simultaneously, allowing users to monitor concurrent agent activity across multiple beads.
 
