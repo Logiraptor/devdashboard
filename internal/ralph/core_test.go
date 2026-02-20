@@ -413,6 +413,8 @@ func TestNoopObserver(t *testing.T) {
 	obs.OnToolStart(ToolEvent{})
 	obs.OnToolEnd(ToolEvent{})
 	obs.OnIterationStart(0)
+	obs.OnVerifyStart("test")
+	obs.OnVerifyEnd(VerifyResult{})
 }
 
 func TestFormatDuration(t *testing.T) {
@@ -433,5 +435,167 @@ func TestFormatDuration(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("FormatDuration(%v) = %q, want %q", tt.d, got, tt.want)
 		}
+	}
+}
+
+func TestCore_Run_VerificationPassSuccess(t *testing.T) {
+	execute, _ := mockExecute()
+	
+	// Bead closes after first agent run
+	runBD := mockBDShowClosed("test-bead", 2)
+
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		EnableVerify:  true,
+		Output:        &out,
+		RunBD:         runBD,
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt for " + data.ID, nil
+		},
+		RenderVerify: func(data *PromptData) (string, error) {
+			return "verify prompt for " + data.ID, nil
+		},
+		Execute:  execute,
+		ExecuteVerify: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
+			return &AgentResult{
+				ExitCode: 0,
+				Duration: 50 * time.Millisecond,
+			}, nil
+		},
+		AssessFn: mockAssess(OutcomeSuccess),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Outcome != OutcomeSuccess {
+		t.Errorf("expected success outcome, got %v", result.Outcome)
+	}
+	if result.Iterations != 1 {
+		t.Errorf("expected 1 iteration, got %d", result.Iterations)
+	}
+	if result.VerifyIterations != 1 {
+		t.Errorf("expected 1 verification iteration, got %d", result.VerifyIterations)
+	}
+}
+
+func TestCore_Run_VerificationReopensBeadAndContinues(t *testing.T) {
+	execute, prompts := mockExecute()
+
+	// Track bd show calls to control bead state:
+	// - First bead is closed after call 2
+	// - Verification reopens it (call 3 returns open)
+	// - Then it closes again after call 4
+	bdCallCount := 0
+	runBD := func(dir string, args ...string) ([]byte, error) {
+		bdCallCount++
+		status := "open"
+		// First phase: bead closes after 2 calls
+		// Second phase: bead closes after 4 calls (reopened by verification)
+		if bdCallCount == 3 || bdCallCount == 4 {
+			status = "closed"
+		} else if bdCallCount > 4 {
+			status = "closed"
+		}
+		return json.Marshal([]bdShowReadyEntry{{
+			bdShowBase: bdShowBase{
+				ID:     "test-bead",
+				Title:  "Test Bead",
+				Status: status,
+			},
+			Priority:        2,
+			DependencyCount: 0,
+		}})
+	}
+
+	verifyCallCount := 0
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		EnableVerify:  true,
+		Output:        &out,
+		RunBD:         runBD,
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt", nil
+		},
+		RenderVerify: func(data *PromptData) (string, error) {
+			return "verify prompt", nil
+		},
+		Execute: execute,
+		ExecuteVerify: func(ctx context.Context, workDir, prompt string) (*AgentResult, error) {
+			verifyCallCount++
+			return &AgentResult{
+				ExitCode: 0,
+				Duration: 50 * time.Millisecond,
+			}, nil
+		},
+		AssessFn: mockAssess(OutcomeSuccess),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Outcome != OutcomeSuccess {
+		t.Errorf("expected success outcome, got %v", result.Outcome)
+	}
+	// Should have run at least 1 agent iteration
+	if len(*prompts) < 1 {
+		t.Errorf("expected at least 1 execute call, got %d", len(*prompts))
+	}
+	// Should have at least 1 verification pass
+	if result.VerifyIterations < 1 {
+		t.Errorf("expected at least 1 verification iteration, got %d", result.VerifyIterations)
+	}
+}
+
+func TestCore_Run_VerificationDisabled(t *testing.T) {
+	execute, _ := mockExecute()
+
+	// Bead closes after first iteration
+	runBD := mockBDShowClosed("test-bead", 2)
+
+	var out bytes.Buffer
+	core := &Core{
+		WorkDir:       "/tmp/test",
+		RootBead:      "test-bead",
+		MaxIterations: 10,
+		EnableVerify:  false, // Verification disabled
+		Output:        &out,
+		RunBD:         runBD,
+		FetchPrompt: func(runBD bd.Runner, workDir, beadID string) (*PromptData, error) {
+			return &PromptData{ID: beadID, Title: "Test Bead"}, nil
+		},
+		Render: func(data *PromptData) (string, error) {
+			return "mock prompt", nil
+		},
+		Execute:  execute,
+		AssessFn: mockAssess(OutcomeSuccess),
+	}
+
+	result, err := core.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Outcome != OutcomeSuccess {
+		t.Errorf("expected success outcome, got %v", result.Outcome)
+	}
+	if result.VerifyIterations != 0 {
+		t.Errorf("expected 0 verification iterations (disabled), got %d", result.VerifyIterations)
 	}
 }

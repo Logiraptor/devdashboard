@@ -45,6 +45,10 @@ type Model struct {
 	maxIter    int
 	toolEvents []ToolEventDisplay // Ring buffer of recent tool events
 
+	// Verification tracking
+	verifying        bool
+	verifyIterations int
+
 	// State
 	loopStarted bool
 	loopDone    bool
@@ -74,6 +78,8 @@ type (
 	loopErrorMsg       struct{ Err error }
 	durationTickMsg    struct{}
 	iterationStartMsg  struct{ Iteration int }
+	verifyStartMsg     struct{ BeadID string }
+	verifyEndMsg       struct{ Result ralph.VerifyResult }
 )
 
 // toolEventMsg wraps a tool event for the TUI
@@ -137,6 +143,20 @@ func (o *Observer) OnToolEnd(event ralph.ToolEvent) {
 func (o *Observer) OnIterationStart(iteration int) {
 	if o.program != nil {
 		o.program.Send(iterationStartMsg{Iteration: iteration})
+	}
+}
+
+// OnVerifyStart is called when verification phase begins.
+func (o *Observer) OnVerifyStart(beadID string) {
+	if o.program != nil {
+		o.program.Send(verifyStartMsg{BeadID: beadID})
+	}
+}
+
+// OnVerifyEnd is called when verification phase ends.
+func (o *Observer) OnVerifyEnd(result ralph.VerifyResult) {
+	if o.program != nil {
+		o.program.Send(verifyEndMsg{Result: result})
 	}
 }
 
@@ -293,6 +313,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.outcome = msg.Result.Outcome
 		m.mu.Unlock()
 
+	case verifyStartMsg:
+		m.mu.Lock()
+		m.verifying = true
+		m.toolEvents = m.toolEvents[:0] // Clear tool events for verification
+		m.status = "Verifying"
+		m.mu.Unlock()
+
+	case verifyEndMsg:
+		m.mu.Lock()
+		m.verifying = false
+		m.verifyIterations++
+		if msg.Result.BeadReopened {
+			m.status = "Reopened by verifier"
+		}
+		m.mu.Unlock()
+
 	case loopEndMsg:
 		m.mu.Lock()
 		m.loopDone = true
@@ -300,6 +336,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.duration = msg.Result.Duration
 			m.outcome = msg.Result.Outcome
 			m.iteration = msg.Result.Iterations
+			m.verifyIterations = msg.Result.VerifyIterations
 		}
 		m.status = "Complete"
 		m.mu.Unlock()
@@ -346,6 +383,8 @@ func (m *Model) View() string {
 	loopDone := m.loopDone
 	duration := m.duration
 	outcome := m.outcome
+	verifying := m.verifying
+	verifyIterations := m.verifyIterations
 	m.mu.Unlock()
 
 	if beadTitle != "" {
@@ -354,8 +393,16 @@ func (m *Model) View() string {
 	}
 
 	// Iteration progress
-	if iteration > 0 {
-		iterText := fmt.Sprintf("Iteration %d/%d", iteration, maxIter)
+	if iteration > 0 || verifying {
+		var iterText string
+		if verifying {
+			iterText = fmt.Sprintf("Verifying (pass %d)", verifyIterations+1)
+		} else {
+			iterText = fmt.Sprintf("Iteration %d/%d", iteration, maxIter)
+		}
+		if verifyIterations > 0 && !verifying {
+			iterText += fmt.Sprintf(" (verified %d×)", verifyIterations)
+		}
 		b.WriteString(m.styles.Muted.Render(iterText))
 		b.WriteString("\n")
 	}
@@ -401,6 +448,8 @@ func (m *Model) View() string {
 		default:
 			parts = append(parts, m.styles.Error.Render("✗ Failed"))
 		}
+	} else if verifying {
+		parts = append(parts, m.styles.Status.Render("🔍 Verifying"))
 	} else if loopStarted {
 		parts = append(parts, m.styles.Status.Render("● Running"))
 	} else {

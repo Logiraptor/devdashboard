@@ -19,6 +19,7 @@ type config struct {
 	bead          string        // bead ID to work on
 	maxIterations int           // max agent iterations
 	agentTimeout  time.Duration // per-agent timeout
+	verify        bool          // enable opus verification pass
 	verbose       bool          // detailed logging
 }
 
@@ -29,6 +30,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.bead, "bead", "", "bead ID to work on (required)")
 	flag.IntVar(&cfg.maxIterations, "max-iterations", ralph.DefaultMaxIterations, "maximum agent iterations before giving up")
 	flag.DurationVar(&cfg.agentTimeout, "agent-timeout", 10*time.Minute, "per-agent execution timeout")
+	flag.BoolVar(&cfg.verify, "verify", false, "enable opus 4.5 verification pass after bead closure")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "enable detailed logging")
 
 	flag.Usage = func() {
@@ -83,6 +85,7 @@ func run(cfg config) (int, error) {
 		RootBead:      cfg.bead,
 		MaxIterations: cfg.maxIterations,
 		AgentTimeout:  cfg.agentTimeout,
+		EnableVerify:  cfg.verify,
 		Output:        io.Discard,
 	}
 

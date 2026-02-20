@@ -16,12 +16,14 @@ type TracingObserver struct {
 	NoopObserver
 	manager *trace.Manager
 
-	mu           sync.Mutex
-	traceID      string
-	loopSpanID   string            // SpanID of the loop span
-	iterSpanID   string            // Current iteration span ID
-	iterNum      int               // Current iteration number
-	toolSpans    map[string]string // tool call ID → span ID
+	mu            sync.Mutex
+	traceID       string
+	loopSpanID    string            // SpanID of the loop span
+	iterSpanID    string            // Current iteration span ID
+	verifySpanID  string            // Current verification span ID
+	iterNum       int               // Current iteration number
+	verifyNum     int               // Current verification number
+	toolSpans     map[string]string // tool call ID → span ID
 }
 
 // Ensure TracingObserver implements ProgressObserver.
@@ -139,9 +141,10 @@ func (o *TracingObserver) OnLoopEnd(result *CoreResult) {
 	}
 
 	attrs := map[string]string{
-		"outcome":    result.Outcome.String(),
-		"iterations": fmt.Sprintf("%d", result.Iterations),
-		"duration":   FormatDuration(result.Duration),
+		"outcome":           result.Outcome.String(),
+		"iterations":        fmt.Sprintf("%d", result.Iterations),
+		"verify_iterations": fmt.Sprintf("%d", result.VerifyIterations),
+		"duration":          FormatDuration(result.Duration),
 	}
 
 	event := trace.TraceEvent{
@@ -221,6 +224,67 @@ func (o *TracingObserver) OnToolEnd(event ToolEvent) {
 	}
 
 	o.manager.HandleEvent(traceEvent)
+}
+
+// OnVerifyStart begins a verification span.
+func (o *TracingObserver) OnVerifyStart(beadID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.traceID == "" {
+		return
+	}
+
+	o.verifyNum++
+	spanID := trace.NewSpanID()
+	o.verifySpanID = spanID
+
+	event := trace.TraceEvent{
+		TraceID:   o.traceID,
+		SpanID:    spanID,
+		ParentID:  o.loopSpanID,
+		Type:      trace.EventIterationStart,
+		Name:      fmt.Sprintf("verify-%d", o.verifyNum),
+		Timestamp: time.Now(),
+		Attributes: map[string]string{
+			"bead_id": beadID,
+			"verify":  fmt.Sprintf("%d", o.verifyNum),
+			"model":   "opus-4.5-thinking",
+		},
+	}
+
+	o.manager.HandleEvent(event)
+}
+
+// OnVerifyEnd completes the verification span.
+func (o *TracingObserver) OnVerifyEnd(result VerifyResult) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.traceID == "" || o.verifySpanID == "" {
+		return
+	}
+
+	attrs := map[string]string{
+		"duration_ms":   fmt.Sprintf("%d", result.Duration.Milliseconds()),
+		"bead_reopened": fmt.Sprintf("%t", result.BeadReopened),
+	}
+	if len(result.NewBeads) > 0 {
+		attrs["new_beads"] = fmt.Sprintf("%d", len(result.NewBeads))
+	}
+
+	event := trace.TraceEvent{
+		TraceID:    o.traceID,
+		SpanID:     o.verifySpanID,
+		ParentID:   o.loopSpanID,
+		Type:       trace.EventIterationEnd,
+		Name:       "verify-end",
+		Timestamp:  time.Now(),
+		Attributes: attrs,
+	}
+
+	o.manager.HandleEvent(event)
+	o.verifySpanID = ""
 }
 
 // Shutdown flushes pending OTLP exports. Must be called before exit.
