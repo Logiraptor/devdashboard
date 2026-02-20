@@ -169,6 +169,51 @@ If the epic or a child is ambiguous or you need information you cannot find in t
 
 Do NOT close this epic if you created a blocking question.`
 
+// verifyPromptTemplate is the prompt template for the opus verification pass.
+var verifyPromptTemplate = template.Must(template.New("verifyPrompt").Parse(verifyPromptTemplateText))
+
+const verifyPromptTemplateText = `You are reviewing work completed by another agent on bead {{.ID}}.
+
+# {{.Title}}
+
+{{.Description}}
+
+---
+
+## Your Role
+
+You are a **code reviewer** using the opus 4.5 thinking model. The work on this bead has been marked complete by a composer-1 agent. Your job is to verify the implementation is correct, complete, and follows best practices.
+
+## Review Checklist
+
+1. **Correctness**: Does the implementation correctly solve the problem described?
+2. **Completeness**: Is all required functionality implemented?
+3. **Code Quality**: Does the code follow project conventions? Check ` + "`.cursor/rules/`" + ` and ` + "`AGENTS.md`" + `.
+4. **Tests**: Are there appropriate tests for the changes?
+5. **Edge Cases**: Are edge cases handled properly?
+
+## Workflow
+
+1. **Review the changes**: Use git diff, read modified files, and understand what was done.
+
+2. **Verify the bead is complete**: Check that all requirements in the description are met.
+
+3. **If issues found**, create child beads for fixes:
+   ` + "`" + `bd create "Fix: <issue description>" --type task --parent {{.ID}}` + "`" + `
+   Then add blocking dependencies so this bead reopens:
+   ` + "`" + `bd dep add {{.ID}} <fix-bead-id>` + "`" + `
+   Then reopen this bead:
+   ` + "`" + `bd update {{.ID}} --status open` + "`" + `
+
+4. **If everything looks good**: No action needed. The bead stays closed.
+
+## Important Notes
+
+- Do NOT get sidetracked by unrelated issues. Focus only on whether THIS bead's work is complete.
+- Be thorough but pragmatic. Minor style issues don't warrant reopening.
+- Create fix beads only for substantive issues: bugs, missing functionality, security issues, or violations of project conventions.
+- If you create fix beads, the loop will continue with composer-1 agents to address them.`
+
 // RenderPrompt renders the agent prompt template with the given bead data.
 // It automatically selects the epic template if IssueType is "epic".
 func RenderPrompt(data *PromptData) (string, error) {
@@ -183,6 +228,15 @@ func RenderPrompt(data *PromptData) (string, error) {
 	
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("rendering prompt template: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// RenderVerifyPrompt renders the verification prompt template for the opus reviewer.
+func RenderVerifyPrompt(data *PromptData) (string, error) {
+	var buf bytes.Buffer
+	if err := verifyPromptTemplate.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("rendering verify prompt template: %w", err)
 	}
 	return buf.String(), nil
 }

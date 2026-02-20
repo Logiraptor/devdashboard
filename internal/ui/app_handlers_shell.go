@@ -167,7 +167,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	}
 
 	escapedBead := strings.ReplaceAll(beadID, "'", `'\''`)
-	cmd := fmt.Sprintf("%s --workdir '%s' --bead '%s'\n", ralphPath, escapedWorkdir, escapedBead)
+	cmd := fmt.Sprintf("%s --workdir '%s' --bead '%s' --verify\n", ralphPath, escapedWorkdir, escapedBead)
 	if err := tmux.SendKeys(paneID, cmd); err != nil {
 		a.Status = fmt.Sprintf("Ralph launch: %v", err)
 		a.StatusIsError = true

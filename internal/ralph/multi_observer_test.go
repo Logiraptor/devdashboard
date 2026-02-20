@@ -16,6 +16,8 @@ type multiTestObserver struct {
 	onToolStartCalls      []ToolEvent
 	onToolEndCalls        []ToolEvent
 	onIterationStartCalls []int
+	onVerifyStartCalls    []string
+	onVerifyEndCalls      []VerifyResult
 }
 
 func (t *multiTestObserver) OnLoopStart(rootBead string) {
@@ -44,6 +46,14 @@ func (t *multiTestObserver) OnToolEnd(event ToolEvent) {
 
 func (t *multiTestObserver) OnIterationStart(iteration int) {
 	t.onIterationStartCalls = append(t.onIterationStartCalls, iteration)
+}
+
+func (t *multiTestObserver) OnVerifyStart(beadID string) {
+	t.onVerifyStartCalls = append(t.onVerifyStartCalls, beadID)
+}
+
+func (t *multiTestObserver) OnVerifyEnd(result VerifyResult) {
+	t.onVerifyEndCalls = append(t.onVerifyEndCalls, result)
 }
 
 func TestNewMultiObserver_FiltersNilObservers(t *testing.T) {
@@ -259,6 +269,8 @@ func TestMultiObserver_EmptyObservers(t *testing.T) {
 	multi.OnToolStart(ToolEvent{})
 	multi.OnToolEnd(ToolEvent{})
 	multi.OnIterationStart(1)
+	multi.OnVerifyStart("test")
+	multi.OnVerifyEnd(VerifyResult{})
 }
 
 func TestMultiObserver_ImplementsInterface(t *testing.T) {
@@ -302,6 +314,16 @@ func (f *failingObserver) OnToolEnd(event ToolEvent) {
 }
 
 func (f *failingObserver) OnIterationStart(iteration int) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnVerifyStart(beadID string) {
+	f.panicked = true
+	panic("observer failed")
+}
+
+func (f *failingObserver) OnVerifyEnd(result VerifyResult) {
 	f.panicked = true
 	panic("observer failed")
 }

@@ -65,9 +65,30 @@ Rule injection is idempotent — if files already exist with matching content, s
 - Zero git noise: `.git/info/exclude` is invisible to `git status`, `git diff`, etc.
 - Dev-log entries created by agents stay local until explicitly committed
 - Ralph loop is the simplest possible autonomous agent: one prompt, one resource
-- Future: could chain ralph loops across resources, add progress tracking, or add review gates
 
 See `devdeploy-j4n` epic for implementation details.
+
+### Verification Loop (EnableVerify)
+
+When `Core.EnableVerify` is true, Ralph adds a verification phase after the bead is closed:
+
+1. **Implementation phase**: composer-1 agents iterate until the bead is closed
+2. **Verification phase**: opus 4.5 thinking agent reviews the work
+3. **Continuation**: If the verifier creates new beads that reopen the target, loop continues with composer-1
+
+The verification agent receives a specialized prompt asking it to:
+- Review the implementation for correctness and completeness
+- Check code quality and test coverage
+- Create fix beads for any issues found (reopens the target bead)
+- Leave the bead closed if everything looks good
+
+This creates a natural "code review" gate without human intervention. The verifier uses a more capable model (opus 4.5 thinking) specifically for its review capabilities.
+
+**Observer events**:
+- `OnVerifyStart(beadID)` — verification phase begins
+- `OnVerifyEnd(VerifyResult)` — verification phase ends, includes `BeadReopened` flag
+
+**CoreResult** now includes `VerifyIterations` to track how many verification passes occurred.
 
 ## ProgressObserver and Tool Event Streaming
 

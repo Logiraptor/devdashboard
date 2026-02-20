@@ -100,3 +100,21 @@ func (m *MultiObserver) OnIterationStart(iteration int) {
 		}
 	}
 }
+
+// OnVerifyStart forwards the call to all observers.
+func (m *MultiObserver) OnVerifyStart(beadID string) {
+	for _, obs := range m.observers {
+		if obs != nil {
+			safeCall(func() { obs.OnVerifyStart(beadID) })
+		}
+	}
+}
+
+// OnVerifyEnd forwards the call to all observers.
+func (m *MultiObserver) OnVerifyEnd(result VerifyResult) {
+	for _, obs := range m.observers {
+		if obs != nil {
+			safeCall(func() { obs.OnVerifyEnd(result) })
+		}
+	}
+}

@@ -51,6 +51,21 @@ type ProgressObserver interface {
 
 	// OnIterationStart is called when an iteration begins.
 	OnIterationStart(iteration int)
+
+	// OnVerifyStart is called when verification phase begins.
+	OnVerifyStart(beadID string)
+
+	// OnVerifyEnd is called when verification phase ends.
+	OnVerifyEnd(result VerifyResult)
+}
+
+// VerifyResult holds the result of a verification pass.
+type VerifyResult struct {
+	BeadID        string
+	NewBeads      []string      // IDs of new beads created by verifier
+	BeadReopened  bool          // True if verifier reopened the bead
+	Duration      time.Duration
+	AgentResult   *AgentResult
 }
 
 // NoopObserver is a ProgressObserver that does nothing.
@@ -67,6 +82,8 @@ func (NoopObserver) OnLoopEnd(*CoreResult)      {}
 func (NoopObserver) OnToolStart(ToolEvent)      {}
 func (NoopObserver) OnToolEnd(ToolEvent)        {}
 func (NoopObserver) OnIterationStart(int)       {}
+func (NoopObserver) OnVerifyStart(string)       {}
+func (NoopObserver) OnVerifyEnd(VerifyResult)   {}
 
 // Core orchestrates agent execution for a single bead.
 type Core struct {
@@ -84,6 +101,12 @@ type Core struct {
 	// Zero means use DefaultTimeout (10m).
 	AgentTimeout time.Duration
 
+	// EnableVerify enables verification pass after bead closure.
+	// When true, an opus 4.5 thinking agent reviews the work after the
+	// composer-1 agent closes the bead. If the verifier creates new beads,
+	// the loop continues with composer-1.
+	EnableVerify bool
+
 	// Output is where logs are written. Defaults to os.Stdout.
 	Output io.Writer
 
@@ -91,22 +114,27 @@ type Core struct {
 	Observer ProgressObserver
 
 	// Test hooks (nil means use real implementations)
-	RunBD       bd.Runner
-	FetchPrompt func(runBD bd.Runner, workDir, beadID string) (*PromptData, error)
-	Render      func(data *PromptData) (string, error)
-	Execute     func(ctx context.Context, workDir, prompt string) (*AgentResult, error)
-	AssessFn    func(workDir, beadID string, result *AgentResult) (Outcome, string)
+	RunBD         bd.Runner
+	FetchPrompt   func(runBD bd.Runner, workDir, beadID string) (*PromptData, error)
+	Render        func(data *PromptData) (string, error)
+	RenderVerify  func(data *PromptData) (string, error)
+	Execute       func(ctx context.Context, workDir, prompt string) (*AgentResult, error)
+	ExecuteVerify func(ctx context.Context, workDir, prompt string) (*AgentResult, error)
+	AssessFn      func(workDir, beadID string, result *AgentResult) (Outcome, string)
 }
 
 // CoreResult holds the results of a Core.Run invocation.
 type CoreResult struct {
-	Outcome    Outcome
-	Iterations int
-	Duration   time.Duration
+	Outcome          Outcome
+	Iterations       int
+	VerifyIterations int // Number of verification passes
+	Duration         time.Duration
 }
 
 // Run executes the ralph loop on a single bead.
 // Iterates until the bead is closed, max iterations reached, or a stopping condition.
+// If EnableVerify is true, runs an opus verification pass after bead closure.
+// If the verifier creates new beads that block the target, continues looping.
 func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	start := time.Now()
 	result := &CoreResult{}
@@ -140,8 +168,10 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	var lastAgentResult *AgentResult
 	var lastOutcome Outcome
 	var lastSummary string
+	iteration := 0
 
-	for iteration := 0; iteration < maxIter; iteration++ {
+	// Main loop: continues if verification reopens the bead
+	for iteration < maxIter {
 		// Check context cancellation
 		if ctx.Err() != nil {
 			result.Outcome = OutcomeTimeout
@@ -162,11 +192,30 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 			writef(out, "[%s] error checking bead status: %v\n", c.RootBead, err)
 		}
 		if closed {
+			// Bead is closed - check if we need verification
+			if c.EnableVerify {
+				writef(out, "[%s] bead closed, running verification...\n", c.RootBead)
+				reopened, verifyErr := c.runVerification(ctx, out)
+				result.VerifyIterations++
+				if verifyErr != nil {
+					writef(out, "[%s] verification error: %v\n", c.RootBead, verifyErr)
+				}
+				if reopened {
+					writef(out, "[%s] verification reopened bead, continuing...\n", c.RootBead)
+					// Refresh bead info after verification
+					bead, _ = c.fetchBead()
+					continue // Continue loop
+				}
+			}
+
 			result.Outcome = OutcomeSuccess
 			result.Iterations = iteration
 			result.Duration = time.Since(start)
 			writef(out, "[%s] bead closed after %d iteration(s)\n", c.RootBead, iteration)
 			c.notifyComplete(bead, result, lastAgentResult, "")
+			if c.Observer != nil {
+				c.Observer.OnLoopEnd(result)
+			}
 			return result, nil
 		}
 
@@ -200,7 +249,9 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 		lastOutcome = outcome
 		lastSummary = summary
 
-		writef(out, "[%s] iteration %d → %s (%s)\n", c.RootBead, iteration+1, outcome, FormatDuration(agentResult.Duration))
+		iteration++ // Increment after running agent
+
+		writef(out, "[%s] iteration %d → %s (%s)\n", c.RootBead, iteration, outcome, FormatDuration(agentResult.Duration))
 		if summary != "" && outcome != OutcomeSuccess {
 			writef(out, "  %s\n", summary)
 		}
@@ -208,9 +259,12 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 		// Stop on question or timeout (non-retryable)
 		if outcome == OutcomeQuestion || outcome == OutcomeTimeout {
 			result.Outcome = outcome
-			result.Iterations = iteration + 1
+			result.Iterations = iteration
 			result.Duration = time.Since(start)
 			c.notifyComplete(bead, result, agentResult, summary)
+			if c.Observer != nil {
+				c.Observer.OnLoopEnd(result)
+			}
 			return result, nil
 		}
 
@@ -220,7 +274,7 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 
 	// Max iterations reached
 	result.Outcome = OutcomeMaxIterations
-	result.Iterations = maxIter
+	result.Iterations = iteration
 	result.Duration = time.Since(start)
 
 	// Use the last outcome if we have one
@@ -238,6 +292,90 @@ func (c *Core) Run(ctx context.Context) (*CoreResult, error) {
 	}
 
 	return result, nil
+}
+
+// runVerification executes the opus verification pass.
+// Returns true if the bead was reopened (new blocking beads were created).
+func (c *Core) runVerification(ctx context.Context, out io.Writer) (bool, error) {
+	// Notify observer
+	if c.Observer != nil {
+		c.Observer.OnVerifyStart(c.RootBead)
+	}
+
+	verifyStart := time.Now()
+
+	// Build verification prompt
+	promptData, err := c.fetchPromptData()
+	if err != nil {
+		return false, fmt.Errorf("fetching prompt data: %w", err)
+	}
+
+	renderVerify := c.RenderVerify
+	if renderVerify == nil {
+		renderVerify = RenderVerifyPrompt
+	}
+	prompt, err := renderVerify(promptData)
+	if err != nil {
+		return false, fmt.Errorf("rendering verify prompt: %w", err)
+	}
+
+	// Execute verification agent (opus)
+	var agentResult *AgentResult
+	if c.ExecuteVerify != nil {
+		agentResult, err = c.ExecuteVerify(ctx, c.WorkDir, prompt)
+	} else {
+		var opts []Option
+		if c.AgentTimeout > 0 {
+			opts = append(opts, WithTimeout(c.AgentTimeout))
+		}
+		if c.Observer != nil {
+			opts = append(opts, WithObserver(c.Observer))
+			opts = append(opts, WithStdoutWriter(io.Discard))
+		}
+		agentResult, err = RunAgentOpus(ctx, c.WorkDir, prompt, opts...)
+	}
+
+	verifyResult := VerifyResult{
+		BeadID:      c.RootBead,
+		Duration:    time.Since(verifyStart),
+		AgentResult: agentResult,
+	}
+
+	if err != nil {
+		if c.Observer != nil {
+			c.Observer.OnVerifyEnd(verifyResult)
+		}
+		return false, fmt.Errorf("verification agent: %w", err)
+	}
+
+	writef(out, "[%s] verification completed (%s)\n", c.RootBead, FormatDuration(agentResult.Duration))
+
+	// Check if bead was reopened
+	closed, err := c.isBeadClosed()
+	if err != nil {
+		if c.Observer != nil {
+			c.Observer.OnVerifyEnd(verifyResult)
+		}
+		return false, fmt.Errorf("checking bead status: %w", err)
+	}
+
+	verifyResult.BeadReopened = !closed
+
+	// Notify observer
+	if c.Observer != nil {
+		c.Observer.OnVerifyEnd(verifyResult)
+	}
+
+	return !closed, nil
+}
+
+// fetchPromptData gets the prompt data for the current bead.
+func (c *Core) fetchPromptData() (*PromptData, error) {
+	fetchPrompt := c.FetchPrompt
+	if fetchPrompt == nil {
+		fetchPrompt = FetchPromptData
+	}
+	return fetchPrompt(c.RunBD, c.WorkDir, c.RootBead)
 }
 
 // notifyComplete sends the bead complete notification to the observer.
