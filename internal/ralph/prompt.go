@@ -1,15 +1,14 @@
 package ralph
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"text/template"
+	"strings"
 
 	"devdeploy/internal/bd"
 )
 
-// PromptData holds the variables injected into the agent prompt template.
+// PromptData holds the variables injected into the agent prompt.
 type PromptData struct {
 	ID          string // Bead ID (e.g. "devdeploy-bkp.3")
 	Title       string // Bead title
@@ -53,190 +52,47 @@ func FetchPromptData(runBD bd.Runner, workDir string, beadID string) (*PromptDat
 	}, nil
 }
 
-// promptTemplate is the Go text/template used to craft the agent prompt for regular beads.
-// It is parsed once at init time so rendering is cheap.
-var promptTemplate = template.Must(template.New("prompt").Parse(promptTemplateText))
+// Skill names for external cursor skills in ~/.cursor/skills/
+const (
+	SkillWorkBead   = "work-bead"
+	SkillWorkEpic   = "work-epic"
+	SkillVerifyBead = "verify-bead"
+)
 
-// epicPromptTemplate is the Go text/template used to craft the agent prompt for epics.
-// It includes instructions for processing children sequentially.
-var epicPromptTemplate = template.Must(template.New("epicPrompt").Parse(epicPromptTemplateText))
-
-const promptTemplateText = `You are working on bead {{.ID}}.
-
-# {{.Title}}
-
-{{.Description}}
-
----
-
-## Workflow
-
-1. **Claim this bead** before starting work:
-   ` + "`" + `bd update {{.ID}} --status in_progress` + "`" + `
-
-2. **Follow project conventions**: read and obey ` + "`.cursor/rules/`" + ` and ` + "`AGENTS.md`" + `.
-
-3. **Do the work** described above. Make focused, well-tested changes.
-
-4. **Close the bead** when the work is complete:
-   ` + "`" + `bd close {{.ID}}` + "`" + `
-
-5. **Push your work** — work is not done until pushed:
-   ` + "```" + `
-   git add -A && git commit -m "<concise message>"
-   git pull --rebase && bd sync && git push
-   ` + "```" + `
-
-## If you discover additional work
-
-Do NOT get sidetracked by unrelated issues you discover. Stay focused on THIS bead.
-
-- Create child beads for off-topic work: ` + "`" + `bd create "..." --parent {{.ID}}` + "`" + `
-- For parallelizable subtasks, spawn subagents to work on them
-- Only close THIS bead when its specific work is complete
-
-## If you need human input
-
-If the bead is ambiguous or you need information you cannot find in the codebase:
-
-1. Create a question bead:
-   ` + "`" + `bd create "Question: <your question>" --type task --label needs-human --parent {{.ID}}` + "`" + `
-2. Add a blocking dependency so the original bead drops off bd ready:
-   ` + "`" + `bd dep add {{.ID}} <question-id>` + "`" + `
-3. **Stop working on this bead** — do not guess. Move on.
-
-Do NOT close this bead if you created a blocking question.`
-
-const epicPromptTemplateText = `You are working on epic {{.ID}}.
-
-# {{.Title}}
-
-{{.Description}}
-
----
-
-## Workflow
-
-1. **Claim this epic** before starting work:
-   ` + "`" + `bd update {{.ID}} --status in_progress` + "`" + `
-
-2. **Follow project conventions**: read and obey ` + "`.cursor/rules/`" + ` and ` + "`AGENTS.md`" + `.
-
-3. **Process children sequentially**: This epic has child issues that must be completed before closing the epic.
-   - Use ` + "`" + `bd ready --parent {{.ID}}` + "`" + ` to find available children
-   - For each child:
-     a. Claim it: ` + "`" + `bd update <child-id> --status in_progress` + "`" + `
-     b. Implement the work described in that child
-     c. Close it when complete: ` + "`" + `bd close <child-id>` + "`" + `
-   - **CRITICAL**: You MUST close each child as you complete its work
-   - **CRITICAL**: Only close the epic when ALL children are closed
-
-4. **Close the epic** ONLY when all children are closed:
-   ` + "`" + `bd close {{.ID}}` + "`" + `
-   
-   **Do NOT close the epic if any children remain open.** Check with ` + "`" + `bd ready --parent {{.ID}}` + "`" + ` first.
-
-5. **Push your work** — work is not done until pushed:
-   ` + "```" + `
-   git add -A && git commit -m "<concise message>"
-   git pull --rebase && bd sync && git push
-   ` + "```" + `
-
-## Epic Completion Rules
-
-- **Never close an epic with open children** — this leaves work orphaned
-- Process children one at a time, closing each as you complete it
-- If you cannot complete all children in this session, leave the epic open (status: in_progress)
-- Only close the epic when ` + "`" + `bd ready --parent {{.ID}}` + "`" + ` returns no results
-
-## If you discover additional work
-
-Do NOT get sidetracked by unrelated issues you discover. Stay focused on THIS epic and its children.
-
-- Create child beads for off-topic work: ` + "`" + `bd create "..." --parent {{.ID}}` + "`" + `
-- For parallelizable subtasks, spawn subagents to work on them
-- Only close THIS epic when all its children are complete
-
-## If you need human input
-
-If the epic or a child is ambiguous or you need information you cannot find in the codebase:
-
-1. Create a question bead:
-   ` + "`" + `bd create "Question: <your question>" --type task --label needs-human --parent {{.ID}}` + "`" + `
-2. Add a blocking dependency so the original bead drops off bd ready:
-   ` + "`" + `bd dep add <blocked-bead-id> <question-id>` + "`" + `
-3. **Stop working on this epic** — do not guess. Move on.
-
-Do NOT close this epic if you created a blocking question.`
-
-// verifyPromptTemplate is the prompt template for the opus verification pass.
-var verifyPromptTemplate = template.Must(template.New("verifyPrompt").Parse(verifyPromptTemplateText))
-
-const verifyPromptTemplateText = `You are reviewing work completed by another agent on bead {{.ID}}.
-
-# {{.Title}}
-
-{{.Description}}
-
----
-
-## Your Role
-
-You are a **code reviewer** using the opus 4.5 thinking model. The work on this bead has been marked complete by a composer-1 agent. Your job is to verify the implementation is correct, complete, and follows best practices.
-
-## Review Checklist
-
-1. **Correctness**: Does the implementation correctly solve the problem described?
-2. **Completeness**: Is all required functionality implemented?
-3. **Code Quality**: Does the code follow project conventions? Check ` + "`.cursor/rules/`" + ` and ` + "`AGENTS.md`" + `.
-4. **Tests**: Are there appropriate tests for the changes?
-5. **Edge Cases**: Are edge cases handled properly?
-
-## Workflow
-
-1. **Review the changes**: Use git diff, read modified files, and understand what was done.
-
-2. **Verify the bead is complete**: Check that all requirements in the description are met.
-
-3. **If issues found**, create child beads for fixes:
-   ` + "`" + `bd create "Fix: <issue description>" --type task --parent {{.ID}}` + "`" + `
-   Then add blocking dependencies so this bead reopens:
-   ` + "`" + `bd dep add {{.ID}} <fix-bead-id>` + "`" + `
-   Then reopen this bead:
-   ` + "`" + `bd update {{.ID}} --status open` + "`" + `
-
-4. **If everything looks good**: No action needed. The bead stays closed.
-
-## Important Notes
-
-- Do NOT get sidetracked by unrelated issues. Focus only on whether THIS bead's work is complete.
-- Be thorough but pragmatic. Minor style issues don't warrant reopening.
-- Create fix beads only for substantive issues: bugs, missing functionality, security issues, or violations of project conventions.
-- If you create fix beads, the loop will continue with composer-1 agents to address them.`
-
-// RenderPrompt renders the agent prompt template with the given bead data.
-// It automatically selects the epic template if IssueType is "epic".
+// RenderPrompt renders a prompt that invokes the appropriate skill and provides bead context.
+// The actual workflow instructions live in external cursor skills.
 func RenderPrompt(data *PromptData) (string, error) {
-	var buf bytes.Buffer
-	var tmpl *template.Template
-	
+	skill := SkillWorkBead
 	if data.IssueType == "epic" {
-		tmpl = epicPromptTemplate
-	} else {
-		tmpl = promptTemplate
+		skill = SkillWorkEpic
 	}
-	
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("rendering prompt template: %w", err)
-	}
-	return buf.String(), nil
+	return renderSkillPrompt(skill, data), nil
 }
 
-// RenderVerifyPrompt renders the verification prompt template for the opus reviewer.
+// RenderVerifyPrompt renders a prompt that invokes the verify-bead skill.
 func RenderVerifyPrompt(data *PromptData) (string, error) {
-	var buf bytes.Buffer
-	if err := verifyPromptTemplate.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("rendering verify prompt template: %w", err)
+	return renderSkillPrompt(SkillVerifyBead, data), nil
+}
+
+// renderSkillPrompt creates a prompt that invokes a skill and provides bead context.
+func renderSkillPrompt(skill string, data *PromptData) string {
+	var b strings.Builder
+
+	b.WriteString("/")
+	b.WriteString(skill)
+	b.WriteString("\n\n")
+
+	b.WriteString("Bead ID: ")
+	b.WriteString(data.ID)
+	b.WriteString("\n\n")
+
+	b.WriteString("# ")
+	b.WriteString(data.Title)
+	b.WriteString("\n\n")
+
+	if data.Description != "" {
+		b.WriteString(data.Description)
 	}
-	return buf.String(), nil
+
+	return b.String()
 }
