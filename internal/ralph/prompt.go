@@ -55,18 +55,13 @@ func FetchPromptData(runBD bd.Runner, workDir string, beadID string) (*PromptDat
 // Skill names for external cursor skills in ~/.cursor/skills/
 const (
 	SkillWorkBead   = "work-bead"
-	SkillWorkEpic   = "work-epic"
 	SkillVerifyBead = "verify-bead"
 )
 
-// RenderPrompt renders a prompt that invokes the appropriate skill and provides bead context.
-// The actual workflow instructions live in external cursor skills.
+// RenderPrompt renders a prompt that invokes the work-bead skill and provides bead context.
+// The actual workflow instructions live in the external cursor skill.
 func RenderPrompt(data *PromptData) (string, error) {
-	skill := SkillWorkBead
-	if data.IssueType == "epic" {
-		skill = SkillWorkEpic
-	}
-	return renderSkillPrompt(skill, data), nil
+	return renderSkillPrompt(SkillWorkBead, data), nil
 }
 
 // RenderVerifyPrompt renders a prompt that invokes the verify-bead skill.

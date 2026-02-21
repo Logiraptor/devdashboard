@@ -140,8 +140,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 		a.StatusIsError = false
 		return a, nil
 	}
-	// Launch ralph binary with --workdir flag.
-	// If a specific bead is selected, add --bead flag (or --epic if it's an epic).
+	// Launch ralph binary with --workdir and --bead flags.
 	paneID, err := tmux.SplitPane(workDir)
 	if err != nil {
 		a.Status = fmt.Sprintf("Ralph: %v", err)
