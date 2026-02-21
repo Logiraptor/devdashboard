@@ -188,7 +188,7 @@ func TestFetchPromptData_EmptyArray(t *testing.T) {
 	}
 }
 
-func TestRenderPrompt_EpicUsesEpicSkill(t *testing.T) {
+func TestRenderPrompt_EpicUsesWorkBeadSkill(t *testing.T) {
 	data := &PromptData{
 		ID:          "epic-1",
 		Title:       "Epic Title",
@@ -201,8 +201,8 @@ func TestRenderPrompt_EpicUsesEpicSkill(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(got, "/work-epic") {
-		t.Error("epic prompt should invoke /work-epic skill")
+	if !strings.Contains(got, "/work-bead") {
+		t.Error("epic prompt should invoke /work-bead skill")
 	}
 	if !strings.Contains(got, "Bead ID: epic-1") {
 		t.Error("epic prompt should contain bead ID")
@@ -212,7 +212,7 @@ func TestRenderPrompt_EpicUsesEpicSkill(t *testing.T) {
 	}
 }
 
-func TestRenderPrompt_TaskUsesBeadSkill(t *testing.T) {
+func TestRenderPrompt_TaskUsesWorkBeadSkill(t *testing.T) {
 	data := &PromptData{
 		ID:          "task-1",
 		Title:       "Task Title",
@@ -227,9 +227,6 @@ func TestRenderPrompt_TaskUsesBeadSkill(t *testing.T) {
 
 	if !strings.Contains(got, "/work-bead") {
 		t.Error("task prompt should invoke /work-bead skill")
-	}
-	if strings.Contains(got, "/work-epic") {
-		t.Error("task prompt should not invoke /work-epic skill")
 	}
 }
 
