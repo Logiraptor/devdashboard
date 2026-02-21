@@ -25,11 +25,12 @@ type mockError struct{ msg string }
 
 func (e *mockError) Error() string { return e.msg }
 
-func TestRenderPrompt_ContainsAllSections(t *testing.T) {
+func TestRenderPrompt_ContainsSkillAndContext(t *testing.T) {
 	data := &PromptData{
 		ID:          "test-abc.1",
 		Title:       "Implement widget factory",
 		Description: "Build the widget factory that produces widgets.\n\n## Requirements\n- Fast\n- Reliable",
+		IssueType:   "task",
 	}
 
 	got, err := RenderPrompt(data)
@@ -37,23 +38,14 @@ func TestRenderPrompt_ContainsAllSections(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify all required sections are present.
 	checks := []struct {
 		name   string
 		substr string
 	}{
-		{"bead ID header", "bead test-abc.1"},
+		{"skill invocation", "/work-bead"},
+		{"bead ID", "Bead ID: test-abc.1"},
 		{"title", "# Implement widget factory"},
 		{"description", "Build the widget factory"},
-		{"claim instruction", "bd update test-abc.1 --status in_progress"},
-		{"close instruction", "bd close test-abc.1"},
-		{"cursor rules", ".cursor/rules/"},
-		{"AGENTS.md", "AGENTS.md"},
-		{"push instruction", "git push"},
-		{"question protocol", "needs-human"},
-		{"blocking dependency", "bd dep add test-abc.1"},
-		{"parent relationship", "--parent test-abc.1"},
-		{"stop instruction", "Stop working on this bead"},
 	}
 
 	for _, c := range checks {
@@ -63,12 +55,12 @@ func TestRenderPrompt_ContainsAllSections(t *testing.T) {
 	}
 }
 
-func TestRenderPrompt_EscapesNothing(t *testing.T) {
-	// Ensure template does not HTML-escape content (text/template, not html/template).
+func TestRenderPrompt_PreservesSpecialCharacters(t *testing.T) {
 	data := &PromptData{
 		ID:          "x-1",
 		Title:       "Handle <script> tags & ampersands",
 		Description: "Description with <html> & \"quotes\"",
+		IssueType:   "task",
 	}
 
 	got, err := RenderPrompt(data)
@@ -77,10 +69,10 @@ func TestRenderPrompt_EscapesNothing(t *testing.T) {
 	}
 
 	if !strings.Contains(got, "<script>") {
-		t.Error("text/template should not HTML-escape; <script> was escaped")
+		t.Error("should not escape HTML; <script> was escaped")
 	}
 	if !strings.Contains(got, `"quotes"`) {
-		t.Error("text/template should not escape double quotes")
+		t.Error("should not escape double quotes")
 	}
 }
 
@@ -89,6 +81,7 @@ func TestRenderPrompt_EmptyDescription(t *testing.T) {
 		ID:          "empty-1",
 		Title:       "No description bead",
 		Description: "",
+		IssueType:   "task",
 	}
 
 	got, err := RenderPrompt(data)
@@ -96,7 +89,6 @@ func TestRenderPrompt_EmptyDescription(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should still render without error, with the ID and title present.
 	if !strings.Contains(got, "empty-1") {
 		t.Error("expected bead ID in rendered prompt")
 	}
@@ -120,6 +112,7 @@ Code block:
 ` + "```go" + `
 func main() {}
 ` + "```",
+		IssueType: "task",
 	}
 
 	got, err := RenderPrompt(data)
@@ -195,28 +188,7 @@ func TestFetchPromptData_EmptyArray(t *testing.T) {
 	}
 }
 
-func TestRenderPrompt_IDAppearsMultipleTimes(t *testing.T) {
-	// The bead ID should appear in: header, claim, close, parent, and dep add instructions.
-	data := &PromptData{
-		ID:          "repeat-42",
-		Title:       "Test",
-		Description: "Desc",
-		IssueType:   "task",
-	}
-
-	got, err := RenderPrompt(data)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	count := strings.Count(got, "repeat-42")
-	// At minimum: header, claim, close, parent, dep add = 5 occurrences
-	if count < 5 {
-		t.Errorf("expected bead ID to appear at least 5 times, got %d", count)
-	}
-}
-
-func TestRenderPrompt_EpicUsesEpicTemplate(t *testing.T) {
+func TestRenderPrompt_EpicUsesEpicSkill(t *testing.T) {
 	data := &PromptData{
 		ID:          "epic-1",
 		Title:       "Epic Title",
@@ -229,31 +201,18 @@ func TestRenderPrompt_EpicUsesEpicTemplate(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Epic template should include epic-specific instructions
-	checks := []struct {
-		name   string
-		substr string
-	}{
-		{"epic header", "epic epic-1"},
-		{"children instruction", "bd ready --parent epic-1"},
-		{"close children first", "close each child"},
-		{"epic completion rules", "Never close an epic with open children"},
-		{"check children before closing", "bd ready --parent epic-1"},
+	if !strings.Contains(got, "/work-epic") {
+		t.Error("epic prompt should invoke /work-epic skill")
 	}
-
-	for _, c := range checks {
-		if !strings.Contains(got, c.substr) {
-			t.Errorf("epic prompt missing %s (expected substring %q)", c.name, c.substr)
-		}
+	if !strings.Contains(got, "Bead ID: epic-1") {
+		t.Error("epic prompt should contain bead ID")
 	}
-
-	// Should NOT include regular bead instructions that don't apply to epics
-	if strings.Contains(got, "Only close THIS bead when its specific work is complete") {
-		t.Error("epic prompt should not include regular bead completion instruction")
+	if !strings.Contains(got, "# Epic Title") {
+		t.Error("epic prompt should contain title")
 	}
 }
 
-func TestRenderPrompt_RegularBeadUsesRegularTemplate(t *testing.T) {
+func TestRenderPrompt_TaskUsesBeadSkill(t *testing.T) {
 	data := &PromptData{
 		ID:          "task-1",
 		Title:       "Task Title",
@@ -266,16 +225,31 @@ func TestRenderPrompt_RegularBeadUsesRegularTemplate(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Regular template should NOT include epic-specific instructions
-	if strings.Contains(got, "bd ready --parent") {
-		t.Error("regular prompt should not include epic parent-child instructions")
+	if !strings.Contains(got, "/work-bead") {
+		t.Error("task prompt should invoke /work-bead skill")
 	}
-	if strings.Contains(got, "Never close an epic with open children") {
-		t.Error("regular prompt should not include epic completion rules")
+	if strings.Contains(got, "/work-epic") {
+		t.Error("task prompt should not invoke /work-epic skill")
+	}
+}
+
+func TestRenderVerifyPrompt_UsesVerifySkill(t *testing.T) {
+	data := &PromptData{
+		ID:          "verify-1",
+		Title:       "Verify Title",
+		Description: "Verify description",
+		IssueType:   "task",
 	}
 
-	// Should include regular bead instructions
-	if !strings.Contains(got, "bd close task-1") {
-		t.Error("regular prompt should include close instruction")
+	got, err := RenderVerifyPrompt(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(got, "/verify-bead") {
+		t.Error("verify prompt should invoke /verify-bead skill")
+	}
+	if !strings.Contains(got, "Bead ID: verify-1") {
+		t.Error("verify prompt should contain bead ID")
 	}
 }

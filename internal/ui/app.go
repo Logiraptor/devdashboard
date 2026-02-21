@@ -419,13 +419,8 @@ func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 // a PR worktree if needed. For repo resources, it uses the existing WorktreePath.
 // For PR resources with no worktree, it calls EnsurePRWorktree to create one
 // and updates the resource's WorktreePath in the detail view.
-// Rule injection is always attempted (idempotent) so worktrees created before
-// the injection feature was added still get rules on first shell/agent open.
 func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 	if r.WorktreePath != "" {
-		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
-		// The worktree is usable even if rule injection fails.
-		_ = project.InjectWorktreeRules(r.WorktreePath)
 		return r.WorktreePath, nil
 	}
 	if r.Kind != project.ResourcePR || r.PR == nil {
