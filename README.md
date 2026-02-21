@@ -14,7 +14,6 @@ The core idea: projects contain resources (repositories, PRs), and the primary a
 - **Worktree Management**: Automatically creates and manages git worktrees for PRs and feature branches
 - **Tmux Integration**: Splits panes, tracks sessions, runs agents in dedicated panes
 - **Ralph**: An autonomous agent loop that picks tasks from my issue tracker (beads/bd) and dispatches AI agents to implement them
-- **Rule Injection**: Automatically injects cursor rules into worktrees (git-silent via `.git/info/exclude`)
 
 ## Tech Stack
 

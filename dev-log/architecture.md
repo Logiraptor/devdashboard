@@ -56,11 +56,11 @@ devdeploy/
 | 7 | Abort/cancel for in-flight operations | Done |
 | 8 | Tmux pane orchestration (replace embedded PTY) | Done |
 | 9 | Resource-based project workflow | Done |
-| 10 | Automated agent loop (Ralph) with git-silent rule injection | Done |
+| 10 | Automated agent loop (Ralph) | Done |
 
 **Phase 9 — Resource-based project workflow**: Projects contain resources (repos from ~/workspace, PRs from gh). Two actions: open shell, launch agent (`agent`). devdeploy manages worktrees, tmux panes, and sessions. Resources display associated **beads** (bd issues) inline via label-based scoping. See `devdeploy-7uj` and `devdeploy-lvr` epics.
 
-**Phase 10 — Automated agent loop (Ralph)**: Ralph loop (`SPC s r`) launches an agent with a canned prompt to pick work and implement it. Worktrees automatically receive `.cursor/rules/` (beads.mdc, devdeploy.mdc) and `dev-log/` directory injected via `.git/info/exclude` (git-silent, never committed). Rule injection is idempotent and happens automatically when worktrees are created or ensured. See `devdeploy-j4n` epic.
+**Phase 10 — Automated agent loop (Ralph)**: Ralph loop (`SPC s r`) launches an agent with a canned prompt to pick work and implement it. Cursor rules (beads.mdc, devdeploy.mdc) are managed externally via `~/workspace/cursor-config`. See `devdeploy-j4n` epic.
 
 ### cmd/ralph — Standalone Headless CLI
 

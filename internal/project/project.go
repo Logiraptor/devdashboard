@@ -309,9 +309,6 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 		}); err != nil {
 			return err
 		}
-		if err := InjectWorktreeRules(dstPath); err != nil {
-			return err
-		}
 		// Invalidate cache for this project since a repo was added
 		m.ClearPRCacheForProject(projectName)
 		return nil
@@ -342,9 +339,6 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 			msg = err.Error()
 		}
 		return fmt.Errorf("git merge %s (in worktree): %s", mainRef, msg)
-	}
-	if err := InjectWorktreeRules(dstPath); err != nil {
-		return err
 	}
 	// Invalidate cache for this project since a repo was added
 	m.ClearPRCacheForProject(projectName)
@@ -961,10 +955,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	if info, err := os.Stat(dstPath); err == nil && info.IsDir() {
 		gitFile := filepath.Join(dstPath, ".git")
 		if _, err := os.Stat(gitFile); err == nil {
-			// Ensure rules are injected (idempotent) even for pre-existing worktrees.
-			// Ignore injection errors: rules are best-effort convenience for existing worktrees.
-			// The worktree is usable even if rule injection fails.
-			_ = InjectWorktreeRules(dstPath)
 			return dstPath, nil // Reusing existing worktree, no cache invalidation needed
 		}
 	}
@@ -972,9 +962,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	// Scan existing worktrees for one already on this branch.
 	// excludeSrcRepo=true because we want a worktree, not the main repo
 	if existing := wtMgr.FindByBranch(branchName, true); existing != "" {
-		// Ignore injection errors: rules are best-effort convenience for existing worktrees.
-		// The worktree is usable even if rule injection fails.
-		_ = InjectWorktreeRules(existing)
 		return existing, nil // Reusing existing worktree, no cache invalidation needed
 	}
 
@@ -1012,10 +999,6 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 		}); err != nil {
 			return "", err
 		}
-	}
-
-	if err := InjectWorktreeRules(dstPath); err != nil {
-		return "", fmt.Errorf("inject rules: %w", err)
 	}
 
 	// Invalidate cache for this project since a new worktree was created
