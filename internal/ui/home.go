@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -44,15 +45,19 @@ type homeItem struct {
 	isCollapsed bool
 }
 
-func newCursorDelegate() list.DefaultDelegate {
-	delegate := list.NewDefaultDelegate()
-	delegate.SetSpacing(0)
-	delegate.ShowDescription = false
-	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorAccent)).
-		Bold(true)
-	delegate.Styles.NormalTitle = Styles.Normal
-	return delegate
+type homeDelegate struct{}
+
+func (d homeDelegate) Height() int                                      { return 1 }
+func (d homeDelegate) Spacing() int                                     { return 0 }
+func (d homeDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd          { return nil }
+func (d homeDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	title := item.(homeItem).Title()
+	if index == m.Index() {
+		cursor := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorAccent)).Render("▌")
+		_, _ = fmt.Fprint(w, cursor+" "+title)
+	} else {
+		_, _ = fmt.Fprint(w, "  "+title)
+	}
 }
 
 func resourceStatus(r project.Resource) string {
@@ -60,6 +65,43 @@ func resourceStatus(r project.Resource) string {
 		return fmt.Sprintf("%d panes", len(r.Panes))
 	}
 	return ""
+}
+
+func prStateColor(state string) string {
+	switch state {
+	case "merged":
+		return ColorHighlight
+	case "closed":
+		return ColorDanger
+	default:
+		return ColorSuccess
+	}
+}
+
+func beadStatusColor(status string) string {
+	switch status {
+	case "closed":
+		return ColorSuccess
+	case "in_progress":
+		return ColorWarning
+	case "blocked":
+		return ColorDanger
+	default:
+		return ColorAccent
+	}
+}
+
+func statusDot(color string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("●")
+}
+
+func formatPaneLine(index int, name string, isAgent bool) string {
+	icon := Styles.Muted.Render("❯")
+	if isAgent {
+		icon = Styles.Status.Render("◆")
+	}
+	num := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorAccent)).Render(fmt.Sprintf("%d.", index))
+	return num + " " + icon + " " + Styles.Normal.Render(name)
 }
 
 func (h homeItem) FilterValue() string {
@@ -114,21 +156,23 @@ func (h homeItem) renderResourceTitle() string {
 	indicator := h.collapseIndicator()
 	switch h.resource.Kind {
 	case project.ResourceRepo:
-		line := h.resource.RepoName + "/"
+		bold := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText)).Bold(true)
+		line := bold.Render(h.resource.RepoName + "/")
 		if status != "" {
 			line += "  " + Styles.Status.Render(status)
 		}
-		return indicator + " " + Styles.Normal.Render(line)
+		return indicator + " " + line
 	case project.ResourceWorktree:
 		branch := "(unknown branch)"
 		if h.resource.Worktree != nil && h.resource.Worktree.Branch != "" {
 			branch = h.resource.Worktree.Branch
 		}
-		line := fmt.Sprintf("↳ worktree %s", branch)
+		arrow := Styles.Status.Render("↳")
+		line := arrow + " " + Styles.Normal.Render(branch)
 		if status != "" {
 			line += "  " + Styles.Status.Render(status)
 		}
-		return "  " + indicator + " " + Styles.Muted.Render(line)
+		return "  " + indicator + " " + line
 	case project.ResourcePR:
 		if h.resource.PR == nil {
 			return ""
@@ -137,11 +181,14 @@ func (h homeItem) renderResourceTitle() string {
 		if state == "" {
 			state = "open"
 		}
-		line := fmt.Sprintf("#%d %s (%s)", h.resource.PR.Number, h.resource.PR.Title, state)
+		dot := statusDot(prStateColor(state))
+		title := Styles.Muted.Render(fmt.Sprintf("#%d %s", h.resource.PR.Number, h.resource.PR.Title))
+		stateLabel := lipgloss.NewStyle().Foreground(lipgloss.Color(prStateColor(state))).Render(state)
+		line := dot + " " + title + " " + stateLabel
 		if status != "" {
 			line += "  " + Styles.Status.Render(status)
 		}
-		return "  " + indicator + " " + Styles.Muted.Render(line)
+		return "  " + indicator + " " + line
 	default:
 		return ""
 	}
@@ -159,13 +206,9 @@ func (h homeItem) renderBeadTitle() string {
 		indent += "  "
 	}
 
+	dot := statusDot(beadStatusColor(h.bead.Status))
 	beadLine := h.bead.ID + "  " + h.bead.Title
-	beadStatusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorDim))
-	rendered := indent + Styles.Muted.Render(beadLine)
-	if h.bead.Status != "" && h.bead.Status != "open" {
-		rendered += "  " + beadStatusStyle.Render("["+h.bead.Status+"]")
-	}
-	return rendered
+	return indent + dot + " " + Styles.Muted.Render(beadLine)
 }
 
 // HomeView is the primary repo-centric homepage showing repos, worktrees, PRs, and beads.
@@ -195,8 +238,7 @@ func collapseKey(groupIdx, resourceIdx int) string {
 var _ View = (*HomeView)(nil)
 
 func NewHomeView() *HomeView {
-	delegate := newCursorDelegate()
-	l := list.New(nil, delegate, 0, 0)
+	l := list.New(nil, homeDelegate{}, 0, 0)
 	l.Title = ""
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -524,6 +566,7 @@ func (h *HomeView) renderBeadDetailsSection() string {
 		content.WriteString("  " + Styles.Muted.Render("(select a bead to see details)") + "\n")
 	} else {
 		content.WriteString("  " + Styles.Normal.Render(bead.ID+"  "+bead.Title) + "\n")
+		dot := statusDot(beadStatusColor(bead.Status))
 		statusParts := []string{}
 		if bead.Status != "" {
 			statusParts = append(statusParts, bead.Status)
@@ -532,7 +575,7 @@ func (h *HomeView) renderBeadDetailsSection() string {
 			statusParts = append(statusParts, bead.IssueType)
 		}
 		if len(statusParts) > 0 {
-			content.WriteString("  " + Styles.Status.Render(strings.Join(statusParts, "  ")) + "\n")
+			content.WriteString("  " + dot + " " + Styles.Status.Render(strings.Join(statusParts, "  ")) + "\n")
 		}
 
 		maxDescLines := sectionHeight - 4
@@ -603,18 +646,10 @@ func (h *HomeView) getPaneDisplayName(pane project.PaneInfo, index int) string {
 				default:
 					resourceName = item.RepoName
 				}
-				paneType := "shell"
-				if pane.IsAgent {
-					paneType = "agent"
-				}
-				return fmt.Sprintf("%d. %s (%s)", index, resourceName, paneType)
+				return formatPaneLine(index, resourceName, pane.IsAgent)
 			}
 		}
 	}
 
-	paneType := "shell"
-	if pane.IsAgent {
-		paneType = "agent"
-	}
-	return fmt.Sprintf("%d. %s (%s)", index, resourceName, paneType)
+	return formatPaneLine(index, resourceName, pane.IsAgent)
 }

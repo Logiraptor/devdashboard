@@ -5,16 +5,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Theme colors used throughout the UI
+// Theme colors — GitHub dark-mode palette mapped to ANSI-256.
 const (
-	ColorAccent    = "86"  // Cyan/green - for titles, highlights
-	ColorHighlight = "205" // Magenta - for selected items, borders
-	ColorDanger    = "196" // Red - for warnings, errors
-	ColorSuccess   = "42"  // Green - for success indicators
-	ColorMuted     = "241" // Gray - for dimmed text, hints
-	ColorText      = "252" // Light gray - for normal text
-	ColorDim       = "243" // Darker gray - for very dim text
-	ColorWarning   = "208" // Orange - for warning details
+	ColorAccent    = "75"  // Blue (#58a6ff) - for titles, links, highlights
+	ColorHighlight = "141" // Purple (#a371f7) - for selected items, borders
+	ColorDanger    = "203" // Red (#f85149) - for warnings, errors
+	ColorSuccess   = "78"  // Green (#3fb950) - for success indicators
+	ColorMuted     = "245" // Gray (#848d97) - for dimmed text, hints
+	ColorText      = "253" // Light gray (#e6edf3) - for normal text
+	ColorDim       = "240" // Dim (#484f58) - for very dim text
+	ColorWarning   = "178" // Amber (#d29922) - for warning details
 )
 
 // Styles contains shared style definitions used across views and modals.
