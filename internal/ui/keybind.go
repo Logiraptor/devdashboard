@@ -15,7 +15,6 @@ import (
 type KeybindRegistry struct {
 	bindings     map[string]tea.Cmd
 	descriptions map[string]string
-	modeFilter   map[string][]AppMode // nil/empty = applies to all modes
 }
 
 // NewKeybindRegistry creates an empty registry.
@@ -23,7 +22,6 @@ func NewKeybindRegistry() *KeybindRegistry {
 	return &KeybindRegistry{
 		bindings:     make(map[string]tea.Cmd),
 		descriptions: make(map[string]string),
-		modeFilter:   make(map[string][]AppMode),
 	}
 }
 
@@ -35,22 +33,12 @@ func (r *KeybindRegistry) Bind(seq string, cmd tea.Cmd) {
 }
 
 // BindWithDesc registers a key sequence with a description for the help view.
-// The binding applies to all AppModes.
+// The binding applies globally.
 func (r *KeybindRegistry) BindWithDesc(seq string, cmd tea.Cmd, desc string) {
-	r.BindWithDescForMode(seq, cmd, desc, nil)
-}
-
-// BindWithDescForMode registers a key sequence with a description and mode filter.
-// If modes is nil or empty, the binding applies to all modes.
-// Otherwise, hints are only shown when the current AppMode is in modes.
-func (r *KeybindRegistry) BindWithDescForMode(seq string, cmd tea.Cmd, desc string, modes []AppMode) {
 	n := normalizeSeq(seq)
 	r.bindings[n] = cmd
 	if desc != "" {
 		r.descriptions[n] = desc
-	}
-	if len(modes) > 0 {
-		r.modeFilter[n] = modes
 	}
 }
 
@@ -87,19 +75,18 @@ func (r *KeybindRegistry) Hints() map[string]string {
 }
 
 // firstLevelSubmenuLabel maps first-level keys that have sub-bindings to a generic display label.
-// Used to avoid showing a specific sub-action (e.g. "Delete project") when the key opens a submenu.
+// Used to avoid showing a specific sub-action when the key opens a submenu.
 var firstLevelSubmenuLabel = map[string]string{
-	"p": "Project",
+	"p": "Resource",
 	"s": "Shell",
 	"b": "Bead",
 }
 
-// LeaderHints returns hints for SPC-prefixed bindings, filtered by mode.
+// LeaderHints returns hints for SPC-prefixed bindings.
 // When currentSeq is empty, returns first-level hints (e.g. "q", "p", "a").
-// When currentSeq is e.g. "SPC p", returns next-level hints (e.g. "c", "d" on Dashboard; "a", "r" on Project detail).
-// For first-level keys with sub-bindings (HasPrefix), shows a generic label (e.g. "Project") instead of a specific sub-action.
-// Bindings with no mode filter apply to all modes.
-func (r *KeybindRegistry) LeaderHints(currentSeq string, mode AppMode) map[string]string {
+// When currentSeq is e.g. "SPC p", returns next-level hints.
+// For first-level keys with sub-bindings (HasPrefix), show a generic section label.
+func (r *KeybindRegistry) LeaderHints(currentSeq string) map[string]string {
 	out := make(map[string]string)
 	prefix := "SPC "
 	if currentSeq != "" {
@@ -107,9 +94,6 @@ func (r *KeybindRegistry) LeaderHints(currentSeq string, mode AppMode) map[strin
 	}
 	for seq, cmd := range r.bindings {
 		if cmd == nil || !strings.HasPrefix(seq, prefix) {
-			continue
-		}
-		if !r.appliesToMode(seq, mode) {
 			continue
 		}
 		rest := strings.TrimPrefix(seq, prefix)
@@ -133,20 +117,6 @@ func (r *KeybindRegistry) LeaderHints(currentSeq string, mode AppMode) map[strin
 		}
 	}
 	return out
-}
-
-// appliesToMode returns true if the binding applies to the given mode.
-func (r *KeybindRegistry) appliesToMode(seq string, mode AppMode) bool {
-	modes, ok := r.modeFilter[seq]
-	if !ok || len(modes) == 0 {
-		return true
-	}
-	for _, m := range modes {
-		if m == mode {
-			return true
-		}
-	}
-	return false
 }
 
 // normalizeSeq converts tea key strings to our canonical format.
@@ -243,24 +213,21 @@ func keyToSeqPart(s string) string {
 
 // KeyMap implements help.KeyMap for rendering keybind help with bubbles/help.Model.
 // It wraps KeybindRegistry and KeyHandler to generate key.Binding instances
-// from leader hints filtered by the current mode and sequence context.
+// from leader hints in the current sequence context.
 type KeyMap struct {
 	registry   *KeybindRegistry
 	keyHandler *KeyHandler
-	mode       AppMode
 }
 
-// NewKeyMap creates a KeyMap for the given registry, handler, and mode.
-func NewKeyMap(registry *KeybindRegistry, keyHandler *KeyHandler, mode AppMode) help.KeyMap {
+// NewKeyMap creates a KeyMap for the given registry and handler.
+func NewKeyMap(registry *KeybindRegistry, keyHandler *KeyHandler) help.KeyMap {
 	return &KeyMap{
 		registry:   registry,
 		keyHandler: keyHandler,
-		mode:       mode,
 	}
 }
 
 // ShortHelp returns bindings for the short help view.
-// Generates key.Binding instances from LeaderHints filtered by current mode and sequence.
 func (km *KeyMap) ShortHelp() []key.Binding {
 	if km.registry == nil {
 		return nil
@@ -269,7 +236,7 @@ func (km *KeyMap) ShortHelp() []key.Binding {
 	if km.keyHandler != nil && len(km.keyHandler.Buffer) > 0 {
 		currentSeq = strings.Join(km.keyHandler.Buffer, " ")
 	}
-	hints := km.registry.LeaderHints(currentSeq, km.mode)
+	hints := km.registry.LeaderHints(currentSeq)
 	if len(hints) == 0 {
 		return nil
 	}

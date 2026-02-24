@@ -2,9 +2,9 @@
 //
 // Core abstractions:
 //   - View: A screen or major UI region with its own model, update, view (Elm-style)
-//   - AppModel: Root model switching between Dashboard and ProjectDetail modes
-//   - OverlayStack: Modal/popup views layered on top of the active mode
-//   - KeyHandler: Leader-key (SPC) keybind system with mode-aware bindings
+//   - AppModel: Root model that drives the single Home view
+//   - OverlayStack: Modal/popup views layered on top of the active view
+//   - KeyHandler: Leader-key (SPC) keybind system
 //
 // See dev-log/ui.md for design rationale.
 package ui

@@ -14,10 +14,10 @@ import (
 
 // handleOpenShell handles OpenShellMsg by opening a shell pane for the selected resource.
 func (a *appModelAdapter) handleOpenShell() (tea.Model, tea.Cmd) {
-	if a.Mode != ModeProjectDetail || a.Detail == nil {
+	if a.Home == nil {
 		return a, nil
 	}
-	r := a.Detail.SelectedResource()
+	r := a.Home.SelectedResource()
 	if r == nil {
 		a.Status = "No resource selected"
 		a.StatusIsError = true
@@ -38,17 +38,17 @@ func (a *appModelAdapter) handleOpenShell() (tea.Model, tea.Cmd) {
 	if a.Sessions != nil {
 		rk := resourceKeyFromResource(*r)
 		a.Sessions.Register(rk, paneID, session.PaneShell)
-		a.refreshDetailPanes()
+		a.refreshHomePanes()
 	}
 	return a, nil
 }
 
 // handleLaunchAgent handles LaunchAgentMsg by launching an agent pane for the selected resource.
 func (a *appModelAdapter) handleLaunchAgent() (tea.Model, tea.Cmd) {
-	if a.Mode != ModeProjectDetail || a.Detail == nil {
+	if a.Home == nil {
 		return a, nil
 	}
-	r := a.Detail.SelectedResource()
+	r := a.Home.SelectedResource()
 	if r == nil {
 		a.Status = "No resource selected"
 		a.StatusIsError = true
@@ -74,17 +74,17 @@ func (a *appModelAdapter) handleLaunchAgent() (tea.Model, tea.Cmd) {
 	if a.Sessions != nil {
 		rk := resourceKeyFromResource(*r)
 		a.Sessions.Register(rk, paneID, session.PaneAgent)
-		a.refreshDetailPanes()
+		a.refreshHomePanes()
 	}
 	return a, nil
 }
 
 // handleLaunchRalph handles LaunchRalphMsg by launching a Ralph loop or agent fallback.
 func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
-	if a.Mode != ModeProjectDetail || a.Detail == nil {
+	if a.Home == nil {
 		return a, nil
 	}
-	r := a.Detail.SelectedResource()
+	r := a.Home.SelectedResource()
 	if r == nil {
 		a.Status = "No resource selected"
 		a.StatusIsError = true
@@ -113,7 +113,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 		}
 		// Use targeted prompt if cursor is on a specific bead, otherwise use generic prompt.
 		prompt := "Run `bd ready` to see available work. Pick one issue, claim it with `bd update <id> --status in_progress`, implement it, then close it with `bd close <id>`. Follow the rules in .cursor/rules/."
-		selectedBead := a.Detail.SelectedBead()
+		selectedBead := a.Home.SelectedBead()
 		if selectedBead != nil {
 			// Branch to epic-aware flow if the selected bead is an epic
 			if selectedBead.IssueType == "epic" {
@@ -134,7 +134,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 		if a.Sessions != nil {
 			rk := resourceKeyFromResource(*r)
 			a.Sessions.Register(rk, paneID, session.PaneAgent)
-			a.refreshDetailPanes()
+			a.refreshHomePanes()
 		}
 		a.Status = "Ralph binary not found, using agent fallback"
 		a.StatusIsError = false
@@ -149,7 +149,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	}
 	// Escape the workdir path for shell safety (handle spaces, special chars).
 	escapedWorkdir := strings.ReplaceAll(workDir, "'", `'\''`)
-	selectedBead := a.Detail.SelectedBead()
+	selectedBead := a.Home.SelectedBead()
 
 	// --bead is required for ralph - if no bead selected, pick the first open one
 	var beadID string
@@ -175,7 +175,7 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	if a.Sessions != nil {
 		rk := resourceKeyFromResource(*r)
 		a.Sessions.Register(rk, paneID, session.PaneAgent)
-		a.refreshDetailPanes()
+		a.refreshHomePanes()
 	}
 	// User can see ralph output directly in tmux pane
 	a.Status = "Ralph loop launched"
@@ -241,27 +241,17 @@ func (a *appModelAdapter) handleFocusPane(msg FocusPaneMsg) (tea.Model, tea.Cmd)
 
 // handleTick handles tickMsg by refreshing panes and beads periodically.
 func (a *appModelAdapter) handleTick(msg tickMsg) (tea.Model, tea.Cmd) {
-	// Periodic refresh: update panes and beads when in project detail mode
-	if a.Mode == ModeProjectDetail && a.Detail != nil {
-		// Refresh panes (fast, local operation)
-		a.refreshDetailPanes()
-
-		// Refresh beads (slower, runs bd command)
-		// Only refresh if we have resources with worktrees
-		if a.ProjectManager != nil && len(a.Detail.Resources) > 0 {
-			hasWorktrees := false
-			for _, r := range a.Detail.Resources {
-				if r.WorktreePath != "" {
-					hasWorktrees = true
-					break
-				}
-			}
-			if hasWorktrees {
-				return a, tea.Batch(
-					loadResourceBeadsCmd(a.Detail.ProjectName, a.Detail.Resources),
-					tickCmd(), // Schedule next tick
-				)
-			}
+	_ = msg
+	// Periodic refresh: update panes and beads when on home view.
+	if a.Home != nil {
+		a.refreshHomePanes()
+		if groups := a.Home.RepoGroups(); a.ProjectManager != nil && len(groups) > 0 && !a.Home.loadingBeads {
+			a.Home.loadingBeads = true
+			a.Home.buildItems()
+			return a, tea.Batch(
+				loadHomeBeadsCmd(groups),
+				tickCmd(),
+			)
 		}
 		return a, tickCmd()
 	}
@@ -288,17 +278,15 @@ func (a *appModelAdapter) handleDismissModal() (tea.Model, tea.Cmd) {
 
 // handleRefresh handles RefreshMsg by clearing PR cache and reloading the current view.
 func (a *appModelAdapter) handleRefresh() (tea.Model, tea.Cmd) {
-	// Clear PR cache
 	if a.ProjectManager != nil {
 		a.ProjectManager.ClearPRCache()
 	}
-	// Reload current view
-	if a.Mode == ModeDashboard {
-		// Reload dashboard
-		return a, loadProjectsCmd(a.ProjectManager)
-	} else if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
-		// Reload project detail
-		return a, loadProjectDetailResourcesCmd(a.ProjectManager, a.Detail.ProjectName)
+	if a.Home != nil {
+		a.Home.loadingGroups = true
+		a.Home.loadingBeads = false
+	}
+	if a.ProjectManager != nil {
+		return a, loadHomeRepoGroupsCmd(a.ProjectManager)
 	}
 	return a, nil
 }

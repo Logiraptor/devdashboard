@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -11,236 +10,146 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// loadProjectsCmd returns a command that loads projects from disk (phase 1: instant data).
-// It loads project names and repo counts from filesystem only (<10ms), then triggers
-// async enrichment for PR and bead counts. Returns both ProjectsLoadedMsg (instant)
-// and enrichesProjectsCmd (async) for progressive loading.
-func loadProjectsCmd(m *project.Manager) tea.Cmd {
+// loadHomeRepoNamesCmd loads repo names quickly from filesystem data only.
+func loadHomeRepoNamesCmd(m *project.Manager) tea.Cmd {
 	return func() tea.Msg {
 		if m == nil {
-			return ProjectsLoadedMsg{Projects: nil}
+			return HomeRepoNamesLoadedMsg{Groups: nil}
 		}
-		infos, err := m.ListProjects()
+		repos, err := m.ListWorkspaceRepos()
 		if err != nil {
-			return ProjectsLoadedMsg{Projects: nil}
+			return HomeRepoNamesLoadedMsg{Groups: nil, Err: err}
 		}
-		// Phase 1: Instant data (filesystem-only)
-		projects := make([]ProjectSummary, len(infos))
-		for i, info := range infos {
-			projects[i] = ProjectSummary{
-				Name:      info.Name,
-				RepoCount: info.RepoCount,
-				PRCount:   -1, // -1 indicates loading/unknown
-				BeadCount: -1, // -1 indicates loading/unknown
-				Selected:  false,
-				Immutable: info.Immutable,
-			}
-		}
-		return ProjectsLoadedMsg{Projects: projects}
-	}
-}
-
-// enrichesProjectsCmd returns a command that enriches projects with PR and bead counts (phase 2: async data).
-// This runs after the dashboard has rendered with instant data, fetching PRs and beads
-// in parallel across repos and resources for optimal performance.
-func enrichesProjectsCmd(m *project.Manager, projectInfos []project.ProjectInfo) tea.Cmd {
-	return func() tea.Msg {
-		if m == nil {
-			return ProjectsEnrichedMsg{Projects: nil}
-		}
-		projects := make([]ProjectSummary, len(projectInfos))
-
-		// Parallelize across projects (each project's data is independent).
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-
-		for i, info := range projectInfos {
-			wg.Add(1)
-			go func(idx int, info project.ProjectInfo) {
-				defer wg.Done()
-				summary := m.LoadProjectSummary(info.Name)
-				beadCount := countBeadsFromResources(summary.Resources, info.Name)
-
-				mu.Lock()
-				projects[idx] = ProjectSummary{
-					Name:      info.Name,
-					RepoCount: info.RepoCount,
-					PRCount:   summary.PRCount,
-					BeadCount: beadCount,
-					Selected:  false,
-					Immutable: info.Immutable,
-				}
-				mu.Unlock()
-			}(i, info)
-		}
-
-		wg.Wait()
-
-		return ProjectsEnrichedMsg{Projects: projects}
-	}
-}
-
-// loadProjectDetailResourcesCmd returns a command that loads repos instantly (phase 1: instant data).
-// This is filesystem-only and returns immediately with repo resources only.
-func loadProjectDetailResourcesCmd(m *project.Manager, projectName string) tea.Cmd {
-	return func() tea.Msg {
-		if m == nil {
-			return ProjectDetailResourcesLoadedMsg{ProjectName: projectName, Resources: nil}
-		}
-		repos, _ := m.ListProjectRepos(projectName)
-		projDir := m.ProjectDir(projectName)
-
-		// Phase 1: Instant data (filesystem-only, no network calls)
-		resources := make([]project.Resource, 0, len(repos))
+		groups := make([]project.RepoGroup, 0, len(repos))
 		for _, repoName := range repos {
-			worktreePath := filepath.Join(projDir, repoName)
-			resources = append(resources, project.Resource{
-				Kind:         project.ResourceRepo,
-				RepoName:     repoName,
-				WorktreePath: worktreePath,
+			repoPath := m.WorkspaceRepoPath(repoName)
+			groups = append(groups, project.RepoGroup{
+				RepoName:      repoName,
+				WorkspacePath: repoPath,
+				Items: []project.Resource{
+					{
+						Kind:         project.ResourceRepo,
+						RepoName:     repoName,
+						WorktreePath: repoPath,
+					},
+				},
 			})
 		}
-		return ProjectDetailResourcesLoadedMsg{ProjectName: projectName, Resources: resources}
+		return HomeRepoNamesLoadedMsg{Groups: groups}
 	}
 }
 
-// loadProjectPRsCmd returns a command that loads PRs asynchronously (phase 2: async data).
-// Runs ListProjectPRs in a goroutine and returns ProjectPRsLoadedMsg with PRs grouped by repo.
-// DEPRECATED: Use loadProjectResourcesCmd instead for unified API.
-func loadProjectPRsCmd(m *project.Manager, projectName string) tea.Cmd {
+// loadHomeRepoGroupsCmd loads complete repo groups with worktrees and PRs.
+func loadHomeRepoGroupsCmd(m *project.Manager) tea.Cmd {
 	return func() tea.Msg {
 		if m == nil {
-			return ProjectPRsLoadedMsg{ProjectName: projectName, PRsByRepo: nil}
+			return HomeRepoGroupsLoadedMsg{Groups: nil}
 		}
-		prsByRepo, _ := m.ListProjectPRs(projectName)
-		return ProjectPRsLoadedMsg{ProjectName: projectName, PRsByRepo: prsByRepo}
+		groups, err := m.ListRepoGroups()
+		if err != nil {
+			return HomeRepoGroupsLoadedMsg{Groups: nil, Err: err}
+		}
+		return HomeRepoGroupsLoadedMsg{Groups: groups}
 	}
 }
 
-// loadProjectResourcesCmd returns a command that loads resources (repos + PRs) asynchronously (phase 2: async data).
-// Uses the unified ListProjectResources API which loads PRs and returns resources directly.
-// This replaces the old pattern of loadProjectPRsCmd + manual merging.
-func loadProjectResourcesCmd(m *project.Manager, projectName string) tea.Cmd {
+// loadHomeBeadsCmd loads bead data for all group items with worktrees.
+func loadHomeBeadsCmd(groups []project.RepoGroup) tea.Cmd {
 	return func() tea.Msg {
-		if m == nil {
-			return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: nil}
-		}
-		resources := m.ListProjectResources(projectName)
-		return ProjectDetailPRsLoadedMsg{ProjectName: projectName, Resources: resources}
-	}
-}
+		out := cloneRepoGroups(groups)
 
-// loadResourceBeadsCmd returns a command that loads beads asynchronously (phase 3: async data).
-// Spawns goroutines for each resource with a worktree, calls beads.ListForRepo/beads.ListForPR
-// in parallel, and returns ResourceBeadsLoadedMsg with beads grouped by resource index.
-func loadResourceBeadsCmd(projectName string, resources []project.Resource) tea.Cmd {
-	return func() tea.Msg {
-		beadsByResource := make(map[int][]project.BeadInfo)
-
-		// Fetch beads concurrently across resources.
 		var wg sync.WaitGroup
-		var mu sync.Mutex
-
-		for i := range resources {
-			r := &resources[i]
-			if r.WorktreePath == "" {
-				continue
+		for gi := range out {
+			for ii := range out[gi].Items {
+				item := &out[gi].Items[ii]
+				if item.WorktreePath == "" {
+					// Repo headers can be rendered before any worktree exists.
+					continue
+				}
+				wg.Add(1)
+				go func(groupIdx, itemIdx int) {
+					defer wg.Done()
+					resource := out[groupIdx].Items[itemIdx]
+					var bdBeads []beads.Bead
+					var err error
+					switch resource.Kind {
+					case project.ResourceRepo, project.ResourceWorktree:
+						bdBeads, err = beads.ListForRepo(resource.WorktreePath, out[groupIdx].RepoName)
+					case project.ResourcePR:
+						if resource.PR != nil {
+							bdBeads, err = beads.ListForPR(resource.WorktreePath, out[groupIdx].RepoName, resource.PR.Number)
+						}
+					}
+					if err != nil {
+						return
+					}
+					beadInfos := make([]project.BeadInfo, len(bdBeads))
+					for j, b := range bdBeads {
+						beadInfos[j] = project.BeadInfo{
+							ID:          b.ID,
+							Title:       b.Title,
+							Description: b.Description,
+							Status:      b.Status,
+							IssueType:   b.IssueType,
+							Labels:      b.Labels,
+							IsChild:     b.ParentID != "",
+						}
+					}
+					out[groupIdx].Items[itemIdx].Beads = beadInfos
+				}(gi, ii)
 			}
-			wg.Add(1)
-			go func(resIdx int) {
-				defer wg.Done()
-				var bdBeads []beads.Bead
-				var err error
-				switch resources[resIdx].Kind {
-				case project.ResourceRepo:
-					bdBeads, err = beads.ListForRepo(resources[resIdx].WorktreePath, projectName)
-				case project.ResourcePR:
-					if resources[resIdx].PR != nil {
-						bdBeads, err = beads.ListForPR(resources[resIdx].WorktreePath, projectName, resources[resIdx].PR.Number)
-					}
-				}
-				if err != nil {
-					// Silently ignore errors - TUI should continue functioning
-					// Errors are now returned instead of logged, preventing TUI interference
-					return
-				}
-				beadInfos := make([]project.BeadInfo, len(bdBeads))
-				for j, b := range bdBeads {
-					beadInfos[j] = project.BeadInfo{
-						ID:          b.ID,
-						Title:       b.Title,
-						Description: b.Description,
-						Status:      b.Status,
-						IssueType:   b.IssueType,
-						Labels:      b.Labels,
-						IsChild:     b.ParentID != "",
-					}
-				}
-				mu.Lock()
-				beadsByResource[resIdx] = beadInfos
-				mu.Unlock()
-			}(i)
 		}
-
 		wg.Wait()
 
-		return ResourceBeadsLoadedMsg{ProjectName: projectName, BeadsByResource: beadsByResource}
+		return HomeBeadsLoadedMsg{Groups: out}
 	}
 }
 
-// tickCmd returns a command that schedules a tickMsg after 5 seconds.
-// Used for periodic refresh of panes and beads in project detail view.
+// cloneRepoGroups deep-copies groups so bead loaders can mutate concurrently without races.
+func cloneRepoGroups(groups []project.RepoGroup) []project.RepoGroup {
+	out := make([]project.RepoGroup, len(groups))
+	for i, g := range groups {
+		items := make([]project.Resource, len(g.Items))
+		for j, item := range g.Items {
+			items[j] = item
+			if item.PR != nil {
+				prCopy := *item.PR
+				items[j].PR = &prCopy
+			}
+			if item.Worktree != nil {
+				wtCopy := *item.Worktree
+				items[j].Worktree = &wtCopy
+			}
+			if len(item.Panes) > 0 {
+				panesCopy := make([]project.PaneInfo, len(item.Panes))
+				copy(panesCopy, item.Panes)
+				items[j].Panes = panesCopy
+			}
+			if len(item.Beads) > 0 {
+				beadsCopy := make([]project.BeadInfo, len(item.Beads))
+				copy(beadsCopy, item.Beads)
+				for bi := range beadsCopy {
+					if len(item.Beads[bi].Labels) > 0 {
+						labels := make([]string, len(item.Beads[bi].Labels))
+						copy(labels, item.Beads[bi].Labels)
+						beadsCopy[bi].Labels = labels
+					}
+				}
+				items[j].Beads = beadsCopy
+			}
+		}
+		out[i] = project.RepoGroup{
+			RepoName:      g.RepoName,
+			WorkspacePath: g.WorkspacePath,
+			Items:         items,
+		}
+	}
+	return out
+}
+
+// tickCmd returns a command that schedules a periodic refresh tick.
 func tickCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
-}
-
-// countBeadsFromResources counts open beads across the given resources.
-// Used by loadProjectsCmd with resources from LoadProjectSummary to avoid
-// a separate ListProjectResources call (which would redundantly fetch PRs).
-// Bead counting is parallelized across resources for better performance.
-func countBeadsFromResources(resources []project.Resource, projectName string) int {
-	if len(resources) == 0 {
-		return 0
-	}
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	totalCount := 0
-
-	for _, r := range resources {
-		if r.WorktreePath == "" {
-			continue
-		}
-		wg.Add(1)
-		go func(resource project.Resource) {
-			defer wg.Done()
-			var count int
-			var err error
-			switch resource.Kind {
-			case project.ResourceRepo:
-				var bdBeads []beads.Bead
-				bdBeads, err = beads.ListForRepo(resource.WorktreePath, projectName)
-				if err == nil {
-					count = len(bdBeads)
-				}
-			case project.ResourcePR:
-				if resource.PR != nil {
-					var bdBeads []beads.Bead
-					bdBeads, err = beads.ListForPR(resource.WorktreePath, projectName, resource.PR.Number)
-					if err == nil {
-						count = len(bdBeads)
-					}
-				}
-			}
-			// Silently ignore errors - TUI should continue functioning
-			mu.Lock()
-			totalCount += count
-			mu.Unlock()
-		}(r)
-	}
-
-	wg.Wait()
-	return totalCount
 }

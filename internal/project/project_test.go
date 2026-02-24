@@ -1,9 +1,12 @@
 package project
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestManager_ListProjects_Empty(t *testing.T) {
@@ -240,6 +243,157 @@ func TestManager_ListWorkspaceRepos_DetectsGitRepos(t *testing.T) {
 	if len(repos) != 1 || repos[0] != "my-repo" {
 		t.Errorf("expected [my-repo], got %v", repos)
 	}
+}
+
+func TestManager_ListRepoGroups_IncludesWorktreesAndPRs(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	repoPath := filepath.Join(wsDir, "repo-a")
+	wtPath := filepath.Join(dir, "wt", "repo-a-feature")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, ".git"), 0755), "create repo .git dir")
+	require.NoError(t, os.MkdirAll(wtPath, 0755), "create worktree dir")
+
+	binDir := filepath.Join(dir, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0755), "create bin dir")
+
+	gitScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "-C" ]; then
+	repo="$2"
+	shift 2
+fi
+if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+	cat <<EOF
+worktree %s
+HEAD 1111111
+branch refs/heads/main
+
+worktree %s
+HEAD 2222222
+branch refs/heads/feature/one
+EOF
+	exit 0
+fi
+echo "unexpected git args: $*" >&2
+exit 1
+`, repoPath, wtPath)
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "git"), []byte(gitScript), 0755), "write fake git")
+
+	ghScript := `#!/bin/sh
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+	echo "my-org"
+	exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+	search=0
+	for arg in "$@"; do
+		case "$arg" in
+			team-review-requested:*)
+				search=1
+				;;
+		esac
+	done
+	if [ "$search" -eq 1 ]; then
+		echo '[{"number":2,"title":"Team PR","state":"OPEN","headRefName":"feature/two","mergedAt":null}]'
+	else
+		echo '[{"number":1,"title":"My PR","state":"OPEN","headRefName":"feature/one","mergedAt":null}]'
+	fi
+	exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "gh"), []byte(ghScript), 0755), "write fake gh")
+
+	originalPath := os.Getenv("PATH")
+	require.NoError(t, os.Setenv("PATH", binDir+string(os.PathListSeparator)+originalPath), "set PATH")
+	defer func() {
+		_ = os.Setenv("PATH", originalPath)
+	}()
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	groups, err := m.ListRepoGroups()
+	require.NoError(t, err)
+	require.Len(t, groups, 1, "expected 1 repo group")
+
+	group := groups[0]
+	require.Equal(t, "repo-a", group.RepoName, "repo group name")
+	require.Equal(t, repoPath, group.WorkspacePath, "workspace path")
+	require.Len(t, group.Items, 4, "expected 4 resources (repo + worktree + 2 PRs)")
+
+	require.Equal(t, ResourceRepo, group.Items[0].Kind, "first item should be repo")
+	require.Equal(t, ResourceWorktree, group.Items[1].Kind, "second item should be worktree")
+	require.NotNil(t, group.Items[1].Worktree, "worktree metadata should be set")
+	require.Equal(t, "feature/one", group.Items[1].Worktree.Branch, "worktree branch")
+	require.Equal(t, ResourcePR, group.Items[2].Kind, "third item should be PR")
+	require.Equal(t, ResourcePR, group.Items[3].Kind, "fourth item should be PR")
+	require.Equal(t, wtPath, group.Items[2].WorktreePath, "PR on feature/one should match worktree path")
+	require.Empty(t, group.Items[3].WorktreePath, "unmatched PR should not have a worktree path")
+}
+
+func TestManager_ListRepoGroups_UsesPRCache(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	repoPath := filepath.Join(wsDir, "repo-a")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, ".git"), 0755), "create repo .git dir")
+
+	binDir := filepath.Join(dir, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0755), "create bin dir")
+	counterPath := filepath.Join(dir, "gh-pr-count")
+
+	gitScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "-C" ]; then
+	shift 2
+fi
+if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+	cat <<EOF
+worktree %s
+HEAD 1111111
+branch refs/heads/main
+EOF
+	exit 0
+fi
+echo "unexpected git args: $*" >&2
+exit 1
+`, repoPath)
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "git"), []byte(gitScript), 0755), "write fake git")
+
+	ghScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+	echo "my-org"
+	exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+	count=0
+	if [ -f %q ]; then
+		count=$(cat %q)
+	fi
+	count=$((count + 1))
+	echo "$count" > %q
+	echo '[{"number":1,"title":"My PR","state":"OPEN","headRefName":"feature/one","mergedAt":null}]'
+	exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`, counterPath, counterPath, counterPath)
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "gh"), []byte(ghScript), 0755), "write fake gh")
+
+	originalPath := os.Getenv("PATH")
+	require.NoError(t, os.Setenv("PATH", binDir+string(os.PathListSeparator)+originalPath), "set PATH")
+	defer func() {
+		_ = os.Setenv("PATH", originalPath)
+	}()
+
+	m := NewManager(filepath.Join(dir, "projects"), wsDir)
+	first, err := m.ListRepoGroups()
+	require.NoError(t, err)
+	second, err := m.ListRepoGroups()
+	require.NoError(t, err)
+	require.Len(t, first, 1, "first call should return one repo group")
+	require.Len(t, second, 1, "second call should return one repo group")
+
+	content, err := os.ReadFile(counterPath)
+	require.NoError(t, err, "read gh counter")
+	require.Equal(t, "2\n", string(content), "expected exactly 2 gh pr list calls (first run only)")
 }
 
 func TestManager_EnsurePRWorktree_ReusesExisting(t *testing.T) {

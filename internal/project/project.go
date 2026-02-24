@@ -1,5 +1,4 @@
-// Package project provides project management functionality for devdeploy.
-// It handles project CRUD operations, worktree management, and PR resource tracking.
+// Package project provides project and repository management for devdeploy.
 package project
 
 import (
@@ -230,6 +229,79 @@ func (m *Manager) ListWorkspaceRepos() ([]string, error) {
 	return out, nil
 }
 
+// WorkspaceRepoPath returns the absolute workspace path for a repo.
+func (m *Manager) WorkspaceRepoPath(repoName string) string {
+	return filepath.Join(m.workspace, repoName)
+}
+
+// ListRepoGroups returns all workspace repos grouped with related resources.
+// Each group includes:
+// - the repo resource itself
+// - non-main worktree resources from `git worktree list`
+// - open PR resources filtered to authored + team review requested
+func (m *Manager) ListRepoGroups() ([]RepoGroup, error) {
+	repos, err := m.ListWorkspaceRepos()
+	if err != nil {
+		return nil, err
+	}
+	if len(repos) == 0 {
+		return []RepoGroup{}, nil
+	}
+
+	groups := make([]RepoGroup, 0, len(repos))
+	for _, repoName := range repos {
+		repoPath := filepath.Join(m.workspace, repoName)
+		items := []Resource{
+			{
+				Kind:         ResourceRepo,
+				RepoName:     repoName,
+				WorktreePath: repoPath,
+			},
+		}
+
+		nonMainByBranch := make(map[string]string)
+		if entries, wtErr := worktree.ParseWorktreeList(repoPath); wtErr == nil {
+			repoPathClean := filepath.Clean(repoPath)
+			for _, entry := range entries {
+				wtPathClean := filepath.Clean(entry.Path)
+				if wtPathClean == repoPathClean {
+					continue // skip the main repo checkout
+				}
+				items = append(items, Resource{
+					Kind:         ResourceWorktree,
+					RepoName:     repoName,
+					Worktree:     &WorktreeInfo{Branch: entry.Branch, Path: entry.Path},
+					WorktreePath: entry.Path,
+				})
+				if entry.Branch != "" {
+					nonMainByBranch[entry.Branch] = entry.Path
+				}
+			}
+		}
+
+		prs, prErr := m.listFilteredPRsInRepo(repoPath, "open", 30)
+		if prErr == nil {
+			for i := range prs {
+				prCopy := prs[i]
+				items = append(items, Resource{
+					Kind:         ResourcePR,
+					RepoName:     repoName,
+					PR:           &prCopy,
+					WorktreePath: nonMainByBranch[prCopy.HeadRefName],
+				})
+			}
+		}
+
+		groups = append(groups, RepoGroup{
+			RepoName:      repoName,
+			WorkspacePath: repoPath,
+			Items:         items,
+		})
+	}
+
+	return groups, nil
+}
+
 // ListProjectRepos returns worktree subdir names in the project.
 // For implicit projects, returns just the repo name (the project IS the repo).
 func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
@@ -422,6 +494,27 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 
 	// Invalidate cache for this project since a worktree was removed
 	m.ClearPRCacheForProject(projectName)
+	return nil
+}
+
+// RemoveWorktreePath removes a specific git worktree path for a repo.
+// If worktreePath does not exist, this is a no-op.
+func (m *Manager) RemoveWorktreePath(repoName, worktreePath string) error {
+	if worktreePath == "" {
+		return nil
+	}
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		return nil
+	}
+	srcRepo := filepath.Join(m.workspace, repoName)
+	wtMgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return err
+	}
+	if err := wtMgr.Remove(worktreePath, false); err != nil {
+		return fmt.Errorf("git worktree remove: %w", err)
+	}
+	m.ClearPRCache()
 	return nil
 }
 
@@ -650,9 +743,8 @@ func (m *Manager) CountPRs(projectName string) int {
 	return result.PRCount
 }
 
-// DashboardSummary holds pre-computed data for the dashboard view.
-// It is produced by LoadProjectSummary which fetches open PRs once
-// per repo, avoiding redundant gh pr list calls.
+// DashboardSummary holds pre-computed data for compatibility wrappers.
+// It is produced by LoadProjectSummary which fetches open PRs once per repo.
 type DashboardSummary struct {
 	PRCount   int        // total open PRs across all repos
 	Resources []Resource // repos + open PR resources (no merged PRs)
@@ -660,10 +752,6 @@ type DashboardSummary struct {
 
 // LoadProjectSummary fetches open PRs once per repo and returns both
 // the PR count and a resource list suitable for bead counting.
-// Unlike ListProjectResources (which also fetches merged PRs for the
-// detail view), this method only fetches open PRs — sufficient for
-// the dashboard where merged PRs are not displayed.
-// PR fetching is parallelized across repos for better performance.
 // This is a wrapper around LoadPRs for backward compatibility.
 func (m *Manager) LoadProjectSummary(projectName string) DashboardSummary {
 	result, err := m.LoadPRs(projectName, PRLoadOptions{
@@ -683,20 +771,8 @@ const mergedPRsLimit = 5
 // mergedPRMaxAge is the maximum age of merged PRs to show (20 hours).
 const mergedPRMaxAge = 20 * time.Hour
 
-// PR Loading Consolidation
-//
-// All PR loading goes through LoadPRs(), which is the unified method for fetching PRs.
-// The following convenience wrapper methods exist for backward compatibility and
-// specific use cases:
-//
-//   - CountPRs() - returns PR count only
-//   - LoadProjectSummary() - returns DashboardSummary (PRCount + Resources) for dashboard
-//   - ListProjectPRs() - returns []RepoPRs grouped by repository
-//   - ListProjectResources() - returns []Resource (repos + PRs) for detail view
-//
-// All wrappers use LoadPRs() internally, ensuring consistent behavior and caching.
-// PR fetching is parallelized across repos, and within each repo, open and merged
-// PRs are fetched concurrently when both are requested.
+// All PR loading flows through LoadPRs(). Convenience wrappers below keep
+// backward-compatible return shapes for existing call sites.
 
 // PRFormat specifies the output format for LoadPRs.
 type PRFormat int
@@ -996,7 +1072,7 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 // The worktree path is: <projectDir>/<repoName>-pr-<number>.
 // Returns the absolute worktree path.
 func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, branchName string) (string, error) {
-	if m.IsImplicitProject(projectName) {
+	if projectName != "" && m.IsImplicitProject(projectName) {
 		return "", ErrImmutable
 	}
 	srcRepo := filepath.Join(m.workspace, repoName)
@@ -1010,7 +1086,14 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 	}
 
 	wtName := fmt.Sprintf("%s-pr-%d", repoName, prNumber)
-	dstPath := filepath.Join(m.projectDir(projectName), wtName)
+	baseDir := m.projectDir(projectName)
+	if projectName == "" {
+		baseDir = filepath.Join(m.projectsBase, "_repos", strings.ToLower(strings.ReplaceAll(repoName, " ", "-")))
+	}
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return "", err
+	}
+	dstPath := filepath.Join(baseDir, wtName)
 
 	// Check if our target worktree path already exists and is a git worktree.
 	if info, err := os.Stat(dstPath); err == nil && info.IsDir() {
@@ -1062,8 +1145,12 @@ func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, b
 		}
 	}
 
-	// Invalidate cache for this project since a new worktree was created
-	m.ClearPRCacheForProject(projectName)
+	// Invalidate cache for this project (or all repos in home mode) since a new worktree was created.
+	if projectName != "" {
+		m.ClearPRCacheForProject(projectName)
+	} else {
+		m.ClearPRCache()
+	}
 	return dstPath, nil
 }
 
@@ -1107,9 +1194,7 @@ func (m *Manager) buildResourcesFromReposAndPRs(repos []string, projDir string, 
 
 
 // ListProjectResources builds a flat []Resource from repos and PRs (open + merged).
-// Resources are ordered repo-first: each repo Resource is followed by
-// its PR Resources, enabling tree-style rendering in the UI.
-// Use this for the project detail view where merged PRs are displayed.
+// Resources are ordered repo-first: each repo Resource is followed by its PR resources.
 // This is a wrapper around LoadPRs for backward compatibility.
 func (m *Manager) ListProjectResources(projectName string) []Resource {
 	result, err := m.LoadPRs(projectName, PRLoadOptions{

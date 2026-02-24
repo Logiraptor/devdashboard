@@ -462,7 +462,7 @@ func TestLoadPRs_CacheClear(t *testing.T) {
 
 	// Verify cache is populated.
 	m.prCacheMu.RLock()
-	cachePopulated := m.prCache != nil && len(m.prCache) > 0
+	cachePopulated := len(m.prCache) > 0
 	m.prCacheMu.RUnlock()
 
 	if !cachePopulated {
@@ -474,7 +474,7 @@ func TestLoadPRs_CacheClear(t *testing.T) {
 
 	// Verify cache is cleared.
 	m.prCacheMu.RLock()
-	cacheCleared := m.prCache == nil || len(m.prCache) == 0
+	cacheCleared := len(m.prCache) == 0
 	m.prCacheMu.RUnlock()
 
 	if !cacheCleared {

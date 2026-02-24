@@ -44,17 +44,8 @@ func (m *ConfirmModal) WithDetails(details string) *ConfirmModal {
 	return m
 }
 
-// NewDeleteProjectConfirmModal creates a confirmation modal for deleting a project.
-func NewDeleteProjectConfirmModal(projectName string) *ConfirmModal {
-	return NewConfirmModal(
-		"Delete project?",
-		fmt.Sprintf("Project: %s", projectName),
-		func() tea.Msg { return DeleteProjectMsg{Name: projectName} },
-	)
-}
-
 // NewRemoveResourceConfirmModal creates a confirmation modal for removing a resource.
-func NewRemoveResourceConfirmModal(projectName string, r project.Resource) *ConfirmModal {
+func NewRemoveResourceConfirmModal(r project.Resource) *ConfirmModal {
 	label := resourceLabel(r)
 	var details string
 	if r.WorktreePath != "" {
@@ -69,8 +60,7 @@ func NewRemoveResourceConfirmModal(projectName string, r project.Resource) *Conf
 		label,
 		func() tea.Msg {
 			return RemoveResourceMsg{
-				ProjectName: projectName,
-				Resource:    r,
+				Resource: r,
 			}
 		},
 	)
@@ -89,6 +79,11 @@ func resourceLabel(r project.Resource) string {
 			return fmt.Sprintf("PR #%d: %s (%s)", r.PR.Number, r.PR.Title, r.RepoName)
 		}
 		return fmt.Sprintf("PR (%s)", r.RepoName)
+	case project.ResourceWorktree:
+		if r.Worktree != nil && r.Worktree.Branch != "" {
+			return fmt.Sprintf("Worktree: %s@%s", r.RepoName, r.Worktree.Branch)
+		}
+		return fmt.Sprintf("Worktree: %s", r.RepoName)
 	default:
 		return fmt.Sprintf("Repo: %s", r.RepoName)
 	}

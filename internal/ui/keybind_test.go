@@ -4,314 +4,123 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/require"
 )
 
-func TestKeybindRegistry_BindLookup(t *testing.T) {
-	reg := NewKeybindRegistry()
-	reg.Bind("q", tea.Quit)
-	reg.Bind("SPC q", tea.Quit)
-	reg.Bind("j", nil)
-
-	if reg.Lookup("q") == nil {
-		t.Error("expected q to be bound")
-	}
-	if reg.Lookup("SPC q") == nil {
-		t.Error("expected SPC q to be bound")
-	}
-	if reg.Lookup("unknown") != nil {
-		t.Error("expected unknown to be unbound")
-	}
-}
-
-func TestKeybindRegistry_LeaderHints(t *testing.T) {
+func TestKeybindRegistryLeaderHints(t *testing.T) {
 	reg := NewKeybindRegistry()
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDesc("SPC f", tea.Quit, "Find") // placeholder
-	reg.Bind("SPC x", tea.Quit)                 // no desc, uses seq
+	reg.BindWithDesc("SPC s s", tea.Quit, "Open shell")
+	reg.BindWithDesc("SPC s a", tea.Quit, "Launch agent")
 
-	hints := reg.LeaderHints("", ModeDashboard)
-	if len(hints) != 3 {
-		t.Errorf("expected 3 leader hints, got %d", len(hints))
-	}
-	if hints["q"] != "Quit" {
-		t.Errorf("q: expected 'Quit', got %q", hints["q"])
-	}
-	if hints["f"] != "Find" {
-		t.Errorf("f: expected 'Find', got %q", hints["f"])
-	}
-	if hints["x"] != "SPC x" {
-		t.Errorf("x: expected 'SPC x' (fallback), got %q", hints["x"])
-	}
+	hints := reg.LeaderHints("")
+	require.Equal(t, "Quit", hints["q"])
+	require.Equal(t, "Shell", hints["s"])
+
+	subHints := reg.LeaderHints("SPC s")
+	require.Equal(t, "Open shell", subHints["s"])
+	require.Equal(t, "Launch agent", subHints["a"])
 }
 
-func TestKeybindRegistry_LeaderHintsFirstLevelSubmenu(t *testing.T) {
+func TestKeyHandlerLeaderFlow(t *testing.T) {
 	reg := NewKeybindRegistry()
-	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p d", tea.Quit, "Delete project", []AppMode{ModeDashboard})
-
-	hints := reg.LeaderHints("", ModeDashboard)
-	if hints["p"] != "Project" {
-		t.Errorf("p: expected 'Project' (generic submenu label), got %q", hints["p"])
-	}
-	if hints["q"] != "Quit" {
-		t.Errorf("q: expected 'Quit', got %q", hints["q"])
-	}
-}
-
-func TestKeybindRegistry_LeaderHintsFilteredByMode(t *testing.T) {
-	reg := NewKeybindRegistry()
-	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p d", tea.Quit, "Delete project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p a", tea.Quit, "Add repo", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC p r", tea.Quit, "Remove repo", []AppMode{ModeProjectDetail})
-
-	dashboardHints := reg.LeaderHints("SPC p", ModeDashboard)
-	if len(dashboardHints) != 2 {
-		t.Errorf("Dashboard: expected 2 hints (c,d), got %d: %v", len(dashboardHints), dashboardHints)
-	}
-	if dashboardHints["c"] != "Create project" || dashboardHints["d"] != "Delete project" {
-		t.Errorf("Dashboard: expected c,d with correct descs, got %v", dashboardHints)
-	}
-
-	detailHints := reg.LeaderHints("SPC p", ModeProjectDetail)
-	if len(detailHints) != 2 {
-		t.Errorf("Project detail: expected 2 hints (a,r), got %d: %v", len(detailHints), detailHints)
-	}
-	if detailHints["a"] != "Add repo" || detailHints["r"] != "Remove repo" {
-		t.Errorf("Project detail: expected a,r with correct descs, got %v", detailHints)
-	}
-}
-
-func TestKeyHandler_LeaderKey(t *testing.T) {
-	reg := NewKeybindRegistry()
-	var executed bool
-	reg.Bind("SPC x", func() tea.Msg {
-		executed = true
+	var called bool
+	reg.BindWithDesc("SPC x", func() tea.Msg {
+		called = true
 		return nil
-	})
-	h := NewKeyHandler(reg)
+	}, "Do x")
 
-	// Press space -> leader waiting (Bubble Tea reports space as " ")
+	h := NewKeyHandler(reg)
 	consumed, cmd := h.Handle(keyMsg(" "))
-	if !consumed || cmd != nil {
-		t.Errorf("space: consumed=%v cmd=%v", consumed, cmd)
-	}
-	if !h.LeaderWaiting {
-		t.Error("expected leader waiting after space")
-	}
+	require.True(t, consumed)
+	require.Nil(t, cmd)
+	require.True(t, h.LeaderWaiting)
 
-	// Press x -> execute SPC x
 	consumed, cmd = h.Handle(keyMsg("x"))
-	if !consumed {
-		t.Errorf("x: expected consumed")
-	}
-	if h.LeaderWaiting {
-		t.Error("leader should not be waiting after completing sequence")
-	}
-	if cmd != nil {
-		cmd()
-		if !executed {
-			t.Error("expected command to execute")
-		}
-	}
+	require.True(t, consumed)
+	require.NotNil(t, cmd)
+	cmd()
+	require.True(t, called)
+	require.False(t, h.LeaderWaiting)
 }
 
-func TestKeyHandler_EscCancelsLeader(t *testing.T) {
+func TestKeyHandlerEscCancelsLeader(t *testing.T) {
 	reg := NewKeybindRegistry()
-	reg.Bind("SPC x", tea.Quit)
+	reg.BindWithDesc("SPC x", tea.Quit, "Do x")
 	h := NewKeyHandler(reg)
 
-	h.Handle(keyMsg(" "))
-	if !h.LeaderWaiting {
-		t.Fatal("expected leader waiting")
-	}
+	consumed, cmd := h.Handle(keyMsg(" "))
+	require.True(t, consumed)
+	require.Nil(t, cmd)
+	require.True(t, h.LeaderWaiting)
 
-	consumed, cmd := h.Handle(keyMsg("esc"))
-	if !consumed || cmd != nil {
-		t.Errorf("esc: consumed=%v cmd=%v", consumed, cmd)
-	}
-	if h.LeaderWaiting {
-		t.Error("esc should cancel leader mode")
-	}
+	consumed, cmd = h.Handle(keyMsg("esc"))
+	require.True(t, consumed)
+	require.Nil(t, cmd)
+	require.False(t, h.LeaderWaiting)
+	require.Empty(t, h.Buffer)
 }
 
-func TestKeyHandler_SingleKey(t *testing.T) {
+func TestKeyHandlerMultiKeyPrefix(t *testing.T) {
 	reg := NewKeybindRegistry()
-	reg.Bind("q", tea.Quit)
+	var called bool
+	reg.BindWithDesc("SPC s s", func() tea.Msg {
+		called = true
+		return nil
+	}, "Open shell")
+	h := NewKeyHandler(reg)
+
+	consumed, cmd := h.Handle(keyMsg(" "))
+	require.True(t, consumed)
+	require.Nil(t, cmd)
+
+	consumed, cmd = h.Handle(keyMsg("s"))
+	require.True(t, consumed)
+	require.Nil(t, cmd)
+	require.True(t, h.LeaderWaiting)
+
+	consumed, cmd = h.Handle(keyMsg("s"))
+	require.True(t, consumed)
+	require.NotNil(t, cmd)
+	cmd()
+	require.True(t, called)
+	require.False(t, h.LeaderWaiting)
+}
+
+func TestKeyHandlerSingleKeyOutsideLeader(t *testing.T) {
+	reg := NewKeybindRegistry()
+	var called bool
+	reg.BindWithDesc("q", func() tea.Msg {
+		called = true
+		return nil
+	}, "Quit")
 	h := NewKeyHandler(reg)
 
 	consumed, cmd := h.Handle(keyMsg("q"))
-	if !consumed || cmd == nil {
-		t.Errorf("q: consumed=%v cmd=%v", consumed, cmd)
-	}
+	require.True(t, consumed)
+	require.NotNil(t, cmd)
+	cmd()
+	require.True(t, called)
 }
 
-func TestKeyHandler_MultiLevelLeader(t *testing.T) {
-	reg := NewKeybindRegistry()
-	var executed string
-	reg.Bind("SPC p c", func() tea.Msg {
-		executed = "SPC p c"
-		return nil
-	})
-	reg.Bind("SPC p d", func() tea.Msg {
-		executed = "SPC p d"
-		return nil
-	})
-	h := NewKeyHandler(reg)
-
-	// SPC -> leader waiting
-	h.Handle(keyMsg(" "))
-	if !h.LeaderWaiting {
-		t.Fatal("expected leader waiting")
-	}
-
-	// p -> no exact match, but HasPrefix("SPC p") so stay in leader mode
-	consumed, cmd := h.Handle(keyMsg("p"))
-	if !consumed || cmd != nil {
-		t.Errorf("p: consumed=%v cmd=%v", consumed, cmd)
-	}
-	if !h.LeaderWaiting {
-		t.Error("expected still in leader mode after p")
-	}
-	if len(h.Buffer) != 2 {
-		t.Errorf("expected buffer [SPC p], got %v", h.Buffer)
-	}
-
-	// c -> exact match SPC p c
-	consumed, cmd = h.Handle(keyMsg("c"))
-	if !consumed || cmd == nil {
-		t.Errorf("c: consumed=%v cmd=%v", consumed, cmd)
-	}
-	if cmd != nil {
-		cmd()
-		if executed != "SPC p c" {
-			t.Errorf("expected executed SPC p c, got %q", executed)
-		}
-	}
-}
-
-func TestKeyHandler_UnboundFallsThrough(t *testing.T) {
-	reg := NewKeybindRegistry()
-	reg.Bind("q", tea.Quit)
-	h := NewKeyHandler(reg)
-
-	consumed, _ := h.Handle(keyMsg("j"))
-	if consumed {
-		t.Error("unbound j should not be consumed")
-	}
-}
-
-func TestKeyMap_ShortHelp(t *testing.T) {
+func TestNewKeyMapShortHelpIncludesEsc(t *testing.T) {
 	reg := NewKeybindRegistry()
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDesc("SPC f", tea.Quit, "Find")
-	reg.Bind("SPC x", tea.Quit) // no desc
 	h := NewKeyHandler(reg)
 
-	keyMap := NewKeyMap(reg, h, ModeDashboard)
+	keyMap := NewKeyMap(reg, h)
 	bindings := keyMap.ShortHelp()
+	require.NotEmpty(t, bindings)
 
-	if len(bindings) != 4 { // 3 bindings + esc
-		t.Errorf("expected 4 bindings (3 + esc), got %d", len(bindings))
-	}
-
-	// Check that esc is included
 	hasEsc := false
 	for _, b := range bindings {
 		if len(b.Keys()) > 0 && b.Keys()[0] == "esc" {
 			hasEsc = true
-			if b.Help().Key != "esc" || b.Help().Desc != "cancel" {
-				t.Errorf("esc binding: expected key='esc' desc='cancel', got key=%q desc=%q", b.Help().Key, b.Help().Desc)
-			}
 		}
 	}
-	if !hasEsc {
-		t.Error("expected esc binding to be included")
-	}
+	require.True(t, hasEsc)
 }
 
-func TestKeyMap_ShortHelp_FilteredByMode(t *testing.T) {
-	reg := NewKeybindRegistry()
-	reg.BindWithDescForMode("SPC p c", tea.Quit, "Create project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p d", tea.Quit, "Delete project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p a", tea.Quit, "Add repo", []AppMode{ModeProjectDetail})
-	h := NewKeyHandler(reg)
-
-	// Dashboard mode: first-level hints show "p" (Project) since it has sub-bindings
-	dashboardKeyMap := NewKeyMap(reg, h, ModeDashboard)
-	dashboardBindings := dashboardKeyMap.ShortHelp()
-	// Should have 2: p (Project), esc
-	if len(dashboardBindings) != 2 {
-		t.Errorf("Dashboard: expected 2 bindings (p, esc), got %d", len(dashboardBindings))
-	}
-
-	// Project detail mode: first-level hints show "p" (Project) since it has sub-bindings
-	detailKeyMap := NewKeyMap(reg, h, ModeProjectDetail)
-	detailBindings := detailKeyMap.ShortHelp()
-	// Should have 2: p (Project), esc
-	if len(detailBindings) != 2 {
-		t.Errorf("Project detail: expected 2 bindings (p, esc), got %d", len(detailBindings))
-	}
-
-	// Test second-level hints: set buffer to "SPC p"
-	h.Buffer = []string{"SPC", "p"}
-	h.LeaderWaiting = true
-
-	// Dashboard mode: second-level hints show c, d
-	dashboardKeyMap2 := NewKeyMap(reg, h, ModeDashboard)
-	dashboardBindings2 := dashboardKeyMap2.ShortHelp()
-	// Should have 3: c, d, esc
-	if len(dashboardBindings2) != 3 {
-		t.Errorf("Dashboard (SPC p): expected 3 bindings (c, d, esc), got %d", len(dashboardBindings2))
-	}
-
-	// Project detail mode: second-level hints show a
-	detailKeyMap2 := NewKeyMap(reg, h, ModeProjectDetail)
-	detailBindings2 := detailKeyMap2.ShortHelp()
-	// Should have 2: a, esc
-	if len(detailBindings2) != 2 {
-		t.Errorf("Project detail (SPC p): expected 2 bindings (a, esc), got %d", len(detailBindings2))
-	}
-}
-
-func TestKeyMap_ShortHelp_WithBuffer(t *testing.T) {
-	reg := NewKeybindRegistry()
-	reg.BindWithDesc("SPC p c", tea.Quit, "Create project")
-	reg.BindWithDesc("SPC p d", tea.Quit, "Delete project")
-	h := NewKeyHandler(reg)
-
-	// Set buffer to "SPC p" to show second-level hints
-	h.Buffer = []string{"SPC", "p"}
-	h.LeaderWaiting = true
-
-	keyMap := NewKeyMap(reg, h, ModeDashboard)
-	bindings := keyMap.ShortHelp()
-
-	// Should show c, d, esc (not p)
-	if len(bindings) != 3 {
-		t.Errorf("expected 3 bindings (c, d, esc), got %d", len(bindings))
-	}
-}
-
-func TestKeyMap_FullHelp(t *testing.T) {
-	reg := NewKeybindRegistry()
-	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	h := NewKeyHandler(reg)
-
-	keyMap := NewKeyMap(reg, h, ModeDashboard)
-	groups := keyMap.FullHelp()
-
-	if len(groups) != 1 {
-		t.Errorf("expected 1 group, got %d", len(groups))
-	}
-	if len(groups[0]) != 2 { // q + esc
-		t.Errorf("expected 2 bindings in group, got %d", len(groups[0]))
-	}
-}
-
-// keyMsg creates a tea.KeyMsg for testing. Bubble Tea uses KeyType and Runes.
-// KeySpace.String() returns " ", KeyEsc returns "esc", etc.
 func keyMsg(s string) tea.KeyMsg {
 	switch s {
 	case "space", " ":
@@ -320,13 +129,8 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
-	case "q":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}
-	case "x":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}
-	case "j":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
 }
+

@@ -13,16 +13,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// AppModel is the root model implementing Option E (Dashboard + Detail).
-// It switches between Dashboard and ProjectDetail modes.
+// AppModel is the root model for the home-centric UI.
 type AppModel struct {
-	Mode            AppMode
-	Dashboard       *DashboardView
-	Detail          *ProjectDetailView
+	Home            *HomeView
 	KeyHandler      *KeyHandler
 	ProjectManager  *project.Manager
 	AgentRunner     agent.Runner
-	Sessions        *session.Tracker // tracks panes across all resources; persists across project switches
+	Sessions        *session.Tracker // tracks panes across all resources
 	Overlays        OverlayStack
 	Status          string // Error or success message; cleared on keypress
 	StatusIsError   bool
@@ -43,7 +40,7 @@ type appModelAdapter struct {
 func (a *appModelAdapter) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		a.currentView().Init(),
-		loadProjectsCmd(a.ProjectManager),
+		loadHomeRepoNamesCmd(a.ProjectManager),
 		tickCmd(), // Start periodic refresh ticker
 	}
 	return tea.Batch(cmds...)
@@ -55,52 +52,26 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		a.termWidth = wsm.Width
 		a.termHeight = wsm.Height
-		if a.Detail != nil {
-			a.Detail.SetSize(wsm.Width, wsm.Height)
+		if a.Home != nil {
+			a.Home.SetSize(wsm.Width, wsm.Height)
 		}
 	}
 
 	switch msg := msg.(type) {
 	case progress.Event:
 		return a.handleProgressEvent(msg)
-	case ProjectsLoadedMsg:
-		return a.handleProjectsLoaded(msg)
-	case ProjectsEnrichedMsg:
-		return a.handleProjectsEnriched(msg)
-	case ProjectDetailResourcesLoadedMsg:
-		return a.handleProjectDetailResourcesLoaded(msg)
-	case ProjectPRsLoadedMsg:
-		return a.handleProjectPRsLoaded(msg)
-	case ProjectDetailPRsLoadedMsg:
-		return a.handleProjectDetailPRsLoaded(msg)
-	case ProjectDetailBeadsLoadedMsg:
-		return a.handleProjectDetailBeadsLoaded(msg)
-	case ResourceBeadsLoadedMsg:
-		return a.handleResourceBeadsLoaded(msg)
+	case HomeRepoNamesLoadedMsg:
+		return a.handleHomeRepoNamesLoaded(msg)
+	case HomeRepoGroupsLoadedMsg:
+		return a.handleHomeRepoGroupsLoaded(msg)
+	case HomeBeadsLoadedMsg:
+		return a.handleHomeBeadsLoaded(msg)
 	case RefreshBeadsMsg:
 		return a.handleRefreshBeads()
 	case CloseBeadMsg:
 		return a.handleCloseBead()
-	case CreateProjectMsg:
-		return a.handleCreateProject(msg)
-	case DeleteProjectMsg:
-		return a.handleDeleteProject(msg)
-	case AddRepoMsg:
-		return a.handleAddRepo(msg)
-	case RemoveRepoMsg:
-		return a.handleRemoveRepo(msg)
-	case ShowCreateProjectMsg:
-		return a.handleShowCreateProject()
-	case ShowDeleteProjectMsg:
-		return a.handleShowDeleteProject()
-	case ShowAddRepoMsg:
-		return a.handleShowAddRepo()
-	case ShowRemoveRepoMsg:
-		return a.handleShowRemoveRepo()
 	case ShowRemoveResourceMsg:
 		return a.handleShowRemoveResource()
-	case ShowProjectSwitcherMsg:
-		return a.handleShowProjectSwitcher()
 	case RemoveResourceMsg:
 		return a.handleRemoveResource(msg)
 	case DismissModalMsg:
@@ -119,8 +90,6 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleShowPane()
 	case FocusPaneMsg:
 		return a.handleFocusPane(msg)
-	case SelectProjectMsg:
-		return a.handleSelectProject(msg)
 	case tickMsg:
 		return a.handleTick(msg)
 	case tea.KeyMsg:
@@ -142,42 +111,19 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// App-level navigation
-		if a.Mode == ModeProjectDetail && msg.String() == "esc" {
-			// Don't intercept esc if list is filtering - let it cancel the filter
-			if a.Detail != nil && a.Detail.IsFiltering() {
-				// Let it fall through to view update
-			} else {
-				a.Mode = ModeDashboard
-				a.Detail = nil
-				// Ensure Dashboard exists and initialize it to trigger re-render
-				if a.Dashboard == nil {
-					a.Dashboard = NewDashboardView()
-				}
-				return a, a.Dashboard.Init()
-			}
-		}
-		if a.Mode == ModeProjectDetail && msg.String() == "enter" {
+		if msg.String() == "enter" {
 			// Don't intercept enter if list is filtering - let it confirm the filter
-			if a.Detail != nil && a.Detail.IsFiltering() {
+			if a.Home != nil && a.Home.IsFiltering() {
 				// Let it fall through to view update
 			} else {
 				return a, func() tea.Msg { return OpenShellMsg{} }
 			}
 		}
-		if a.Mode == ModeProjectDetail && msg.String() == "d" {
-			return a, func() tea.Msg { return ShowRemoveResourceMsg{} }
-		}
-		if a.Mode == ModeDashboard && msg.String() == "enter" {
-			d := a.Dashboard
-			if d != nil {
-				idx := d.Selected()
-				if idx >= 0 && idx < len(d.Projects) {
-					p := d.Projects[idx]
-					return a, func() tea.Msg {
-						return SelectProjectMsg{Name: p.Name, Immutable: p.Immutable}
-					}
-				}
+		if msg.String() == "d" {
+			if a.Home != nil && a.Home.IsFiltering() {
+				break
 			}
+			return a, func() tea.Msg { return ShowRemoveResourceMsg{} }
 		}
 	}
 
@@ -199,7 +145,7 @@ func (a *appModelAdapter) View() string {
 
 	// Add keybind help if leader waiting
 	if a.KeyHandler != nil && a.KeyHandler.LeaderWaiting {
-		mainView += "\n" + RenderKeybindHelp(a.KeyHandler, a.Mode)
+		mainView += "\n" + RenderKeybindHelp(a.KeyHandler)
 	}
 
 	// Add overlays
@@ -222,42 +168,25 @@ func (a *appModelAdapter) View() string {
 }
 
 func (a *appModelAdapter) currentView() View {
-	switch a.Mode {
-	case ModeDashboard:
-		if a.Dashboard != nil {
-			return a.Dashboard
-		}
-		return NewDashboardView()
-	case ModeProjectDetail:
-		if a.Detail != nil {
-			return a.Detail
-		}
+	if a.Home != nil {
+		return a.Home
 	}
-	return NewDashboardView()
+	return NewHomeView()
 }
 
 func (a *appModelAdapter) setCurrentView(v View) {
-	switch a.Mode {
-	case ModeDashboard:
-		if d, ok := v.(*DashboardView); ok {
-			a.Dashboard = d
-		}
-	case ModeProjectDetail:
-		if p, ok := v.(*ProjectDetailView); ok {
-			a.Detail = p
-		}
+	if h, ok := v.(*HomeView); ok {
+		a.Home = h
 	}
 }
 
 // getGlobalPanesForDisplay returns all active panes globally as project.PaneInfo for display.
-// Used by ProjectDetailView to show panes from all projects.
+// Used by HomeView to show panes from all resources.
 func (a *AppModel) getGlobalPanesForDisplay() []project.PaneInfo {
 	if a.Sessions == nil {
 		return nil
 	}
-	// Get global panes using the same logic as getOrderedActivePanes
 	trackedPanes := a.getOrderedActivePanes()
-	// Convert to project.PaneInfo format
 	panes := make([]project.PaneInfo, len(trackedPanes))
 	for i, tp := range trackedPanes {
 		panes[i] = project.PaneInfo{
@@ -268,75 +197,45 @@ func (a *AppModel) getGlobalPanesForDisplay() []project.PaneInfo {
 	return panes
 }
 
-// newProjectDetailView creates a detail view with resources from disk/gh.
-// Returns the view and a command to start progressive loading.
-func (a *AppModel) newProjectDetailView(name string) (*ProjectDetailView, tea.Cmd) {
-	v := NewProjectDetailView(name)
-	if a.termWidth > 0 || a.termHeight > 0 {
-		v.SetSize(a.termWidth, a.termHeight)
-	}
-	// Set global panes getter so the view can show panes from all projects
-	v.getGlobalPanes = a.getGlobalPanesForDisplay
-	// Phase 1: Load repos instantly (filesystem-only, no GitHub API calls)
-	var cmds []tea.Cmd
-	if a.ProjectManager != nil {
-		v.Resources = a.ProjectManager.ListProjectReposOnly(name)
-		v.loadingPRs = true // PRs will be loaded asynchronously
-		v.loadingBeads = false
-		v.buildItems()                          // Build list items immediately so repos are visible
-		cmds = append(cmds, v.spinnerTickCmd()) // Start spinner for PR loading
-	}
-	// Prune dead panes then populate pane info from session tracker
-	if a.Sessions != nil {
-		_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
-		a.populateResourcePanes(v)
-	}
-	// Return command to trigger async enrichment (PRs, then beads)
-	if a.ProjectManager != nil {
-		cmds = append(cmds, loadProjectResourcesCmd(a.ProjectManager, name))
-		return v, tea.Batch(cmds...)
-	}
-	if len(cmds) > 0 {
-		return v, tea.Batch(cmds...)
-	}
-	return v, nil
-}
-
-// populateResourcePanes attaches tracked pane info to each resource in the detail view.
-func (a *AppModel) populateResourcePanes(v *ProjectDetailView) {
+// populateHomePanes attaches tracked pane info to each resource in the home view.
+func (a *AppModel) populateHomePanes(v *HomeView) {
 	if a.Sessions == nil {
 		return
 	}
-	for i := range v.Resources {
-		r := &v.Resources[i]
-		rk := resourceKeyFromResource(*r)
-		tracked := a.Sessions.PanesForResource(rk)
-		r.Panes = nil
-		for _, tp := range tracked {
-			r.Panes = append(r.Panes, project.PaneInfo{
-				ID:      tp.PaneID,
-				IsAgent: tp.Type == session.PaneAgent,
-			})
+	groups := v.RepoGroups()
+	for gi := range groups {
+		for ri := range groups[gi].Items {
+			r := &groups[gi].Items[ri]
+			rk := resourceKeyFromResource(*r)
+			tracked := a.Sessions.PanesForResource(rk)
+			r.Panes = nil
+			for _, tp := range tracked {
+				r.Panes = append(r.Panes, project.PaneInfo{
+					ID:      tp.PaneID,
+					IsAgent: tp.Type == session.PaneAgent,
+				})
+			}
 		}
 	}
+	v.SetRepoGroups(groups)
 }
 
-// refreshDetailPanes prunes dead panes then updates the current detail view's
+// refreshHomePanes prunes dead panes then updates the current home view's
 // pane info from the session tracker.
-func (a *AppModel) refreshDetailPanes() {
-	if a.Detail != nil && a.Sessions != nil {
+func (a *AppModel) refreshHomePanes() {
+	if a.Home != nil && a.Sessions != nil {
 		_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
-		a.populateResourcePanes(a.Detail)
+		a.populateHomePanes(a.Home)
 	}
 }
 
 // selectedResourceLatestPaneID returns the pane ID of the most recently registered
 // pane for the currently selected resource, or "" if none.
 func (a *AppModel) selectedResourceLatestPaneID() string {
-	if a.Mode != ModeProjectDetail || a.Detail == nil || a.Sessions == nil {
+	if a.Home == nil || a.Sessions == nil {
 		return ""
 	}
-	r := a.Detail.SelectedResource()
+	r := a.Home.SelectedResource()
 	if r == nil {
 		return ""
 	}
@@ -350,7 +249,7 @@ func (a *AppModel) selectedResourceLatestPaneID() string {
 
 // getOrderedActivePanes returns all active panes ordered for indexing (1-9).
 // Panes are ordered by resource key (repos first, then PRs), then by creation time.
-// Works globally from anywhere in devdeploy, not just from project detail view.
+// Works globally from anywhere in devdeploy.
 func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 	if a.Sessions == nil {
 		return nil
@@ -396,7 +295,6 @@ func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
 }
 
 // getPaneDisplayName returns a human-readable name for a pane.
-// Works globally without requiring Detail view.
 func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 	var name string
 	if pane.ResourceKey.Kind() == "pr" {
@@ -419,7 +317,7 @@ func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
 // ensureResourceWorktree returns the worktree path for a resource, creating
 // a PR worktree if needed. For repo resources, it uses the existing WorktreePath.
 // For PR resources with no worktree, it calls EnsurePRWorktree to create one
-// and updates the resource's WorktreePath in the detail view.
+// and updates the resource's WorktreePath in the home view.
 func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 	if r.WorktreePath != "" {
 		return r.WorktreePath, nil
@@ -427,14 +325,14 @@ func (a *AppModel) ensureResourceWorktree(r *project.Resource) (string, error) {
 	if r.Kind != project.ResourcePR || r.PR == nil {
 		return "", fmt.Errorf("no worktree for this resource")
 	}
-	if a.ProjectManager == nil || a.Detail == nil {
+	if a.ProjectManager == nil {
 		return "", fmt.Errorf("no project manager available")
 	}
 	if r.PR.HeadRefName == "" {
 		return "", fmt.Errorf("pr #%d has no branch name", r.PR.Number)
 	}
 	wtPath, err := a.ProjectManager.EnsurePRWorktree(
-		a.Detail.ProjectName, r.RepoName, r.PR.Number, r.PR.HeadRefName,
+		"", r.RepoName, r.PR.Number, r.PR.HeadRefName,
 	)
 	if err != nil {
 		return "", err
@@ -465,36 +363,25 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	reg.BindWithDesc("q", tea.Quit, "Quit")
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDescForMode("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC s a", func() tea.Msg { return LaunchAgentMsg{} }, "Launch agent", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC s r", func() tea.Msg { return LaunchRalphMsg{} }, "Ralph loop", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC p c", func() tea.Msg { return ShowCreateProjectMsg{} }, "Create project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p d", func() tea.Msg { return ShowDeleteProjectMsg{} }, "Delete project", []AppMode{ModeDashboard})
-	reg.BindWithDescForMode("SPC p a", func() tea.Msg { return ShowAddRepoMsg{} }, "Add repo", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC p r", func() tea.Msg { return ShowRemoveRepoMsg{} }, "Remove repo", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource", []AppMode{ModeProjectDetail})
-	reg.BindWithDesc("SPC p l", func() tea.Msg { return ShowProjectSwitcherMsg{} }, "Switch project")
-	// SPC r: refresh beads for all resources in project detail view
-	reg.BindWithDescForMode("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
-	// SPC b: bead operations
-	reg.BindWithDescForMode("SPC b r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads", []AppMode{ModeProjectDetail})
-	reg.BindWithDescForMode("SPC b c", func() tea.Msg { return CloseBeadMsg{} }, "Close bead", []AppMode{ModeProjectDetail})
+	reg.BindWithDesc("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell")
+	reg.BindWithDesc("SPC s a", func() tea.Msg { return LaunchAgentMsg{} }, "Launch agent")
+	reg.BindWithDesc("SPC s r", func() tea.Msg { return LaunchRalphMsg{} }, "Ralph loop")
+	reg.BindWithDesc("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane")
+	reg.BindWithDesc("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane")
+	reg.BindWithDesc("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource")
+	reg.BindWithDesc("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads")
+	reg.BindWithDesc("SPC b r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads")
+	reg.BindWithDesc("SPC b c", func() tea.Msg { return CloseBeadMsg{} }, "Close bead")
 	// SPC 1-9: focus pane by index
 	for i := 1; i <= 9; i++ {
 		num := i
-		reg.BindWithDescForMode(
+		reg.BindWithDesc(
 			fmt.Sprintf("SPC %d", i),
 			func() tea.Msg { return FocusPaneMsg{Index: num} },
 			fmt.Sprintf("Focus pane %d", i),
-			[]AppMode{ModeProjectDetail},
 		)
 	}
 	model := &AppModel{
-		Mode:           ModeDashboard,
-		Dashboard:      NewDashboardView(),
-		Detail:         nil,
 		KeyHandler:     NewKeyHandler(reg),
 		ProjectManager: projMgr,
 		AgentRunner:    &agent.StubRunner{},
@@ -505,6 +392,12 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	for _, opt := range opts {
 		opt(model)
 	}
+
+	// Ensure home view has access to global pane ordering from this model.
+	if model.Home == nil {
+		model.Home = NewHomeView()
+	}
+	model.Home.getGlobalPanes = model.getGlobalPanesForDisplay
 
 	return model
 }
