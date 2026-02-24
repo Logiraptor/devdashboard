@@ -33,17 +33,17 @@ const (
 type GlobalPanesGetter func() []project.PaneInfo
 
 type homeItem struct {
-	itemType     homeItemType
-	groupIdx     int
-	resourceIdx  int
-	beadIdx      int
-	resource     *project.Resource
-	bead         *project.BeadInfo
-	loadingBeads bool
+	itemType    homeItemType
+	groupIdx    int
+	resourceIdx int
+	beadIdx     int
+	resource    *project.Resource
+	bead        *project.BeadInfo
 }
 
 func newCursorDelegate() list.DefaultDelegate {
 	delegate := list.NewDefaultDelegate()
+	delegate.SetSpacing(0)
 	delegate.ShowDescription = false
 	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(ColorAccent)).
@@ -52,10 +52,7 @@ func newCursorDelegate() list.DefaultDelegate {
 	return delegate
 }
 
-func resourceStatusWithLoading(r project.Resource, loadingBeads bool) string {
-	if loadingBeads {
-		return "loading beads..."
-	}
+func resourceStatus(r project.Resource) string {
 	if len(r.Panes) > 0 {
 		return fmt.Sprintf("%d panes", len(r.Panes))
 	}
@@ -100,7 +97,7 @@ func (h homeItem) renderResourceTitle() string {
 	if h.resource == nil {
 		return ""
 	}
-	status := resourceStatusWithLoading(*h.resource, h.loadingBeads)
+	status := resourceStatus(*h.resource)
 	switch h.resource.Kind {
 	case project.ResourceRepo:
 		line := h.resource.RepoName + "/"
@@ -378,24 +375,22 @@ func (h *HomeView) buildItems() {
 	for gi := range h.repoGroups {
 		for ri := range h.repoGroups[gi].Items {
 			resourceItem := homeItem{
-				itemType:     homeItemTypeResource,
-				groupIdx:     gi,
-				resourceIdx:  ri,
-				beadIdx:      -1,
-				resource:     &h.repoGroups[gi].Items[ri],
-				bead:         nil,
-				loadingBeads: h.loadingBeads,
+				itemType:    homeItemTypeResource,
+				groupIdx:    gi,
+				resourceIdx: ri,
+				beadIdx:     -1,
+				resource:    &h.repoGroups[gi].Items[ri],
+				bead:        nil,
 			}
 			h.items = append(h.items, resourceItem)
 			for bi := range h.repoGroups[gi].Items[ri].Beads {
 				beadItem := homeItem{
-					itemType:     homeItemTypeBead,
-					groupIdx:     gi,
-					resourceIdx:  ri,
-					beadIdx:      bi,
-					resource:     &h.repoGroups[gi].Items[ri],
-					bead:         &h.repoGroups[gi].Items[ri].Beads[bi],
-					loadingBeads: h.loadingBeads,
+					itemType:    homeItemTypeBead,
+					groupIdx:    gi,
+					resourceIdx: ri,
+					beadIdx:     bi,
+					resource:    &h.repoGroups[gi].Items[ri],
+					bead:        &h.repoGroups[gi].Items[ri].Beads[bi],
 				}
 				h.items = append(h.items, beadItem)
 			}
