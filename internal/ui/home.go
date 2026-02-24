@@ -39,6 +39,9 @@ type homeItem struct {
 	beadIdx     int
 	resource    *project.Resource
 	bead        *project.BeadInfo
+
+	hasBeads    bool
+	isCollapsed bool
 }
 
 func newCursorDelegate() list.DefaultDelegate {
@@ -93,18 +96,29 @@ func (h homeItem) Description() string {
 	return ""
 }
 
+func (h homeItem) collapseIndicator() string {
+	if !h.hasBeads {
+		return " "
+	}
+	if h.isCollapsed {
+		return "▶"
+	}
+	return "▼"
+}
+
 func (h homeItem) renderResourceTitle() string {
 	if h.resource == nil {
 		return ""
 	}
 	status := resourceStatus(*h.resource)
+	indicator := h.collapseIndicator()
 	switch h.resource.Kind {
 	case project.ResourceRepo:
 		line := h.resource.RepoName + "/"
 		if status != "" {
 			line += "  " + Styles.Status.Render(status)
 		}
-		return "◆ " + Styles.Normal.Render(line)
+		return indicator + " " + Styles.Normal.Render(line)
 	case project.ResourceWorktree:
 		branch := "(unknown branch)"
 		if h.resource.Worktree != nil && h.resource.Worktree.Branch != "" {
@@ -114,7 +128,7 @@ func (h homeItem) renderResourceTitle() string {
 		if status != "" {
 			line += "  " + Styles.Status.Render(status)
 		}
-		return "  ◦ " + Styles.Muted.Render(line)
+		return "  " + indicator + " " + Styles.Muted.Render(line)
 	case project.ResourcePR:
 		if h.resource.PR == nil {
 			return ""
@@ -127,7 +141,7 @@ func (h homeItem) renderResourceTitle() string {
 		if status != "" {
 			line += "  " + Styles.Status.Render(status)
 		}
-		return "  ◇ " + Styles.Muted.Render(line)
+		return "  " + indicator + " " + Styles.Muted.Render(line)
 	default:
 		return ""
 	}
@@ -161,6 +175,8 @@ type HomeView struct {
 	list  list.Model
 	items []homeItem
 
+	collapsed map[string]bool
+
 	termWidth  int
 	termHeight int
 
@@ -169,6 +185,10 @@ type HomeView struct {
 	spinner       spinner.Model
 
 	getGlobalPanes GlobalPanesGetter
+}
+
+func collapseKey(groupIdx, resourceIdx int) string {
+	return fmt.Sprintf("%d:%d", groupIdx, resourceIdx)
 }
 
 // Ensure HomeView implements View.
@@ -194,6 +214,7 @@ func NewHomeView() *HomeView {
 		repoGroups:     nil,
 		list:           l,
 		items:          nil,
+		collapsed:      make(map[string]bool),
 		loadingGroups:  false,
 		loadingBeads:   false,
 		spinner:        s,
@@ -292,6 +313,10 @@ func (h *HomeView) Update(msg tea.Msg) (View, tea.Cmd) {
 		if msg.String() == "esc" && !h.IsFiltering() {
 			return h, nil
 		}
+		if msg.String() == "tab" && !h.IsFiltering() {
+			h.toggleCollapse()
+			return h, nil
+		}
 	case spinner.TickMsg:
 		if h.loadingGroups || h.loadingBeads {
 			var cmd tea.Cmd
@@ -306,6 +331,33 @@ func (h *HomeView) Update(msg tea.Msg) (View, tea.Cmd) {
 	h.updateFilterStyles()
 	cmds = append(cmds, cmd)
 	return h, tea.Batch(cmds...)
+}
+
+func (h *HomeView) toggleCollapse() {
+	idx := h.list.Index()
+	if idx < 0 || idx >= len(h.items) {
+		return
+	}
+	item := h.items[idx]
+	gi, ri := item.groupIdx, item.resourceIdx
+
+	if !item.hasBeads && item.itemType == homeItemTypeResource {
+		return
+	}
+
+	key := collapseKey(gi, ri)
+	h.collapsed[key] = !h.collapsed[key]
+
+	h.buildItems()
+
+	// After rebuilding, select the parent resource so the cursor
+	// doesn't jump to an unrelated item when collapsing from a bead.
+	for i, it := range h.items {
+		if it.itemType == homeItemTypeResource && it.groupIdx == gi && it.resourceIdx == ri {
+			h.list.Select(i)
+			break
+		}
+	}
 }
 
 func (h *HomeView) View() string {
@@ -374,6 +426,8 @@ func (h *HomeView) buildItems() {
 	h.items = nil
 	for gi := range h.repoGroups {
 		for ri := range h.repoGroups[gi].Items {
+			key := collapseKey(gi, ri)
+			beads := h.repoGroups[gi].Items[ri].Beads
 			resourceItem := homeItem{
 				itemType:    homeItemTypeResource,
 				groupIdx:    gi,
@@ -381,9 +435,14 @@ func (h *HomeView) buildItems() {
 				beadIdx:     -1,
 				resource:    &h.repoGroups[gi].Items[ri],
 				bead:        nil,
+				hasBeads:    len(beads) > 0,
+				isCollapsed: h.collapsed[key],
 			}
 			h.items = append(h.items, resourceItem)
-			for bi := range h.repoGroups[gi].Items[ri].Beads {
+			if h.collapsed[key] {
+				continue
+			}
+			for bi := range beads {
 				beadItem := homeItem{
 					itemType:    homeItemTypeBead,
 					groupIdx:    gi,

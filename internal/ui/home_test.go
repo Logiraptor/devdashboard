@@ -73,6 +73,8 @@ func TestHomeView_BuildItems(t *testing.T) {
 	require.Equal(t, 0, v.items[0].groupIdx)
 	require.Equal(t, 0, v.items[0].resourceIdx)
 	require.Equal(t, -1, v.items[0].beadIdx)
+	require.True(t, v.items[0].hasBeads, "repo-a has beads")
+	require.False(t, v.items[0].isCollapsed)
 
 	require.Equal(t, homeItemTypeBead, v.items[1].itemType)
 	require.Equal(t, 0, v.items[1].groupIdx)
@@ -81,13 +83,45 @@ func TestHomeView_BuildItems(t *testing.T) {
 
 	require.Equal(t, homeItemTypeResource, v.items[2].itemType)
 	require.Equal(t, 1, v.items[2].resourceIdx)
+	require.False(t, v.items[2].hasBeads, "worktree has no beads")
 
 	require.Equal(t, homeItemTypeResource, v.items[3].itemType)
 	require.Equal(t, 2, v.items[3].resourceIdx)
+	require.True(t, v.items[3].hasBeads, "PR has beads")
 
 	require.Equal(t, homeItemTypeBead, v.items[4].itemType)
 	require.Equal(t, 2, v.items[4].resourceIdx)
 	require.Equal(t, 0, v.items[4].beadIdx)
+}
+
+func TestHomeView_CollapseExpand(t *testing.T) {
+	v := NewHomeView()
+	v.SetRepoGroups(testHomeRepoGroups())
+	require.Len(t, v.items, 5)
+
+	// Select the first resource (repo-a) and collapse it
+	v.list.Select(0)
+	v.toggleCollapse()
+	require.Len(t, v.items, 4, "collapsing repo-a hides its 1 bead")
+	require.True(t, v.items[0].isCollapsed)
+	require.Equal(t, 0, v.list.Index(), "cursor stays on the collapsed resource")
+
+	// Expand it again
+	v.toggleCollapse()
+	require.Len(t, v.items, 5, "expanding restores the bead")
+	require.False(t, v.items[0].isCollapsed)
+
+	// Select a bead and collapse its parent — cursor should move to parent
+	v.list.Select(4) // bead under PR resource (items[3])
+	require.Equal(t, homeItemTypeBead, v.items[4].itemType)
+	v.toggleCollapse()
+	require.Len(t, v.items, 4, "collapsing from bead hides the bead")
+	require.Equal(t, homeItemTypeResource, v.items[v.list.Index()].itemType, "cursor moved to parent resource")
+
+	// Toggling on a resource with no beads is a no-op
+	v.list.Select(2) // worktree, no beads
+	v.toggleCollapse()
+	require.Len(t, v.items, 4, "no change when resource has no beads")
 }
 
 func TestHomeView_SelectedResourceAndBead(t *testing.T) {
