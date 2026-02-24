@@ -100,6 +100,11 @@ func (a *appModelAdapter) handleRemoveResource(msg RemoveResourceMsg) (tea.Model
 // handleShowAddRepo handles ShowAddRepoMsg by showing the add repo picker modal.
 func (a *appModelAdapter) handleShowAddRepo() (tea.Model, tea.Cmd) {
 	if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
+		if a.Detail.Immutable {
+			a.Status = "Cannot add repos to an implicit project"
+			a.StatusIsError = true
+			return a, nil
+		}
 		repos, err := a.ProjectManager.ListWorkspaceRepos()
 		if err != nil {
 			a.Status = fmt.Sprintf("List workspace repos: %v", err)
@@ -117,6 +122,11 @@ func (a *appModelAdapter) handleShowAddRepo() (tea.Model, tea.Cmd) {
 // handleShowRemoveRepo handles ShowRemoveRepoMsg by showing the remove repo picker modal.
 func (a *appModelAdapter) handleShowRemoveRepo() (tea.Model, tea.Cmd) {
 	if a.Mode == ModeProjectDetail && a.Detail != nil && a.ProjectManager != nil {
+		if a.Detail.Immutable {
+			a.Status = "Cannot remove repos from an implicit project"
+			a.StatusIsError = true
+			return a, nil
+		}
 		repos, err := a.ProjectManager.ListProjectRepos(a.Detail.ProjectName)
 		if err != nil {
 			a.Status = fmt.Sprintf("List project repos: %v", err)
@@ -134,6 +144,11 @@ func (a *appModelAdapter) handleShowRemoveRepo() (tea.Model, tea.Cmd) {
 // handleShowRemoveResource handles ShowRemoveResourceMsg by showing the remove resource confirmation modal.
 func (a *appModelAdapter) handleShowRemoveResource() (tea.Model, tea.Cmd) {
 	if a.Mode != ModeProjectDetail || a.Detail == nil {
+		return a, nil
+	}
+	if a.Detail.Immutable {
+		a.Status = "Cannot remove resources from an implicit project"
+		a.StatusIsError = true
 		return a, nil
 	}
 	r := a.Detail.SelectedResource()

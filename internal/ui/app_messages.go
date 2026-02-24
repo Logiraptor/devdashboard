@@ -7,7 +7,8 @@ import (
 
 // SelectProjectMsg is sent when user selects a project from the dashboard.
 type SelectProjectMsg struct {
-	Name string
+	Name      string
+	Immutable bool // true for implicit workspace-repo projects
 }
 
 // OpenShellMsg is sent when user opens a shell on the selected resource (SPC s s or Enter).

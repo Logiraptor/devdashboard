@@ -69,6 +69,12 @@ func (a *appModelAdapter) handleSelectProject(msg SelectProjectMsg) (tea.Model, 
 	}
 	a.Mode = ModeProjectDetail
 	detail, cmd := a.newProjectDetailView(msg.Name)
+	// Detect immutability from the message or from the manager.
+	immutable := msg.Immutable
+	if !immutable && a.ProjectManager != nil {
+		immutable = a.ProjectManager.IsImplicitProject(msg.Name)
+	}
+	detail.Immutable = immutable
 	a.Detail = detail
 	return a, tea.Batch(a.Detail.Init(), cmd, tickCmd()) // Start ticker when entering detail mode
 }
@@ -129,8 +135,13 @@ func (a *appModelAdapter) handleShowDeleteProject() (tea.Model, tea.Cmd) {
 	if a.Mode == ModeDashboard && a.Dashboard != nil && len(a.Dashboard.Projects) > 0 {
 		idx := a.Dashboard.Selected()
 		if idx >= 0 && idx < len(a.Dashboard.Projects) {
-			name := a.Dashboard.Projects[idx].Name
-			modal := NewDeleteProjectConfirmModal(name)
+			p := a.Dashboard.Projects[idx]
+			if p.Immutable {
+				a.Status = "Cannot delete an implicit project"
+				a.StatusIsError = true
+				return a, nil
+			}
+			modal := NewDeleteProjectConfirmModal(p.Name)
 			a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
 			return a, modal.Init()
 		}

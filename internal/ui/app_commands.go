@@ -33,6 +33,7 @@ func loadProjectsCmd(m *project.Manager) tea.Cmd {
 				PRCount:   -1, // -1 indicates loading/unknown
 				BeadCount: -1, // -1 indicates loading/unknown
 				Selected:  false,
+				Immutable: info.Immutable,
 			}
 		}
 		return ProjectsLoadedMsg{Projects: projects}
@@ -55,21 +56,22 @@ func enrichesProjectsCmd(m *project.Manager, projectInfos []project.ProjectInfo)
 
 		for i, info := range projectInfos {
 			wg.Add(1)
-			go func(idx int, projectName string, repoCount int) {
+			go func(idx int, info project.ProjectInfo) {
 				defer wg.Done()
-				summary := m.LoadProjectSummary(projectName)
-				beadCount := countBeadsFromResources(summary.Resources, projectName)
+				summary := m.LoadProjectSummary(info.Name)
+				beadCount := countBeadsFromResources(summary.Resources, info.Name)
 
 				mu.Lock()
 				projects[idx] = ProjectSummary{
-					Name:      projectName,
-					RepoCount: repoCount,
+					Name:      info.Name,
+					RepoCount: info.RepoCount,
 					PRCount:   summary.PRCount,
 					BeadCount: beadCount,
 					Selected:  false,
+					Immutable: info.Immutable,
 				}
 				mu.Unlock()
-			}(i, info.Name, info.RepoCount)
+			}(i, info)
 		}
 
 		wg.Wait()

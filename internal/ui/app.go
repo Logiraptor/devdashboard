@@ -172,8 +172,9 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if d != nil {
 				idx := d.Selected()
 				if idx >= 0 && idx < len(d.Projects) {
+					p := d.Projects[idx]
 					return a, func() tea.Msg {
-						return SelectProjectMsg{Name: d.Projects[idx].Name}
+						return SelectProjectMsg{Name: p.Name, Immutable: p.Immutable}
 					}
 				}
 			}

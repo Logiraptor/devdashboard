@@ -499,6 +499,190 @@ func TestManager_RemovePRWorktree_NoOp(t *testing.T) {
 	}
 }
 
+// --- Implicit project tests ---
+
+func setupWorkspaceRepo(t *testing.T, wsDir, repoName string) string {
+	t.Helper()
+	repoPath := filepath.Join(wsDir, repoName)
+	_ = os.MkdirAll(filepath.Join(repoPath, ".git"), 0755)
+	_ = os.WriteFile(filepath.Join(repoPath, ".git", "HEAD"), []byte("ref: refs/heads/main"), 0644)
+	return repoPath
+}
+
+func TestManager_IsImplicitProject(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	setupWorkspaceRepo(t, wsDir, "my-repo")
+	_ = m.CreateProject("real-proj")
+
+	if !m.IsImplicitProject("my-repo") {
+		t.Error("workspace repo without a project should be implicit")
+	}
+	if m.IsImplicitProject("real-proj") {
+		t.Error("real project should not be implicit")
+	}
+	if m.IsImplicitProject("nonexistent") {
+		t.Error("nonexistent name should not be implicit")
+	}
+}
+
+func TestManager_IsImplicitProject_RealProjectOverrides(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	setupWorkspaceRepo(t, wsDir, "overlap")
+	_ = m.CreateProject("overlap")
+
+	if m.IsImplicitProject("overlap") {
+		t.Error("repo with a same-named real project should not be implicit")
+	}
+}
+
+func TestManager_ListProjects_IncludesImplicit(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	_ = m.CreateProject("real-proj")
+	setupWorkspaceRepo(t, wsDir, "my-repo")
+
+	projects, err := m.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("expected 2 projects (1 real + 1 implicit), got %d", len(projects))
+	}
+
+	byName := map[string]ProjectInfo{}
+	for _, p := range projects {
+		byName[p.Name] = p
+	}
+
+	real := byName["real-proj"]
+	if real.Immutable {
+		t.Error("real project should not be immutable")
+	}
+
+	implicit := byName["my-repo"]
+	if !implicit.Immutable {
+		t.Error("implicit project should be immutable")
+	}
+	if implicit.RepoCount != 1 {
+		t.Errorf("implicit project should have RepoCount=1, got %d", implicit.RepoCount)
+	}
+	if implicit.Dir != filepath.Join(wsDir, "my-repo") {
+		t.Errorf("implicit project Dir: want %s, got %s", filepath.Join(wsDir, "my-repo"), implicit.Dir)
+	}
+}
+
+func TestManager_ListProjects_ImplicitSuppressedByRealProject(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	setupWorkspaceRepo(t, wsDir, "overlap")
+	_ = m.CreateProject("overlap")
+
+	projects, err := m.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project (real shadows implicit), got %d", len(projects))
+	}
+	if projects[0].Immutable {
+		t.Error("should be the real project, not the implicit one")
+	}
+}
+
+func TestManager_ListProjectRepos_Implicit(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	setupWorkspaceRepo(t, wsDir, "my-repo")
+
+	repos, err := m.ListProjectRepos("my-repo")
+	if err != nil {
+		t.Fatalf("ListProjectRepos: %v", err)
+	}
+	if len(repos) != 1 || repos[0] != "my-repo" {
+		t.Errorf("expected [my-repo], got %v", repos)
+	}
+}
+
+func TestManager_ListProjectReposOnly_Implicit(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	repoPath := setupWorkspaceRepo(t, wsDir, "my-repo")
+
+	resources := m.ListProjectReposOnly("my-repo")
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	r := resources[0]
+	if r.Kind != ResourceRepo {
+		t.Errorf("expected ResourceRepo, got %s", r.Kind)
+	}
+	if r.RepoName != "my-repo" {
+		t.Errorf("expected RepoName=my-repo, got %s", r.RepoName)
+	}
+	if r.WorktreePath != repoPath {
+		t.Errorf("expected WorktreePath=%s, got %s", repoPath, r.WorktreePath)
+	}
+}
+
+func TestManager_ImplicitProject_MutationsBlocked(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projBase := filepath.Join(dir, "projects")
+	_ = os.MkdirAll(wsDir, 0755)
+	_ = os.MkdirAll(projBase, 0755)
+	m := NewManager(projBase, wsDir)
+
+	setupWorkspaceRepo(t, wsDir, "my-repo")
+
+	if err := m.AddRepo("my-repo", "anything"); err != ErrImmutable {
+		t.Errorf("AddRepo: expected ErrImmutable, got %v", err)
+	}
+	if err := m.RemoveRepo("my-repo", "anything"); err != ErrImmutable {
+		t.Errorf("RemoveRepo: expected ErrImmutable, got %v", err)
+	}
+	if err := m.DeleteProject("my-repo"); err != ErrImmutable {
+		t.Errorf("DeleteProject: expected ErrImmutable, got %v", err)
+	}
+	if _, err := m.EnsurePRWorktree("my-repo", "my-repo", 42, "branch"); err != ErrImmutable {
+		t.Errorf("EnsurePRWorktree: expected ErrImmutable, got %v", err)
+	}
+	if err := m.RemovePRWorktree("my-repo", "my-repo", 42); err != ErrImmutable {
+		t.Errorf("RemovePRWorktree: expected ErrImmutable, got %v", err)
+	}
+}
+
 func TestMergePRs_Deduplicates(t *testing.T) {
 	a := []PRInfo{
 		{Number: 1, Title: "PR one", State: "OPEN"},

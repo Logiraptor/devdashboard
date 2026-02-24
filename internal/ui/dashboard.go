@@ -16,6 +16,7 @@ type ProjectSummary struct {
 	PRCount   int
 	BeadCount int
 	Selected  bool
+	Immutable bool // true for implicit workspace-repo projects
 }
 
 // projectItem implements list.Item for ProjectSummary.
@@ -25,6 +26,10 @@ type projectItem struct {
 
 func (p projectItem) FilterValue() string { return p.Name }
 func (p projectItem) Title() string {
+	if p.Immutable {
+		return "  " + p.Name + "/"
+	}
+
 	// Format PR count (show "…" if loading, i.e., -1)
 	prCountStr := "…"
 	if p.PRCount >= 0 {

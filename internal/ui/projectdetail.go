@@ -187,6 +187,7 @@ type GlobalPanesGetter func() []project.PaneInfo
 // ProjectDetailView shows a selected project with resources (repos + PRs).
 type ProjectDetailView struct {
 	ProjectName string
+	Immutable   bool               // true for implicit workspace-repo projects
 	Resources   []project.Resource // unified resource list (repos + PRs)
 
 	// List-based navigation

@@ -125,18 +125,18 @@ type ProjectInfo struct {
 	Name      string
 	RepoCount int
 	Dir       string
+	Immutable bool // true for implicit workspace-repo projects (read-only)
 }
 
-// ListProjects returns projects from disk (~/.devdeploy/projects/).
+// ListProjects returns projects from disk (~/.devdeploy/projects/) plus
+// implicit read-only projects for workspace repos that have no real project.
 func (m *Manager) ListProjects() ([]ProjectInfo, error) {
 	entries, err := os.ReadDir(m.projectsBase)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	var out []ProjectInfo
+	existingNames := make(map[string]bool)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -152,13 +152,29 @@ func (m *Manager) ListProjects() ([]ProjectInfo, error) {
 			RepoCount: len(repos),
 			Dir:       dir,
 		})
+		existingNames[name] = true
+	}
+
+	// Append implicit projects for workspace repos without a real project.
+	repos, _ := m.ListWorkspaceRepos()
+	for _, repo := range repos {
+		normalized := strings.ToLower(strings.ReplaceAll(repo, " ", "-"))
+		if existingNames[normalized] {
+			continue
+		}
+		out = append(out, ProjectInfo{
+			Name:      repo,
+			RepoCount: 1,
+			Dir:       filepath.Join(m.workspace, repo),
+			Immutable: true,
+		})
 	}
 	return out, nil
 }
 
 // CreateProject creates a project directory and minimal config.
 func (m *Manager) CreateProject(name string) error {
-	dir := m.projectDir(name)
+	dir := m.rawProjectDir(name)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -169,10 +185,16 @@ func (m *Manager) CreateProject(name string) error {
 	return os.WriteFile(configPath, []byte("# devdeploy project config\n"), 0644)
 }
 
+// ErrImmutable is returned when a mutation is attempted on an implicit project.
+var ErrImmutable = fmt.Errorf("cannot modify an implicit workspace project")
+
 // DeleteProject removes a project directory and all its worktrees.
 // It first runs 'git worktree remove' for each worktree so the main repo
 // in ~/workspace does not retain orphaned worktree entries.
 func (m *Manager) DeleteProject(name string) error {
+	if m.IsImplicitProject(name) {
+		return ErrImmutable
+	}
 	dir := m.projectDir(name)
 	repos, err := m.ListProjectRepos(name)
 	if err != nil {
@@ -209,7 +231,11 @@ func (m *Manager) ListWorkspaceRepos() ([]string, error) {
 }
 
 // ListProjectRepos returns worktree subdir names in the project.
+// For implicit projects, returns just the repo name (the project IS the repo).
 func (m *Manager) ListProjectRepos(projectName string) ([]string, error) {
+	if m.IsImplicitProject(projectName) {
+		return []string{projectName}, nil
+	}
 	dir := m.projectDir(projectName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -269,6 +295,9 @@ func (m *Manager) ListProjectReposOnly(projectName string) []Resource {
 // Hooks are disabled during worktree add/merge to avoid repo-specific hooks (e.g. beads)
 // from failing and blocking the operation.
 func (m *Manager) AddRepo(projectName, repoName string) error {
+	if m.IsImplicitProject(projectName) {
+		return ErrImmutable
+	}
 	srcRepo := filepath.Join(m.workspace, repoName)
 	dstPath := filepath.Join(m.projectDir(projectName), repoName)
 	if _, err := os.Stat(srcRepo); err != nil {
@@ -347,6 +376,9 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 
 // RemoveRepo removes a worktree from the project.
 func (m *Manager) RemoveRepo(projectName, repoName string) error {
+	if m.IsImplicitProject(projectName) {
+		return ErrImmutable
+	}
 	srcRepo := filepath.Join(m.workspace, repoName)
 	worktreePath := filepath.Join(m.projectDir(projectName), repoName)
 
@@ -367,6 +399,9 @@ func (m *Manager) RemoveRepo(projectName, repoName string) error {
 // The worktree directory is <projectDir>/<repoName>-pr-<number>.
 // If the worktree directory does not exist, this is a no-op.
 func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) error {
+	if m.IsImplicitProject(projectName) {
+		return ErrImmutable
+	}
 	wtName := fmt.Sprintf("%s-pr-%d", repoName, prNumber)
 	wtPath := filepath.Join(m.projectDir(projectName), wtName)
 
@@ -390,9 +425,32 @@ func (m *Manager) RemovePRWorktree(projectName, repoName string, prNumber int) e
 	return nil
 }
 
-func (m *Manager) projectDir(name string) string {
+// IsImplicitProject reports whether name refers to an implicit (read-only)
+// project backed by a workspace repo rather than a real project directory.
+func (m *Manager) IsImplicitProject(name string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	dir := filepath.Join(m.projectsBase, normalized)
+	if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		return false
+	}
+	repoPath := filepath.Join(m.workspace, name, ".git")
+	info, err := os.Stat(repoPath)
+	return err == nil && info.IsDir()
+}
+
+// rawProjectDir returns the canonical project directory under projectsBase,
+// regardless of whether the project is implicit. Used by mutations that
+// operate on real project directories.
+func (m *Manager) rawProjectDir(name string) string {
 	normalized := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 	return filepath.Join(m.projectsBase, normalized)
+}
+
+func (m *Manager) projectDir(name string) string {
+	if m.IsImplicitProject(name) {
+		return m.workspace
+	}
+	return m.rawProjectDir(name)
 }
 
 // ProjectDir returns the project directory path for a given project name.
@@ -938,6 +996,9 @@ func (m *Manager) ListProjectPRs(projectName string) ([]RepoPRs, error) {
 // The worktree path is: <projectDir>/<repoName>-pr-<number>.
 // Returns the absolute worktree path.
 func (m *Manager) EnsurePRWorktree(projectName, repoName string, prNumber int, branchName string) (string, error) {
+	if m.IsImplicitProject(projectName) {
+		return "", ErrImmutable
+	}
 	srcRepo := filepath.Join(m.workspace, repoName)
 	if _, err := os.Stat(srcRepo); err != nil {
 		return "", fmt.Errorf("source repo %s: %w", srcRepo, err)
