@@ -67,6 +67,15 @@ type RemoveResourceMsg struct {
 	Resource project.Resource
 }
 
+// ShowAddWorktreeMsg triggers the add-worktree text input modal.
+type ShowAddWorktreeMsg struct{}
+
+// AddWorktreeMsg is sent when user confirms a new worktree branch name.
+type AddWorktreeMsg struct {
+	RepoName   string
+	BranchName string
+}
+
 // DismissModalMsg is sent when user cancels a modal (Esc).
 type DismissModalMsg struct{}
 

@@ -469,6 +469,49 @@ func (m *Manager) AddRepo(projectName, repoName string) error {
 	return nil
 }
 
+// CreateWorktree creates a new git worktree for a workspace repo.
+// branchName becomes the new branch (based on the repo's default branch).
+// The worktree is placed alongside the repo at <workspace>/<repoName>--<branchName>.
+func (m *Manager) CreateWorktree(repoName, branchName string) (string, error) {
+	srcRepo := filepath.Join(m.workspace, repoName)
+	if _, err := os.Stat(srcRepo); err != nil {
+		return "", fmt.Errorf("source repo %s: %w", srcRepo, err)
+	}
+
+	wtMgr, err := worktree.NewManager(srcRepo)
+	if err != nil {
+		return "", err
+	}
+
+	// Sanitize branch name for use in directory path
+	safeName := strings.NewReplacer("/", "-", " ", "-").Replace(branchName)
+	dstPath := filepath.Join(m.workspace, repoName+"--"+safeName)
+
+	if _, err := os.Stat(dstPath); err == nil {
+		return "", fmt.Errorf("worktree path already exists: %s", dstPath)
+	}
+
+	fetchCmd := exec.Command("git", "-C", srcRepo, "fetch", "origin")
+	fetchCmd.Stderr = nil
+	_ = fetchCmd.Run()
+
+	mainRef, err := resolveDefaultBranch(srcRepo)
+	if err != nil {
+		return "", err
+	}
+
+	if err := wtMgr.Add(worktree.AddOptions{
+		WorktreePath: dstPath,
+		Branch:       branchName,
+		BaseRef:      mainRef,
+		CreateBranch: true,
+		DisableHooks: true,
+	}); err != nil {
+		return "", err
+	}
+	return dstPath, nil
+}
+
 // RemoveRepo removes a worktree from the project.
 func (m *Manager) RemoveRepo(projectName, repoName string) error {
 	if m.IsImplicitProject(projectName) {

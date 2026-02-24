@@ -58,6 +58,55 @@ func (a *appModelAdapter) handleRemoveResource(msg RemoveResourceMsg) (tea.Model
 	return a, loadHomeRepoGroupsCmd(a.ProjectManager)
 }
 
+// handleShowAddWorktree handles ShowAddWorktreeMsg by showing a text input modal for the branch name.
+func (a *appModelAdapter) handleShowAddWorktree() (tea.Model, tea.Cmd) {
+	if a.Home == nil {
+		return a, nil
+	}
+	r := a.Home.SelectedResource()
+	if r == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+	if r.Kind != project.ResourceRepo {
+		a.Status = "Select a repo header to add a worktree"
+		a.StatusIsError = true
+		return a, nil
+	}
+	repoName := r.RepoName
+	modal := NewTextInputModal(
+		"Add worktree to "+repoName,
+		"branch-name",
+		func(value string) tea.Msg {
+			return AddWorktreeMsg{RepoName: repoName, BranchName: value}
+		},
+	)
+	a.Overlays.Push(Overlay{View: modal, Dismiss: "esc"})
+	return a, modal.Init()
+}
+
+// handleAddWorktree handles AddWorktreeMsg by creating the worktree.
+func (a *appModelAdapter) handleAddWorktree(msg AddWorktreeMsg) (tea.Model, tea.Cmd) {
+	if a.ProjectManager == nil {
+		a.Status = "No project manager available"
+		a.StatusIsError = true
+		return a, nil
+	}
+	a.Overlays.Pop()
+
+	_, err := a.ProjectManager.CreateWorktree(msg.RepoName, msg.BranchName)
+	if err != nil {
+		a.Status = fmt.Sprintf("Add worktree: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+
+	a.Status = fmt.Sprintf("Created worktree %s@%s", msg.RepoName, msg.BranchName)
+	a.StatusIsError = false
+	return a, loadHomeRepoGroupsCmd(a.ProjectManager)
+}
+
 // handleShowRemoveResource handles ShowRemoveResourceMsg by showing the remove resource confirmation modal.
 func (a *appModelAdapter) handleShowRemoveResource() (tea.Model, tea.Cmd) {
 	if a.Home == nil {

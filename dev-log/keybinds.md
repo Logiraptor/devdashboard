@@ -38,7 +38,7 @@
 |----------|--------|---------|
 | `SPC p c` | Create project | Any (modal) |
 | `SPC p d` | Delete selected project | Dashboard only |
-| `SPC p a` | Add repo to project | Project detail |
+| `SPC p a` | Add worktree (prompts for branch name) | Home (repo selected) |
 | `SPC p r` | Remove repo from project | Project detail |
 | `SPC p x` | Remove selected resource (kill panes, remove worktree) | Project detail |
 | `SPC p l` | Switch project (opens project switcher modal) | Any |

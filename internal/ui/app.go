@@ -70,6 +70,10 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleRefreshBeads()
 	case CloseBeadMsg:
 		return a.handleCloseBead()
+	case ShowAddWorktreeMsg:
+		return a.handleShowAddWorktree()
+	case AddWorktreeMsg:
+		return a.handleAddWorktree(msg)
 	case ShowRemoveResourceMsg:
 		return a.handleShowRemoveResource()
 	case RemoveResourceMsg:
@@ -371,6 +375,7 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	reg.BindWithDesc("SPC s c", func() tea.Msg { return OpenCursorMsg{} }, "Open Cursor")
 	reg.BindWithDesc("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane")
 	reg.BindWithDesc("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane")
+	reg.BindWithDesc("SPC p a", func() tea.Msg { return ShowAddWorktreeMsg{} }, "Add worktree")
 	reg.BindWithDesc("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource")
 	reg.BindWithDesc("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads")
 	reg.BindWithDesc("SPC b r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads")
