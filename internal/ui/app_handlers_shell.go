@@ -183,6 +183,35 @@ func (a *appModelAdapter) handleLaunchRalph() (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// handleOpenCursor opens Cursor IDE on the selected resource's worktree.
+func (a *appModelAdapter) handleOpenCursor() (tea.Model, tea.Cmd) {
+	if a.Home == nil {
+		return a, nil
+	}
+	r := a.Home.SelectedResource()
+	if r == nil {
+		a.Status = "No resource selected"
+		a.StatusIsError = true
+		return a, nil
+	}
+	workDir, err := a.ensureResourceWorktree(r)
+	if err != nil {
+		a.Status = fmt.Sprintf("Open Cursor: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	cmd := exec.Command("cursor", workDir)
+	if err := cmd.Start(); err != nil {
+		a.Status = fmt.Sprintf("Open Cursor: %v", err)
+		a.StatusIsError = true
+		return a, nil
+	}
+	go func() { _ = cmd.Wait() }()
+	a.Status = fmt.Sprintf("Opened Cursor in %s", workDir)
+	a.StatusIsError = false
+	return a, nil
+}
+
 // handleHidePane handles HidePaneMsg by hiding the selected resource's latest pane.
 func (a *appModelAdapter) handleHidePane() (tea.Model, tea.Cmd) {
 	paneID := a.selectedResourceLatestPaneID()

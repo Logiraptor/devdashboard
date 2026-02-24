@@ -84,6 +84,8 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleLaunchAgent()
 	case LaunchRalphMsg:
 		return a.handleLaunchRalph()
+	case OpenCursorMsg:
+		return a.handleOpenCursor()
 	case HidePaneMsg:
 		return a.handleHidePane()
 	case ShowPaneMsg:
@@ -366,6 +368,7 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 	reg.BindWithDesc("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell")
 	reg.BindWithDesc("SPC s a", func() tea.Msg { return LaunchAgentMsg{} }, "Launch agent")
 	reg.BindWithDesc("SPC s r", func() tea.Msg { return LaunchRalphMsg{} }, "Ralph loop")
+	reg.BindWithDesc("SPC s c", func() tea.Msg { return OpenCursorMsg{} }, "Open Cursor")
 	reg.BindWithDesc("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane")
 	reg.BindWithDesc("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane")
 	reg.BindWithDesc("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource")

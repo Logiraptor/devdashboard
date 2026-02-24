@@ -21,6 +21,9 @@ type HidePaneMsg struct{}
 // ShowPaneMsg shows the selected resource's most recent pane (join-pane back into current window).
 type ShowPaneMsg struct{}
 
+// OpenCursorMsg opens Cursor IDE on the selected resource's worktree (SPC s c).
+type OpenCursorMsg struct{}
+
 // FocusPaneMsg focuses a pane by index (1-9) from the list of active panes.
 type FocusPaneMsg struct {
 	Index int // 1-based index into active panes list
