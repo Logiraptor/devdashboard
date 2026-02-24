@@ -248,57 +248,80 @@ func (m *Manager) ListRepoGroups() ([]RepoGroup, error) {
 		return []RepoGroup{}, nil
 	}
 
-	groups := make([]RepoGroup, 0, len(repos))
-	for _, repoName := range repos {
-		repoPath := filepath.Join(m.workspace, repoName)
-		items := []Resource{
-			{
-				Kind:         ResourceRepo,
-				RepoName:     repoName,
-				WorktreePath: repoPath,
-			},
-		}
-
-		nonMainByBranch := make(map[string]string)
-		if entries, wtErr := worktree.ParseWorktreeList(repoPath); wtErr == nil {
-			repoPathClean := filepath.Clean(repoPath)
-			for _, entry := range entries {
-				wtPathClean := filepath.Clean(entry.Path)
-				if wtPathClean == repoPathClean {
-					continue // skip the main repo checkout
-				}
-				items = append(items, Resource{
-					Kind:         ResourceWorktree,
-					RepoName:     repoName,
-					Worktree:     &WorktreeInfo{Branch: entry.Branch, Path: entry.Path},
-					WorktreePath: entry.Path,
-				})
-				if entry.Branch != "" {
-					nonMainByBranch[entry.Branch] = entry.Path
-				}
-			}
-		}
-
-		prs, prErr := m.listFilteredPRsInRepo(repoPath, "open", 30)
-		if prErr == nil {
-			for i := range prs {
-				prCopy := prs[i]
-				items = append(items, Resource{
-					Kind:         ResourcePR,
-					RepoName:     repoName,
-					PR:           &prCopy,
-					WorktreePath: nonMainByBranch[prCopy.HeadRefName],
-				})
-			}
-		}
-
-		groups = append(groups, RepoGroup{
-			RepoName:      repoName,
-			WorkspacePath: repoPath,
-			Items:         items,
-		})
+	type indexedGroup struct {
+		idx   int
+		group RepoGroup
 	}
 
+	results := make(chan indexedGroup, len(repos))
+	var wg sync.WaitGroup
+
+	for i, repoName := range repos {
+		wg.Add(1)
+		go func(idx int, repoName string) {
+			defer wg.Done()
+			repoPath := filepath.Join(m.workspace, repoName)
+			items := []Resource{
+				{
+					Kind:         ResourceRepo,
+					RepoName:     repoName,
+					WorktreePath: repoPath,
+				},
+			}
+
+			nonMainByBranch := make(map[string]string)
+			if entries, wtErr := worktree.ParseWorktreeList(repoPath); wtErr == nil {
+				repoPathClean := filepath.Clean(repoPath)
+				for _, entry := range entries {
+					wtPathClean := filepath.Clean(entry.Path)
+					if wtPathClean == repoPathClean {
+						continue
+					}
+					items = append(items, Resource{
+						Kind:         ResourceWorktree,
+						RepoName:     repoName,
+						Worktree:     &WorktreeInfo{Branch: entry.Branch, Path: entry.Path},
+						WorktreePath: entry.Path,
+					})
+					if entry.Branch != "" {
+						nonMainByBranch[entry.Branch] = entry.Path
+					}
+				}
+			}
+
+			prs, prErr := m.listFilteredPRsInRepo(repoPath, "open", 30)
+			if prErr == nil {
+				for i := range prs {
+					prCopy := prs[i]
+					items = append(items, Resource{
+						Kind:         ResourcePR,
+						RepoName:     repoName,
+						PR:           &prCopy,
+						WorktreePath: nonMainByBranch[prCopy.HeadRefName],
+					})
+				}
+			}
+
+			results <- indexedGroup{
+				idx: idx,
+				group: RepoGroup{
+					RepoName:      repoName,
+					WorkspacePath: repoPath,
+					Items:         items,
+				},
+			}
+		}(i, repoName)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	groups := make([]RepoGroup, len(repos))
+	for r := range results {
+		groups[r.idx] = r.group
+	}
 	return groups, nil
 }
 

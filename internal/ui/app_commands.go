@@ -66,37 +66,41 @@ func loadHomeBeadsCmd(groups []project.RepoGroup) tea.Cmd {
 					// Repo headers can be rendered before any worktree exists.
 					continue
 				}
-				wg.Add(1)
-				go func(groupIdx, itemIdx int) {
-					defer wg.Done()
-					resource := out[groupIdx].Items[itemIdx]
-					var bdBeads []beads.Bead
-					var err error
-					switch resource.Kind {
-					case project.ResourceRepo, project.ResourceWorktree:
-						bdBeads, err = beads.ListForRepo(resource.WorktreePath, out[groupIdx].RepoName)
-					case project.ResourcePR:
-						if resource.PR != nil {
-							bdBeads, err = beads.ListForPR(resource.WorktreePath, out[groupIdx].RepoName, resource.PR.Number)
-						}
+			wg.Add(1)
+			go func(groupIdx, itemIdx int) {
+				defer wg.Done()
+				resource := out[groupIdx].Items[itemIdx]
+				var bdBeads []beads.Bead
+				var err error
+				switch resource.Kind {
+				case project.ResourceRepo:
+					bdBeads, err = beads.ListForRepo(resource.WorktreePath, out[groupIdx].RepoName)
+				case project.ResourceWorktree:
+					// Beads are repo-wide (stored in git); skip worktrees to avoid
+					// duplicating the same list shown under the repo header.
+					return
+				case project.ResourcePR:
+					if resource.PR != nil {
+						bdBeads, err = beads.ListForPR(resource.WorktreePath, out[groupIdx].RepoName, resource.PR.Number)
 					}
-					if err != nil {
-						return
+				}
+				if err != nil {
+					return
+				}
+				beadInfos := make([]project.BeadInfo, len(bdBeads))
+				for j, b := range bdBeads {
+					beadInfos[j] = project.BeadInfo{
+						ID:          b.ID,
+						Title:       b.Title,
+						Description: b.Description,
+						Status:      b.Status,
+						IssueType:   b.IssueType,
+						Labels:      b.Labels,
+						IsChild:     b.ParentID != "",
 					}
-					beadInfos := make([]project.BeadInfo, len(bdBeads))
-					for j, b := range bdBeads {
-						beadInfos[j] = project.BeadInfo{
-							ID:          b.ID,
-							Title:       b.Title,
-							Description: b.Description,
-							Status:      b.Status,
-							IssueType:   b.IssueType,
-							Labels:      b.Labels,
-							IsChild:     b.ParentID != "",
-						}
-					}
-					out[groupIdx].Items[itemIdx].Beads = beadInfos
-				}(gi, ii)
+				}
+				out[groupIdx].Items[itemIdx].Beads = beadInfos
+			}(gi, ii)
 			}
 		}
 		wg.Wait()
