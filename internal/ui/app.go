@@ -15,17 +15,18 @@ import (
 
 // AppModel is the root model for the home-centric UI.
 type AppModel struct {
-	Home            *HomeView
-	KeyHandler      *KeyHandler
-	ProjectManager  *project.Manager
-	AgentRunner     agent.Runner
-	Sessions        *session.Tracker // tracks panes across all resources
-	Overlays        OverlayStack
-	Status          string // Error or success message; cleared on keypress
-	StatusIsError   bool
-	agentCancelFunc func() // cancels in-flight agent run; nil when none
-	termWidth       int    // terminal width from last WindowSizeMsg
-	termHeight      int    // terminal height from last WindowSizeMsg
+	Home             *HomeView
+	KeyHandler       *KeyHandler
+	ProjectManager   *project.Manager
+	AgentRunner      agent.Runner
+	Sessions         *session.Tracker // tracks sessions across all resources
+	DevdeploySession string           // tmux session name where devdeploy UI runs
+	Overlays         OverlayStack
+	Status           string // Error or success message; cleared on keypress
+	StatusIsError    bool
+	agentCancelFunc  func() // cancels in-flight agent run; nil when none
+	termWidth        int    // terminal width from last WindowSizeMsg
+	termHeight       int    // terminal height from last WindowSizeMsg
 }
 
 // Ensure AppModel can be used as tea.Model via adapter.
@@ -82,22 +83,16 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleDismissModal()
 	case RefreshMsg:
 		return a.handleRefresh()
-	case OpenShellMsg:
-		return a.handleOpenShell()
-	case LaunchAgentMsg:
-		return a.handleLaunchAgent()
-	case LaunchRalphMsg:
-		return a.handleLaunchRalph()
+	case UpsertResourceSessionMsg:
+		return a.handleUpsertResourceSession()
+	case KillResourceSessionMsg:
+		return a.handleKillResourceSession()
 	case OpenCursorMsg:
 		return a.handleOpenCursor()
-	case HidePaneMsg:
-		return a.handleHidePane()
-	case ShowPaneMsg:
-		return a.handleShowPane()
-	case FocusPaneMsg:
-		return a.handleFocusPane(msg)
 	case tickMsg:
 		return a.handleTick(msg)
+	case homeTickRefreshedMsg:
+		return a.handleHomeTickRefreshed(msg)
 	case tea.KeyMsg:
 		// When overlay is showing, it receives ALL keys first (no KeyHandler, no app nav).
 		// This lets modals capture SPC, Esc, Enter, j/k etc. for text input and list navigation.
@@ -122,7 +117,7 @@ func (a *appModelAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.Home != nil && a.Home.IsFiltering() {
 				// Let it fall through to view update
 			} else {
-				return a, func() tea.Msg { return OpenShellMsg{} }
+				return a, func() tea.Msg { return UpsertResourceSessionMsg{} }
 			}
 		}
 		if msg.String() == "d" {
@@ -186,25 +181,23 @@ func (a *appModelAdapter) setCurrentView(v View) {
 	}
 }
 
-// getGlobalPanesForDisplay returns all active panes globally as project.PaneInfo for display.
-// Used by HomeView to show panes from all resources.
-func (a *AppModel) getGlobalPanesForDisplay() []project.PaneInfo {
+// getGlobalSessionsForDisplay returns active sessions globally for display.
+func (a *AppModel) getGlobalSessionsForDisplay() []project.SessionInfo {
 	if a.Sessions == nil {
 		return nil
 	}
-	trackedPanes := a.getOrderedActivePanes()
-	panes := make([]project.PaneInfo, len(trackedPanes))
-	for i, tp := range trackedPanes {
-		panes[i] = project.PaneInfo{
-			ID:      tp.PaneID,
-			IsAgent: tp.Type == session.PaneAgent,
+	tracked := a.getOrderedActiveSessions()
+	out := make([]project.SessionInfo, len(tracked))
+	for i, ts := range tracked {
+		out[i] = project.SessionInfo{
+			Name: ts.Name,
 		}
 	}
-	return panes
+	return out
 }
 
-// populateHomePanes attaches tracked pane info to each resource in the home view.
-func (a *AppModel) populateHomePanes(v *HomeView) {
+// populateHomeSessions attaches tracked session info to each resource in the home view.
+func (a *AppModel) populateHomeSessions(v *HomeView) {
 	if a.Sessions == nil {
 		return
 	}
@@ -213,31 +206,24 @@ func (a *AppModel) populateHomePanes(v *HomeView) {
 		for ri := range groups[gi].Items {
 			r := &groups[gi].Items[ri]
 			rk := resourceKeyFromResource(*r)
-			tracked := a.Sessions.PanesForResource(rk)
-			r.Panes = nil
-			for _, tp := range tracked {
-				r.Panes = append(r.Panes, project.PaneInfo{
-					ID:      tp.PaneID,
-					IsAgent: tp.Type == session.PaneAgent,
-				})
+			r.Session = nil
+			if tracked, ok := a.Sessions.SessionForResource(rk); ok {
+				r.Session = &project.SessionInfo{Name: tracked.Name}
 			}
 		}
 	}
 	v.SetRepoGroups(groups)
 }
 
-// refreshHomePanes prunes dead panes then updates the current home view's
-// pane info from the session tracker.
-func (a *AppModel) refreshHomePanes() {
+// refreshHomeSessions prunes dead sessions then updates the current home view.
+func (a *AppModel) refreshHomeSessions() {
 	if a.Home != nil && a.Sessions != nil {
-		_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
-		a.populateHomePanes(a.Home)
+		a.populateHomeSessions(a.Home)
 	}
 }
 
-// selectedResourceLatestPaneID returns the pane ID of the most recently registered
-// pane for the currently selected resource, or "" if none.
-func (a *AppModel) selectedResourceLatestPaneID() string {
+// selectedResourceSessionName returns tracked session name for selected resource.
+func (a *AppModel) selectedResourceSessionName() string {
 	if a.Home == nil || a.Sessions == nil {
 		return ""
 	}
@@ -246,78 +232,45 @@ func (a *AppModel) selectedResourceLatestPaneID() string {
 		return ""
 	}
 	rk := resourceKeyFromResource(*r)
-	panes := a.Sessions.PanesForResource(rk)
-	if len(panes) == 0 {
-		return ""
+	if tracked, ok := a.Sessions.SessionForResource(rk); ok {
+		return tracked.Name
 	}
-	return panes[len(panes)-1].PaneID
+	return ""
 }
 
-// getOrderedActivePanes returns all active panes ordered for indexing (1-9).
-// Panes are ordered by resource key (repos first, then PRs), then by creation time.
-// Works globally from anywhere in devdeploy.
-func (a *AppModel) getOrderedActivePanes() []session.TrackedPane {
+// getOrderedActiveSessions returns active sessions ordered for display.
+func (a *AppModel) getOrderedActiveSessions() []session.TrackedSession {
 	if a.Sessions == nil {
 		return nil
 	}
 
-	// Prune dead panes first
-	_, _ = a.Sessions.Prune() // ignore errors; cleanup is non-critical
+	// Get all sessions globally across all resources.
+	allSessions := a.Sessions.AllSessions()
 
-	// Get all panes globally across all resources
-	allPanes := a.Sessions.AllPanes()
+	// Sort sessions: repos/worktrees first, then PRs, then by creation time.
+	var repoSessions []session.TrackedSession
+	var prSessions []session.TrackedSession
 
-	// Sort panes: repos first, then PRs, then by creation time within each group
-	var repoPanes []session.TrackedPane
-	var prPanes []session.TrackedPane
-
-	for _, pane := range allPanes {
-		if pane.ResourceKey.Kind() == "pr" {
-			prPanes = append(prPanes, pane)
+	for _, tracked := range allSessions {
+		if tracked.ResourceKey.Kind() == "pr" {
+			prSessions = append(prSessions, tracked)
 		} else {
-			repoPanes = append(repoPanes, pane)
+			repoSessions = append(repoSessions, tracked)
 		}
 	}
 
-	// Sort each group by creation time (oldest first for consistent ordering)
-	sort.Slice(repoPanes, func(i, j int) bool {
-		return repoPanes[i].CreatedAt.Before(repoPanes[j].CreatedAt)
+	sort.Slice(repoSessions, func(i, j int) bool {
+		return repoSessions[i].CreatedAt.Before(repoSessions[j].CreatedAt)
 	})
-	sort.Slice(prPanes, func(i, j int) bool {
-		return prPanes[i].CreatedAt.Before(prPanes[j].CreatedAt)
+	sort.Slice(prSessions, func(i, j int) bool {
+		return prSessions[i].CreatedAt.Before(prSessions[j].CreatedAt)
 	})
 
-	// Combine: repos first, then PRs
-	ordered := make([]session.TrackedPane, 0, len(repoPanes)+len(prPanes))
-	ordered = append(ordered, repoPanes...)
-	ordered = append(ordered, prPanes...)
-
-	// Limit to 9 panes for SPC 1-9
-	if len(ordered) > 9 {
-		ordered = ordered[:9]
-	}
+	ordered := make([]session.TrackedSession, 0, len(repoSessions)+len(prSessions))
+	ordered = append(ordered, repoSessions...)
+	ordered = append(ordered, prSessions...)
 
 	return ordered
-}
-
-// getPaneDisplayName returns a human-readable name for a pane.
-func (a *AppModel) getPaneDisplayName(pane session.TrackedPane) string {
-	var name string
-	if pane.ResourceKey.Kind() == "pr" {
-		// PR resource
-		name = fmt.Sprintf("%s-pr-%d", pane.ResourceKey.RepoName(), pane.ResourceKey.PRNumber())
-	} else {
-		// Repo resource
-		name = pane.ResourceKey.RepoName()
-	}
-
-	// Add pane type
-	paneType := "shell"
-	if pane.Type == session.PaneAgent {
-		paneType = "agent"
-	}
-
-	return fmt.Sprintf("%s (%s)", name, paneType)
 }
 
 // ensureResourceWorktree returns the worktree path for a resource, creating
@@ -353,6 +306,9 @@ func resourceKeyFromResource(r project.Resource) session.ResourceKey {
 	if r.Kind == project.ResourcePR && r.PR != nil {
 		return session.NewPRKey(r.RepoName, r.PR.Number)
 	}
+	if r.Kind == project.ResourceWorktree && r.Worktree != nil {
+		return session.NewWorktreeKey(r.RepoName, r.Worktree.Branch)
+	}
 	return session.NewRepoKey(r.RepoName)
 }
 
@@ -361,39 +317,28 @@ type AppModelOption func(*AppModel)
 
 // NewAppModel creates the root application model.
 func NewAppModel(opts ...AppModelOption) *AppModel {
-	projMgr := (*project.Manager)(nil)
-	if base, err := project.ResolveProjectsBase(); err == nil {
-		projMgr = project.NewManager(base, "")
-	}
+	projMgr := project.NewManager("", "")
 	reg := NewKeybindRegistry()
 	reg.BindWithDesc("q", tea.Quit, "Quit")
 	reg.BindWithDesc("ctrl+c", tea.Quit, "Quit")
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDesc("SPC s s", func() tea.Msg { return OpenShellMsg{} }, "Open shell")
-	reg.BindWithDesc("SPC s a", func() tea.Msg { return LaunchAgentMsg{} }, "Launch agent")
-	reg.BindWithDesc("SPC s r", func() tea.Msg { return LaunchRalphMsg{} }, "Ralph loop")
+	reg.BindWithDesc("SPC s k", func() tea.Msg { return KillResourceSessionMsg{} }, "Kill resource session")
 	reg.BindWithDesc("SPC s c", func() tea.Msg { return OpenCursorMsg{} }, "Open Cursor")
-	reg.BindWithDesc("SPC s h", func() tea.Msg { return HidePaneMsg{} }, "Hide shell pane")
-	reg.BindWithDesc("SPC s j", func() tea.Msg { return ShowPaneMsg{} }, "Show shell pane")
 	reg.BindWithDesc("SPC p a", func() tea.Msg { return ShowAddWorktreeMsg{} }, "Add worktree")
 	reg.BindWithDesc("SPC p x", func() tea.Msg { return ShowRemoveResourceMsg{} }, "Remove resource")
 	reg.BindWithDesc("SPC r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads")
 	reg.BindWithDesc("SPC b r", func() tea.Msg { return RefreshBeadsMsg{} }, "Refresh beads")
 	reg.BindWithDesc("SPC b c", func() tea.Msg { return CloseBeadMsg{} }, "Close bead")
-	// SPC 1-9: focus pane by index
-	for i := 1; i <= 9; i++ {
-		num := i
-		reg.BindWithDesc(
-			fmt.Sprintf("SPC %d", i),
-			func() tea.Msg { return FocusPaneMsg{Index: num} },
-			fmt.Sprintf("Focus pane %d", i),
-		)
+	devdeploySession := "devdeploy"
+	if current, err := tmux.CurrentSessionName(); err == nil && current != "" {
+		devdeploySession = current
 	}
 	model := &AppModel{
-		KeyHandler:     NewKeyHandler(reg),
-		ProjectManager: projMgr,
-		AgentRunner:    &agent.StubRunner{},
-		Sessions:       session.New(tmux.ListPaneIDs),
+		KeyHandler:       NewKeyHandler(reg),
+		ProjectManager:   projMgr,
+		AgentRunner:      &agent.StubRunner{},
+		Sessions:         session.New(tmux.ListSessionNames),
+		DevdeploySession: devdeploySession,
 	}
 
 	// Apply options
@@ -401,11 +346,11 @@ func NewAppModel(opts ...AppModelOption) *AppModel {
 		opt(model)
 	}
 
-	// Ensure home view has access to global pane ordering from this model.
+	// Ensure home view has access to global session ordering from this model.
 	if model.Home == nil {
 		model.Home = NewHomeView()
 	}
-	model.Home.getGlobalPanes = model.getGlobalPanesForDisplay
+	model.Home.getGlobalSessions = model.getGlobalSessionsForDisplay
 
 	return model
 }

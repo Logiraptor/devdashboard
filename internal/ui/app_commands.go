@@ -6,6 +6,8 @@ import (
 
 	"devdeploy/internal/beads"
 	"devdeploy/internal/project"
+	"devdeploy/internal/session"
+	"devdeploy/internal/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -66,41 +68,41 @@ func loadHomeBeadsCmd(groups []project.RepoGroup) tea.Cmd {
 					// Repo headers can be rendered before any worktree exists.
 					continue
 				}
-			wg.Add(1)
-			go func(groupIdx, itemIdx int) {
-				defer wg.Done()
-				resource := out[groupIdx].Items[itemIdx]
-				var bdBeads []beads.Bead
-				var err error
-				switch resource.Kind {
-				case project.ResourceRepo:
-					bdBeads, err = beads.ListForRepo(resource.WorktreePath, out[groupIdx].RepoName)
-				case project.ResourceWorktree:
-					// Beads are repo-wide (stored in git); skip worktrees to avoid
-					// duplicating the same list shown under the repo header.
-					return
-				case project.ResourcePR:
-					if resource.PR != nil {
-						bdBeads, err = beads.ListForPR(resource.WorktreePath, out[groupIdx].RepoName, resource.PR.Number)
+				wg.Add(1)
+				go func(groupIdx, itemIdx int) {
+					defer wg.Done()
+					resource := out[groupIdx].Items[itemIdx]
+					var bdBeads []beads.Bead
+					var err error
+					switch resource.Kind {
+					case project.ResourceRepo:
+						bdBeads, err = beads.ListForRepo(resource.WorktreePath, out[groupIdx].RepoName)
+					case project.ResourceWorktree:
+						// Beads are repo-wide (stored in git); skip worktrees to avoid
+						// duplicating the same list shown under the repo header.
+						return
+					case project.ResourcePR:
+						if resource.PR != nil {
+							bdBeads, err = beads.ListForPR(resource.WorktreePath, out[groupIdx].RepoName, resource.PR.Number)
+						}
 					}
-				}
-				if err != nil {
-					return
-				}
-				beadInfos := make([]project.BeadInfo, len(bdBeads))
-				for j, b := range bdBeads {
-					beadInfos[j] = project.BeadInfo{
-						ID:          b.ID,
-						Title:       b.Title,
-						Description: b.Description,
-						Status:      b.Status,
-						IssueType:   b.IssueType,
-						Labels:      b.Labels,
-						IsChild:     b.ParentID != "",
+					if err != nil {
+						return
 					}
-				}
-				out[groupIdx].Items[itemIdx].Beads = beadInfos
-			}(gi, ii)
+					beadInfos := make([]project.BeadInfo, len(bdBeads))
+					for j, b := range bdBeads {
+						beadInfos[j] = project.BeadInfo{
+							ID:          b.ID,
+							Title:       b.Title,
+							Description: b.Description,
+							Status:      b.Status,
+							IssueType:   b.IssueType,
+							Labels:      b.Labels,
+							IsChild:     b.ParentID != "",
+						}
+					}
+					out[groupIdx].Items[itemIdx].Beads = beadInfos
+				}(gi, ii)
 			}
 		}
 		wg.Wait()
@@ -124,10 +126,9 @@ func cloneRepoGroups(groups []project.RepoGroup) []project.RepoGroup {
 				wtCopy := *item.Worktree
 				items[j].Worktree = &wtCopy
 			}
-			if len(item.Panes) > 0 {
-				panesCopy := make([]project.PaneInfo, len(item.Panes))
-				copy(panesCopy, item.Panes)
-				items[j].Panes = panesCopy
+			if item.Session != nil {
+				sessionCopy := *item.Session
+				items[j].Session = &sessionCopy
 			}
 			if len(item.Beads) > 0 {
 				beadsCopy := make([]project.BeadInfo, len(item.Beads))
@@ -153,7 +154,24 @@ func cloneRepoGroups(groups []project.RepoGroup) []project.RepoGroup {
 
 // tickCmd returns a command that schedules a periodic refresh tick.
 func tickCmd() tea.Cmd {
-	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// refreshHomeTickCmd performs tmux-backed refresh work asynchronously for ticks.
+func refreshHomeTickCmd(tracker *session.Tracker, selectedSessionName string) tea.Cmd {
+	return func() tea.Msg {
+		msg := homeTickRefreshedMsg{
+			HasPreview: selectedSessionName != "",
+		}
+		if tracker != nil {
+			_, msg.PruneErr = tracker.Prune()
+		}
+		if !msg.HasPreview {
+			return msg
+		}
+		msg.PreviewText, msg.PreviewErr = tmux.CapturePane(selectedSessionName, tmux.CaptureOpts{LastLines: 80})
+		return msg
+	}
 }

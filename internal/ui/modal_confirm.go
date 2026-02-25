@@ -51,8 +51,8 @@ func NewRemoveResourceConfirmModal(r project.Resource) *ConfirmModal {
 	if r.WorktreePath != "" {
 		details += "\nWorktree will be removed"
 	}
-	if len(r.Panes) > 0 {
-		details += fmt.Sprintf("\n%d active pane(s) will be killed", len(r.Panes))
+	if r.Session != nil {
+		details += "\n1 active session will be killed"
 	}
 
 	modal := NewConfirmModal(

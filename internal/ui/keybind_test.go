@@ -10,16 +10,14 @@ import (
 func TestKeybindRegistryLeaderHints(t *testing.T) {
 	reg := NewKeybindRegistry()
 	reg.BindWithDesc("SPC q", tea.Quit, "Quit")
-	reg.BindWithDesc("SPC s s", tea.Quit, "Open shell")
-	reg.BindWithDesc("SPC s a", tea.Quit, "Launch agent")
+	reg.BindWithDesc("SPC s k", tea.Quit, "Kill resource session")
 
 	hints := reg.LeaderHints("")
 	require.Equal(t, "Quit", hints["q"])
-	require.Equal(t, "Shell", hints["s"])
+	require.Equal(t, "Session", hints["s"])
 
 	subHints := reg.LeaderHints("SPC s")
-	require.Equal(t, "Open shell", subHints["s"])
-	require.Equal(t, "Launch agent", subHints["a"])
+	require.Equal(t, "Kill resource session", subHints["k"])
 }
 
 func TestKeyHandlerLeaderFlow(t *testing.T) {
@@ -64,10 +62,10 @@ func TestKeyHandlerEscCancelsLeader(t *testing.T) {
 func TestKeyHandlerMultiKeyPrefix(t *testing.T) {
 	reg := NewKeybindRegistry()
 	var called bool
-	reg.BindWithDesc("SPC s s", func() tea.Msg {
+	reg.BindWithDesc("SPC s k", func() tea.Msg {
 		called = true
 		return nil
-	}, "Open shell")
+	}, "Kill session")
 	h := NewKeyHandler(reg)
 
 	consumed, cmd := h.Handle(keyMsg(" "))
@@ -79,7 +77,7 @@ func TestKeyHandlerMultiKeyPrefix(t *testing.T) {
 	require.Nil(t, cmd)
 	require.True(t, h.LeaderWaiting)
 
-	consumed, cmd = h.Handle(keyMsg("s"))
+	consumed, cmd = h.Handle(keyMsg("k"))
 	require.True(t, consumed)
 	require.NotNil(t, cmd)
 	cmd()
@@ -133,4 +131,3 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
 }
-

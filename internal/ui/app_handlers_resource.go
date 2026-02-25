@@ -9,19 +9,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// handleRemoveResource handles RemoveResourceMsg by killing panes and removing worktrees.
+// handleRemoveResource handles RemoveResourceMsg by killing sessions and removing worktrees.
 func (a *appModelAdapter) handleRemoveResource(msg RemoveResourceMsg) (tea.Model, tea.Cmd) {
 	if a.ProjectManager == nil {
 		return a, nil
 	}
-	// Kill associated tmux panes (best-effort; pane may already be dead).
+	// Kill associated tmux session (best-effort; session may already be dead).
 	if a.Sessions != nil {
 		rk := resourceKeyFromResource(msg.Resource)
-		panes := a.Sessions.PanesForResource(rk)
-		for _, p := range panes {
-			_ = tmux.KillPane(p.PaneID) // ignore errors for dead panes
+		if tracked, ok := a.Sessions.SessionForResource(rk); ok {
+			_ = tmux.KillSession(tracked.Name) // ignore errors for dead sessions
 		}
-		a.Sessions.UnregisterAll(rk)
+		a.Sessions.Unregister(rk)
 	}
 	// Remove worktree based on resource kind.
 	var removeErr error

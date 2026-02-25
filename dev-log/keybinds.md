@@ -17,7 +17,7 @@
 - **Leader key**: Space (`" "`)
 - **Leader mode**: After SPC, waits for next key; builds sequence like `"SPC x"`
 - **Esc cancels**: Leader mode cancelled by Esc without executing
-- **Multi-level**: Supports `SPC p c`; after `SPC p`, stays in leader if `HasPrefix("SPC p")`
+- **Multi-level**: Supports sequences like `SPC p a`; after `SPC p`, stays in leader if `HasPrefix("SPC p")`
 - **Dispatch order**: KeyHandler runs before views; consumed keys never reach views
 
 ## Default Bindings
@@ -26,25 +26,21 @@
 |----------|--------|---------|
 | `q`, `ctrl+c` | Quit | Any |
 | `SPC q` | Quit (spacemacs-style) | Any |
-| `j`, `down` | Next item (navigates through beads within a resource before advancing) | Project detail |
-| `k`, `up` | Previous item (navigates through beads within a resource before retreating) | Project detail |
-| `g` | First item (resource header) | Project detail |
-| `G` | Last item (last bead of last resource, or last resource header) | Project detail |
-| `/` | Search/filter lines in resource view (vim-style) | Project detail |
+| `j`, `down` | Next item (navigates through beads within a resource before advancing) | Home |
+| `k`, `up` | Previous item (navigates through beads within a resource before retreating) | Home |
+| `g` | First item (resource header) | Home |
+| `G` | Last item (last bead of last resource, or last resource header) | Home |
+| `/` | Search/filter lines in resource view (vim-style) | Home |
 
-## SPC p — Project Management
+## SPC p — Resource Management
 
 | Sequence | Action | Context |
 |----------|--------|---------|
-| `SPC p c` | Create project | Any (modal) |
-| `SPC p d` | Delete selected project | Dashboard only |
 | `SPC p a` | Add worktree (prompts for branch name) | Home (repo selected) |
-| `SPC p r` | Remove repo from project | Project detail |
-| `SPC p x` | Remove selected resource (kill panes, remove worktree) | Project detail |
-| `SPC p l` | Switch project (opens project switcher modal) | Any |
-| `d` | Remove selected resource (shortcut for SPC p x) | Project detail |
+| `SPC p x` | Remove selected resource (kill session, remove worktree) | Home |
+| `d` | Remove selected resource (shortcut for SPC p x) | Home |
 
-## Search Mode (`/` in Project Detail)
+## Search Mode (`/` in Home)
 
 Pressing `/` activates vim-style search mode for filtering and jumping to lines in the resource view.
 
@@ -63,56 +59,37 @@ Pressing `/` activates vim-style search mode for filtering and jumping to lines 
 - Press `/` again while in search navigation mode to start a new search
 - Search prompt shows match count: `[current/total]` or `[no matches]`
 
-## SPC s — Shell / Agent
+## SPC s — Session Actions
 
 | Sequence | Action |
 |----------|--------|
-| `SPC s s` | Open shell (tmux pane in selected resource's worktree) |
-| `SPC s a` | Launch agent (`agent` in selected resource's worktree) |
+| `enter` | Open/switch to selected resource session |
+| `SPC s k` | Kill selected resource session |
 | `SPC s c` | Open Cursor IDE on selected resource's worktree |
-| `SPC s r` | Ralph loop — automated agent that picks work and implements it. When cursor is on a **bead**, sends targeted prompt for that specific bead ID; when on a **resource header**, sends generic `bd ready` prompt |
-| `SPC s h` | Hide shell pane |
-| `SPC s j` | Show shell pane |
 
 ## SPC r — Refresh Beads
 
 | Sequence | Action | Context |
 |----------|--------|---------|
-| `SPC r` | Refresh beads for all resources | Project detail only |
+| `SPC r` | Refresh beads for all resources | Home only |
 
-In project detail view, `SPC r` reloads beads for all resources without reloading repos or PRs. Useful when beads are updated externally (e.g., via CLI `bd close`).
+In home view, `SPC r` reloads beads for all resources without reloading repos or PRs. Useful when beads are updated externally (e.g., via CLI `bd close`).
 
 ## SPC b — Bead Operations
 
 | Sequence | Action | Context |
 |----------|--------|---------|
-| `SPC b r` | Refresh beads for all resources | Project detail only |
-| `SPC b c` | Close selected bead (marks as closed via bd close) | Project detail only |
+| `SPC b r` | Refresh beads for all resources | Home only |
+| `SPC b c` | Close selected bead (marks as closed via bd close) | Home only |
 
 Bead-related operations. `SPC b r` is an alias for `SPC r` (refresh beads).
-
-## SPC 1-9 — Focus Panes
-
-| Sequence | Action | Context |
-|----------|--------|---------|
-| `SPC 1` | Focus pane 1 | Project detail only |
-| `SPC 2` | Focus pane 2 | Project detail only |
-| `SPC 3` | Focus pane 3 | Project detail only |
-| `SPC 4` | Focus pane 4 | Project detail only |
-| `SPC 5` | Focus pane 5 | Project detail only |
-| `SPC 6` | Focus pane 6 | Project detail only |
-| `SPC 7` | Focus pane 7 | Project detail only |
-| `SPC 8` | Focus pane 8 | Project detail only |
-| `SPC 9` | Focus pane 9 | Project detail only |
-
-Focuses the corresponding tmux pane by index (1-9). Panes are ordered by creation time. If a pane index doesn't exist, shows an error status message indicating the available range.
 
 ## Help View
 
 - Triggered when `KeyHandler.LeaderWaiting` is true (after SPC)
 - `RenderKeybindHelp(reg)` produces transient help bar below content
-- Format: `SPC  q: Quit  p: Projects  [esc] cancel`
-- After `SPC p`, shows next-level hints: `c`, `d`, `a`, `r`
+- Format: `SPC  q: Quit  p: Resources  [esc] cancel`
+- After `SPC p`, shows next-level hints: `a`, `x`
 - No overlay stack; help is purely visual; KeyHandler consumes next key
 
 ## Tmux Keybinds (contrib/tmux.conf)

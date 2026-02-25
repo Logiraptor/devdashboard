@@ -1,6 +1,4 @@
-// Package tmux provides functions to orchestrate tmux panes via gotmux.
-// The app expects to run inside tmux (TMUX env set). Commands target the
-// current session automatically.
+// Package tmux provides tmux session and pane helpers used by the UI.
 package tmux
 
 import (
@@ -30,166 +28,132 @@ func client() (*gotmux.Tmux, error) {
 	return tmuxClient, tmuxErr
 }
 
-// SplitPane creates a new pane in the current window with cwd set to workDir.
-// Returns the new pane ID (e.g. %4) or an error.
-// workDir must be an existing directory; tmux silently ignores bad -c paths.
-func SplitPane(workDir string) (paneID string, err error) {
-	if info, statErr := os.Stat(workDir); statErr != nil {
-		return "", fmt.Errorf("invalid workdir: %w", statErr)
-	} else if !info.IsDir() {
-		return "", fmt.Errorf("invalid workdir: %s is not a directory", workDir)
-	}
+// CurrentSessionName returns the tmux session name for the current client.
+func CurrentSessionName() (string, error) {
 	t, err := client()
 	if err != nil {
 		return "", err
 	}
-	// gotmux's SplitWindow doesn't return the new pane ID, so use Command
-	// with -P -F to print the new pane's ID.
-	// Use -h flag for horizontal split (pane opens to the right).
-	out, err := t.Command("split-window", "-h", "-P", "-F", "#{pane_id}", "-c", workDir)
+	out, err := t.Command("display-message", "-p", "#{session_name}")
 	if err != nil {
-		return "", fmt.Errorf("tmux split-window: %w", err)
+		return "", fmt.Errorf("tmux display-message session_name: %w", err)
 	}
 	return strings.TrimSpace(out), nil
 }
 
-// KillPane kills the pane with the given ID.
-func KillPane(paneID string) error {
-	t, err := client()
-	if err != nil {
-		return err
-	}
-	pane, err := t.GetPaneById(paneID)
-	if err != nil {
-		return fmt.Errorf("tmux get pane %s: %w", paneID, err)
-	}
-	if pane == nil {
-		return fmt.Errorf("tmux pane %s not found", paneID)
-	}
-	return pane.Kill()
-}
-
-// SendKeys sends keys literally to the pane. Use \n for Enter.
-// The -l flag sends keys as typed; newlines are sent as Enter.
-func SendKeys(paneID, keys string) error {
-	t, err := client()
-	if err != nil {
-		return err
-	}
-	// gotmux's Pane.SendKeys omits -l (literal mode), so use Command directly.
-	if _, err := t.Command("send-keys", "-l", "-t", paneID, keys); err != nil {
-		return fmt.Errorf("tmux send-keys: %w", err)
-	}
-	return nil
-}
-
-// BreakPane moves the pane into its own window (background). Use -d so the new
-// window does not become current. The pane ID remains valid for JoinPane.
-// break-pane uses -s for source pane; -t is for destination window.
-func BreakPane(paneID string) error {
-	t, err := client()
-	if err != nil {
-		return err
-	}
-	// gotmux has no break-pane wrapper; use Command.
-	if _, err := t.Command("break-pane", "-d", "-s", paneID); err != nil {
-		return fmt.Errorf("tmux break-pane: %w", err)
-	}
-	return nil
-}
-
-// JoinPane joins the source pane back into the current window. Target "." means
-// the current pane (where the app runs). Use -d so focus stays on the app pane.
-func JoinPane(paneID string) error {
-	t, err := client()
-	if err != nil {
-		return err
-	}
-	// gotmux has no join-pane wrapper; use Command.
-	if _, err := t.Command("join-pane", "-d", "-s", paneID, "-t", "."); err != nil {
-		return fmt.Errorf("tmux join-pane: %w", err)
-	}
-	return nil
-}
-
-// ListPaneIDs returns all live pane IDs across all tmux sessions/windows.
-// Each ID looks like "%42". Used for liveness checks by the session tracker.
-func ListPaneIDs() (map[string]bool, error) {
+// ListSessionNames returns all live tmux session names.
+func ListSessionNames() (map[string]bool, error) {
 	t, err := client()
 	if err != nil {
 		return nil, err
 	}
-	panes, err := t.ListAllPanes()
+	out, err := t.Command("list-sessions", "-F", "#{session_name}")
 	if err != nil {
-		return nil, fmt.Errorf("tmux list-panes: %w", err)
+		return nil, fmt.Errorf("tmux list-sessions: %w", err)
 	}
-	result := make(map[string]bool, len(panes))
-	for _, p := range panes {
-		result[p.Id] = true
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	result := make(map[string]bool, len(lines))
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		result[name] = true
 	}
 	return result, nil
 }
 
-// FocusPaneAsSidebar brings paneID to the right of the current pane
-// and adjusts layout to 50/50 horizontal split.
-// If the pane is in a different window, it joins it to the current window.
-// The current pane (devdeploy) stays on the left, target pane on the right.
-func FocusPaneAsSidebar(paneID string) error {
+// SessionExists reports whether a session exists by name.
+func SessionExists(sessionName string) (bool, error) {
+	t, err := client()
+	if err != nil {
+		return false, err
+	}
+	if _, err := t.Command("has-session", "-t", sessionName); err != nil {
+		if strings.Contains(err.Error(), "can't find session") {
+			return false, nil
+		}
+		return false, fmt.Errorf("tmux has-session: %w", err)
+	}
+	return true, nil
+}
+
+// EnsureSession creates a detached session if it doesn't already exist.
+// Returns created=true when a new session was created.
+func EnsureSession(sessionName, workDir, shell string) (created bool, err error) {
+	if info, statErr := os.Stat(workDir); statErr != nil {
+		return false, fmt.Errorf("invalid workdir: %w", statErr)
+	} else if !info.IsDir() {
+		return false, fmt.Errorf("invalid workdir: %s is not a directory", workDir)
+	}
+	if shell == "" {
+		shell = "sh"
+	}
+
+	t, err := client()
+	if err != nil {
+		return false, err
+	}
+
+	exists, err := SessionExists(sessionName)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	if _, err := t.Command("new-session", "-d", "-s", sessionName, "-c", workDir, shell); err != nil {
+		return false, fmt.Errorf("tmux new-session: %w", err)
+	}
+	return true, nil
+}
+
+// SwitchClient switches the current tmux client to the target session.
+func SwitchClient(sessionName string) error {
 	t, err := client()
 	if err != nil {
 		return err
 	}
-
-	// Get current pane ID (where devdeploy is running)
-	currentPaneID, err := t.Command("display-message", "-p", "#{pane_id}")
-	if err != nil {
-		return fmt.Errorf("get current pane: %w", err)
+	if _, err := t.Command("switch-client", "-t", sessionName); err != nil {
+		return fmt.Errorf("tmux switch-client: %w", err)
 	}
-	currentPaneID = strings.TrimSpace(currentPaneID)
-
-	// If the target pane is the current pane, nothing to do
-	if paneID == currentPaneID {
-		return nil
-	}
-
-	// Get current window ID
-	currentWindowID, err := t.Command("display-message", "-p", "#{window_id}")
-	if err != nil {
-		return fmt.Errorf("get current window: %w", err)
-	}
-	currentWindowID = strings.TrimSpace(currentWindowID)
-
-	// Check if pane is already in current window by listing panes
-	paneList, err := t.Command("list-panes", "-t", currentWindowID, "-F", "#{pane_id}")
-	if err != nil {
-		return fmt.Errorf("list panes: %w", err)
-	}
-	paneIDs := strings.Split(strings.TrimSpace(paneList), "\n")
-	paneInWindow := false
-	for _, pid := range paneIDs {
-		if strings.TrimSpace(pid) == paneID {
-			paneInWindow = true
-			break
-		}
-	}
-
-	// If pane is not in current window, join it
-	if !paneInWindow {
-		// Join the pane horizontally to the right of current pane
-		// -h = horizontal split, -s = source pane, -t = target pane
-		if _, err := t.Command("join-pane", "-h", "-s", paneID, "-t", currentPaneID); err != nil {
-			return fmt.Errorf("join pane: %w", err)
-		}
-	}
-
-	// Set layout to main-vertical (50/50 horizontal split)
-	// This ensures devdeploy on left, selected pane on right
-	if _, err := t.Command("select-layout", "-t", currentWindowID, "main-vertical"); err != nil {
-		// Fallback to even-vertical if main-vertical fails
-		if _, err2 := t.Command("select-layout", "-t", currentWindowID, "even-vertical"); err2 != nil {
-			return fmt.Errorf("set layout: %w (tried main-vertical and even-vertical)", err)
-		}
-	}
-
 	return nil
+}
+
+// KillSession kills a tmux session by name.
+func KillSession(sessionName string) error {
+	t, err := client()
+	if err != nil {
+		return err
+	}
+	if _, err := t.Command("kill-session", "-t", sessionName); err != nil {
+		return fmt.Errorf("tmux kill-session: %w", err)
+	}
+	return nil
+}
+
+// CaptureOpts controls capture-pane behavior.
+type CaptureOpts struct {
+	LastLines int // captures this many trailing lines; defaults to full pane when <= 0.
+}
+
+// CapturePane returns pane output for session's first pane (session:0.0).
+func CapturePane(sessionName string, opts CaptureOpts) (string, error) {
+	t, err := client()
+	if err != nil {
+		return "", err
+	}
+	target := sessionName + ":0.0"
+	args := []string{"capture-pane", "-t", target, "-p"}
+	if opts.LastLines > 0 {
+		args = append(args, "-S", fmt.Sprintf("-%d", opts.LastLines))
+	} else {
+		// -S - captures from the start of available history.
+		args = append(args, "-S", "-")
+	}
+	out, err := t.Command(args...)
+	if err != nil {
+		return "", fmt.Errorf("tmux capture-pane: %w", err)
+	}
+	return strings.TrimRight(out, "\n"), nil
 }

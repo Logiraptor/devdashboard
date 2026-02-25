@@ -4,9 +4,7 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 
 ## Quick Reference
 
-**Agent shell work**: Use epic `devdeploy-bgt` (tmux pane orchestration). `devdeploy-awh` is closed and superseded.
-
-**Ralph loop**: Use `SPC s r` in devdeploy to launch an automated agent loop. See `dev-log/agent-workflow.md` for details.
+**Agent shell work**: Use epic `devdeploy-bgt` (tmux session orchestration). `devdeploy-awh` is closed and superseded.
 
 ```bash
 bd ready              # Find available work

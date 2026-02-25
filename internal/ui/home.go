@@ -24,14 +24,14 @@ const (
 const (
 	reservedChromeLines  = 6
 	headerHeight         = 2
-	activePanesHeight    = 4
+	activeSessionsHeight = 4
 	minListHeight        = 6
 	minBeadDetailsHeight = 4
 	maxBeadDetailsHeight = 12
 )
 
-// GlobalPanesGetter returns active panes for rendering.
-type GlobalPanesGetter func() []project.PaneInfo
+// GlobalSessionsGetter returns active sessions for rendering.
+type GlobalSessionsGetter func() []project.SessionInfo
 
 type homeItem struct {
 	itemType    homeItemType
@@ -47,9 +47,9 @@ type homeItem struct {
 
 type homeDelegate struct{}
 
-func (d homeDelegate) Height() int                                      { return 1 }
-func (d homeDelegate) Spacing() int                                     { return 0 }
-func (d homeDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd          { return nil }
+func (d homeDelegate) Height() int                             { return 1 }
+func (d homeDelegate) Spacing() int                            { return 0 }
+func (d homeDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 func (d homeDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	title := item.(homeItem).Title()
 	if index == m.Index() {
@@ -61,8 +61,8 @@ func (d homeDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 }
 
 func resourceStatus(r project.Resource) string {
-	if len(r.Panes) > 0 {
-		return fmt.Sprintf("%d panes", len(r.Panes))
+	if r.Session != nil {
+		return "1 session"
 	}
 	return ""
 }
@@ -95,11 +95,8 @@ func statusDot(color string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("●")
 }
 
-func formatPaneLine(index int, name string, isAgent bool) string {
+func formatSessionLine(index int, name string) string {
 	icon := Styles.Muted.Render("❯")
-	if isAgent {
-		icon = Styles.Status.Render("◆")
-	}
 	num := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorAccent)).Render(fmt.Sprintf("%d.", index))
 	return num + " " + icon + " " + Styles.Normal.Render(name)
 }
@@ -227,7 +224,9 @@ type HomeView struct {
 	loadingBeads  bool
 	spinner       spinner.Model
 
-	getGlobalPanes GlobalPanesGetter
+	getGlobalSessions GlobalSessionsGetter
+	previewText       string
+	hasPreview        bool
 }
 
 func collapseKey(groupIdx, resourceIdx int) string {
@@ -253,14 +252,16 @@ func NewHomeView() *HomeView {
 	s.Style = Styles.Status
 
 	return &HomeView{
-		repoGroups:     nil,
-		list:           l,
-		items:          nil,
-		collapsed:      make(map[string]bool),
-		loadingGroups:  false,
-		loadingBeads:   false,
-		spinner:        s,
-		getGlobalPanes: nil,
+		repoGroups:        nil,
+		list:              l,
+		items:             nil,
+		collapsed:         make(map[string]bool),
+		loadingGroups:     false,
+		loadingBeads:      false,
+		spinner:           s,
+		getGlobalSessions: nil,
+		previewText:       "",
+		hasPreview:        false,
 	}
 }
 
@@ -283,7 +284,7 @@ func (h *HomeView) SetSize(width, height int) {
 	h.termHeight = height
 	vh := h.viewHeight()
 	if vh > 0 {
-		h.list.SetWidth(width)
+		h.list.SetWidth(h.leftColumnWidth())
 		h.list.SetHeight(vh)
 	}
 }
@@ -429,8 +430,12 @@ func (h *HomeView) View() string {
 		return b.String()
 	}
 
-	b.WriteString(h.list.View())
-	b.WriteString(h.renderActivePanesSection())
+	leftWidth := h.leftColumnWidth()
+	rightWidth := h.rightColumnWidth(leftWidth)
+
+	leftColumn := h.list.View() + h.renderActiveSessionsSection()
+	rightColumn := h.renderPreviewSection(rightWidth)
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, rightColumn))
 	b.WriteString(h.renderBeadDetailsSection())
 	return b.String()
 }
@@ -439,7 +444,7 @@ func (h *HomeView) viewHeight() int {
 	if h.termHeight <= 0 {
 		return 0
 	}
-	height := h.termHeight - reservedChromeLines - headerHeight - activePanesHeight - h.beadDetailsAllowedHeight()
+	height := h.termHeight - reservedChromeLines - headerHeight - activeSessionsHeight - h.beadDetailsAllowedHeight()
 	if height < minListHeight {
 		height = minListHeight
 	}
@@ -450,7 +455,7 @@ func (h *HomeView) beadDetailsAllowedHeight() int {
 	if h.termHeight <= 0 {
 		return minBeadDetailsHeight
 	}
-	fixedOverhead := reservedChromeLines + headerHeight + activePanesHeight
+	fixedOverhead := reservedChromeLines + headerHeight + activeSessionsHeight
 	baselineTotal := fixedOverhead + minListHeight + minBeadDetailsHeight
 	if h.termHeight <= baselineTotal {
 		return minBeadDetailsHeight
@@ -515,40 +520,37 @@ func (h *HomeView) updateFilterStyles() {
 	}
 }
 
-func (h *HomeView) renderActivePanesSection() string {
-	width := h.termWidth
-	if width <= 0 {
-		width = 80
-	}
+func (h *HomeView) renderActiveSessionsSection() string {
+	width := h.leftColumnWidth()
 
 	var content strings.Builder
-	content.WriteString(Styles.Section.Render("Active Panes") + "\n")
+	content.WriteString(Styles.Section.Render("Active Sessions") + "\n")
 
-	var activePanes []project.PaneInfo
-	if h.getGlobalPanes != nil {
-		activePanes = h.getGlobalPanes()
+	var activeSessions []project.SessionInfo
+	if h.getGlobalSessions != nil {
+		activeSessions = h.getGlobalSessions()
 	} else {
-		activePanes = h.getOrderedActivePanes()
+		activeSessions = h.getOrderedActiveSessions()
 	}
 
-	if len(activePanes) == 0 {
+	if len(activeSessions) == 0 {
 		content.WriteString("  " + Styles.Muted.Render("(none)") + "\n")
 	} else {
-		maxPanes := activePanesHeight - 1 // -1 for section header line
-		if maxPanes > 9 {
-			maxPanes = 9
+		maxSessions := activeSessionsHeight - 1 // -1 for section header line
+		if maxSessions > 9 {
+			maxSessions = 9
 		}
-		for i, pane := range activePanes {
-			if i >= maxPanes {
+		for i, tracked := range activeSessions {
+			if i >= maxSessions {
 				break
 			}
-			paneName := h.getPaneDisplayName(pane, i+1)
-			content.WriteString("  " + paneName + "\n")
+			sessionName := h.getSessionDisplayName(tracked, i+1)
+			content.WriteString("  " + sessionName + "\n")
 		}
 	}
 
 	rendered := content.String()
-	return "\n" + lipgloss.Place(width, activePanesHeight, lipgloss.Left, lipgloss.Top, rendered)
+	return "\n" + lipgloss.Place(width, activeSessionsHeight, lipgloss.Left, lipgloss.Top, rendered)
 }
 
 func (h *HomeView) renderBeadDetailsSection() string {
@@ -609,47 +611,107 @@ func (h *HomeView) renderBeadDetailsSection() string {
 	return "\n" + lipgloss.Place(width, sectionHeight, lipgloss.Left, lipgloss.Top, rendered)
 }
 
-func (h *HomeView) getOrderedActivePanes() []project.PaneInfo {
-	var panes []project.PaneInfo
+func (h *HomeView) getOrderedActiveSessions() []project.SessionInfo {
+	var sessions []project.SessionInfo
 	for _, g := range h.repoGroups {
 		for _, item := range g.Items {
-			panes = append(panes, item.Panes...)
-			if len(panes) >= 9 {
-				return panes[:9]
+			if item.Session != nil {
+				sessions = append(sessions, *item.Session)
+			}
+			if len(sessions) >= 9 {
+				return sessions[:9]
 			}
 		}
 	}
-	return panes
+	return sessions
 }
 
-func (h *HomeView) getPaneDisplayName(pane project.PaneInfo, index int) string {
-	resourceName := pane.ID
+func (h *HomeView) getSessionDisplayName(tracked project.SessionInfo, index int) string {
+	resourceName := tracked.Name
 	for _, g := range h.repoGroups {
 		for _, item := range g.Items {
-			for _, rp := range item.Panes {
-				if rp.ID != pane.ID {
-					continue
-				}
-				switch item.Kind {
-				case project.ResourcePR:
-					if item.PR != nil {
-						resourceName = fmt.Sprintf("%s-pr-%d", item.RepoName, item.PR.Number)
-					} else {
-						resourceName = item.RepoName
-					}
-				case project.ResourceWorktree:
-					if item.Worktree != nil && item.Worktree.Branch != "" {
-						resourceName = fmt.Sprintf("%s@%s", item.RepoName, item.Worktree.Branch)
-					} else {
-						resourceName = item.RepoName
-					}
-				default:
+			if item.Session == nil || item.Session.Name != tracked.Name {
+				continue
+			}
+			switch item.Kind {
+			case project.ResourcePR:
+				if item.PR != nil {
+					resourceName = fmt.Sprintf("%s-pr-%d", item.RepoName, item.PR.Number)
+				} else {
 					resourceName = item.RepoName
 				}
-				return formatPaneLine(index, resourceName, pane.IsAgent)
+			case project.ResourceWorktree:
+				if item.Worktree != nil && item.Worktree.Branch != "" {
+					resourceName = fmt.Sprintf("%s@%s", item.RepoName, item.Worktree.Branch)
+				} else {
+					resourceName = item.RepoName
+				}
+			default:
+				resourceName = item.RepoName
 			}
+			return formatSessionLine(index, resourceName)
 		}
 	}
 
-	return formatPaneLine(index, resourceName, pane.IsAgent)
+	return formatSessionLine(index, resourceName)
+}
+
+// SetPreview updates the right-side capture-pane preview text.
+func (h *HomeView) SetPreview(text string, active bool) {
+	h.previewText = text
+	h.hasPreview = active
+}
+
+func (h *HomeView) renderPreviewSection(width int) string {
+	var content strings.Builder
+	content.WriteString(Styles.Section.Render("Session Preview") + "\n")
+	height := h.previewSectionHeight()
+	if !h.hasPreview {
+		content.WriteString("  " + Styles.Muted.Render("(no active session for selected resource)") + "\n")
+		return lipgloss.Place(width, height, lipgloss.Left, lipgloss.Top, content.String())
+	}
+	if h.previewText == "" {
+		content.WriteString("  " + Styles.Muted.Render("(empty pane output)") + "\n")
+		return lipgloss.Place(width, height, lipgloss.Left, lipgloss.Top, content.String())
+	}
+
+	lines := strings.Split(h.previewText, "\n")
+	maxLines := h.viewHeight() + activeSessionsHeight - 1
+	if maxLines < 5 {
+		maxLines = 5
+	}
+	start := 0
+	if len(lines) > maxLines {
+		start = len(lines) - maxLines
+	}
+	for _, line := range lines[start:] {
+		content.WriteString("  " + line + "\n")
+	}
+	return lipgloss.Place(width, height, lipgloss.Left, lipgloss.Top, content.String())
+}
+
+func (h *HomeView) leftColumnWidth() int {
+	if h.termWidth <= 0 {
+		return 30
+	}
+	width := h.termWidth / 3
+	if width < 30 {
+		return 30
+	}
+	return width
+}
+
+func (h *HomeView) rightColumnWidth(leftWidth int) int {
+	if h.termWidth <= 0 {
+		return 40
+	}
+	width := h.termWidth - leftWidth
+	if width < 40 {
+		return 40
+	}
+	return width
+}
+
+func (h *HomeView) previewSectionHeight() int {
+	return h.viewHeight() + activeSessionsHeight + 1
 }

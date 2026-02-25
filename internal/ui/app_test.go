@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"testing"
 
 	"devdeploy/internal/project"
@@ -92,7 +93,7 @@ func TestHandleHomeBeadsLoadedClearsLoadingFlags(t *testing.T) {
 	require.False(t, m.Home.loadingBeads)
 }
 
-func TestEnterDispatchesOpenShellMsg(t *testing.T) {
+func TestEnterDispatchesUpsertSessionMsg(t *testing.T) {
 	m := NewAppModel()
 	m.Home.SetRepoGroups([]project.RepoGroup{
 		{
@@ -106,7 +107,7 @@ func TestEnterDispatchesOpenShellMsg(t *testing.T) {
 	_, cmd := adapter.Update(keyMsg("enter"))
 	require.NotNil(t, cmd)
 	msg := cmd()
-	_, ok := msg.(OpenShellMsg)
+	_, ok := msg.(UpsertResourceSessionMsg)
 	require.True(t, ok)
 }
 
@@ -137,3 +138,44 @@ func TestDKeyIgnoredWhileFiltering(t *testing.T) {
 	require.Equal(t, 0, m.Overlays.Len())
 }
 
+func TestHandleHomeTickRefreshedSetsPreview(t *testing.T) {
+	m := NewAppModel()
+	m.Home.SetRepoGroups([]project.RepoGroup{
+		{
+			RepoName: "repo-a",
+			Items: []project.Resource{
+				{Kind: project.ResourceRepo, RepoName: "repo-a", WorktreePath: "/tmp/repo-a"},
+			},
+		},
+	})
+	adapter := m.AsTeaModel().(*appModelAdapter)
+
+	_, _ = adapter.Update(homeTickRefreshedMsg{
+		HasPreview:  true,
+		PreviewText: "line 1\nline 2",
+	})
+	require.True(t, m.Home.hasPreview)
+	require.Equal(t, "line 1\nline 2", m.Home.previewText)
+}
+
+func TestHandleHomeTickRefreshedClearsPreviewWithoutSession(t *testing.T) {
+	m := NewAppModel()
+	m.Home.SetPreview("stale", true)
+	adapter := m.AsTeaModel().(*appModelAdapter)
+
+	_, _ = adapter.Update(homeTickRefreshedMsg{HasPreview: false})
+	require.False(t, m.Home.hasPreview)
+	require.Equal(t, "", m.Home.previewText)
+}
+
+func TestHandleHomeTickRefreshedShowsCaptureError(t *testing.T) {
+	m := NewAppModel()
+	adapter := m.AsTeaModel().(*appModelAdapter)
+
+	_, _ = adapter.Update(homeTickRefreshedMsg{
+		HasPreview: true,
+		PreviewErr: errors.New("session not found"),
+	})
+	require.True(t, m.Home.hasPreview)
+	require.Contains(t, m.Home.previewText, "capture error")
+}

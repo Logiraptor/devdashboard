@@ -21,7 +21,7 @@ func testHomeRepoGroups() []project.RepoGroup {
 					Beads: []project.BeadInfo{
 						{ID: "a-1", Title: "bead-a1", Status: "open"},
 					},
-					Panes: []project.PaneInfo{{ID: "%1", IsAgent: false}},
+					Session: &project.SessionInfo{Name: "dd-repo-a"},
 				},
 				{
 					Kind:         project.ResourceWorktree,
@@ -52,14 +52,14 @@ func TestCloneRepoGroups_DeepCopy(t *testing.T) {
 	cloned[0].Items[0].RepoName = "mutated-repo"
 	cloned[0].Items[0].PR = &project.PRInfo{Number: 99, Title: "new"}
 	cloned[0].Items[1].Worktree.Branch = "mutated-branch"
-	cloned[0].Items[0].Panes[0].ID = "%99"
+	cloned[0].Items[0].Session.Name = "dd-mutated"
 	cloned[0].Items[2].Beads[0].ID = "mutated-bead"
 
 	require.Equal(t, "repo-a", original[0].RepoName)
 	require.Equal(t, "repo-a", original[0].Items[0].RepoName)
 	require.Nil(t, original[0].Items[0].PR)
 	require.Equal(t, "feat", original[0].Items[1].Worktree.Branch)
-	require.Equal(t, "%1", original[0].Items[0].Panes[0].ID)
+	require.Equal(t, "dd-repo-a", original[0].Items[0].Session.Name)
 	require.Equal(t, "a-2", original[0].Items[2].Beads[0].ID)
 }
 
@@ -220,4 +220,40 @@ func TestHomeItem_FilterValue(t *testing.T) {
 			require.Equal(t, tt.want, tt.item.FilterValue())
 		})
 	}
+}
+
+func TestHomeView_GetSessionDisplayNameFallback(t *testing.T) {
+	v := NewHomeView()
+	v.SetRepoGroups(testHomeRepoGroups())
+
+	got := v.getSessionDisplayName(project.SessionInfo{Name: "dd-unmapped"}, 1)
+	require.Contains(t, got, "dd-unmapped")
+}
+
+func TestHomeView_GetSessionDisplayNameRepoMatch(t *testing.T) {
+	v := NewHomeView()
+	v.SetRepoGroups(testHomeRepoGroups())
+
+	got := v.getSessionDisplayName(project.SessionInfo{Name: "dd-repo-a"}, 2)
+	require.Contains(t, got, "repo-a")
+}
+
+func TestHomeView_GetSessionDisplayNameWorktreeMatch(t *testing.T) {
+	v := NewHomeView()
+	groups := testHomeRepoGroups()
+	groups[0].Items[1].Session = &project.SessionInfo{Name: "dd-worktree-repo-a-feat"}
+	v.SetRepoGroups(groups)
+
+	got := v.getSessionDisplayName(project.SessionInfo{Name: "dd-worktree-repo-a-feat"}, 3)
+	require.Contains(t, got, "repo-a@feat")
+}
+
+func TestHomeView_GetSessionDisplayNamePRMatch(t *testing.T) {
+	v := NewHomeView()
+	groups := testHomeRepoGroups()
+	groups[0].Items[2].Session = &project.SessionInfo{Name: "dd-pr-repo-a-42"}
+	v.SetRepoGroups(groups)
+
+	got := v.getSessionDisplayName(project.SessionInfo{Name: "dd-pr-repo-a-42"}, 4)
+	require.Contains(t, got, "repo-a-pr-42")
 }

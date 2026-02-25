@@ -78,7 +78,7 @@ func (r *KeybindRegistry) Hints() map[string]string {
 // Used to avoid showing a specific sub-action when the key opens a submenu.
 var firstLevelSubmenuLabel = map[string]string{
 	"p": "Resource",
-	"s": "Shell",
+	"s": "Session",
 	"b": "Bead",
 }
 

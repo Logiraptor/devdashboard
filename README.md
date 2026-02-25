@@ -12,8 +12,7 @@ The core idea: projects contain resources (repositories, PRs), and the primary a
 
 - **TUI Dashboard**: Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), uses spacemacs-style `SPC` leader key with contextual hints
 - **Worktree Management**: Automatically creates and manages git worktrees for PRs and feature branches
-- **Tmux Integration**: Splits panes, tracks sessions, runs agents in dedicated panes
-- **Ralph**: An autonomous agent loop that picks tasks from my issue tracker (beads/bd) and dispatches AI agents to implement them
+- **Tmux Integration**: Creates resource sessions, tracks session lifecycle, previews live pane output
 
 ## Tech Stack
 
@@ -27,8 +26,7 @@ The core idea: projects contain resources (repositories, PRs), and the primary a
 ```
 devdeploy/
 ├── cmd/devdeploy/     # Main TUI entrypoint
-├── cmd/ralph/         # Autonomous agent loop CLI
-├── internal/          # Private packages (ui, tmux, ralph, beads, etc.)
+├── internal/          # Private packages (ui, tmux, beads, etc.)
 ├── dev-log/           # Architecture decision records
 └── contrib/           # tmux configs
 ```

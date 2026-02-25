@@ -11,7 +11,7 @@ import (
 func (a *appModelAdapter) handleHomeRepoNamesLoaded(msg HomeRepoNamesLoadedMsg) (tea.Model, tea.Cmd) {
 	if a.Home == nil {
 		a.Home = NewHomeView()
-		a.Home.getGlobalPanes = a.getGlobalPanesForDisplay
+		a.Home.getGlobalSessions = a.getGlobalSessionsForDisplay
 	}
 	if msg.Err != nil {
 		a.Status = fmt.Sprintf("Load repos: %v", msg.Err)
@@ -32,7 +32,7 @@ func (a *appModelAdapter) handleHomeRepoNamesLoaded(msg HomeRepoNamesLoadedMsg) 
 func (a *appModelAdapter) handleHomeRepoGroupsLoaded(msg HomeRepoGroupsLoadedMsg) (tea.Model, tea.Cmd) {
 	if a.Home == nil {
 		a.Home = NewHomeView()
-		a.Home.getGlobalPanes = a.getGlobalPanesForDisplay
+		a.Home.getGlobalSessions = a.getGlobalSessionsForDisplay
 	}
 	if msg.Err != nil {
 		a.Status = fmt.Sprintf("Load repo groups: %v", msg.Err)
@@ -44,7 +44,7 @@ func (a *appModelAdapter) handleHomeRepoGroupsLoaded(msg HomeRepoGroupsLoadedMsg
 	a.Home.SetRepoGroups(msg.Groups)
 	a.Home.loadingGroups = false
 	a.Home.loadingBeads = true
-	a.refreshHomePanes()
+	a.refreshHomeSessions()
 	if len(msg.Groups) == 0 {
 		a.Home.loadingBeads = false
 		return a, nil
@@ -57,7 +57,7 @@ func (a *appModelAdapter) handleHomeBeadsLoaded(msg HomeBeadsLoadedMsg) (tea.Mod
 		a.Home.loadingGroups = false
 		a.Home.loadingBeads = false
 		a.Home.SetRepoGroups(msg.Groups)
-		a.refreshHomePanes()
+		a.refreshHomeSessions()
 	}
 	return a, nil
 }
@@ -73,7 +73,7 @@ func (a *appModelAdapter) handleRefreshBeads() (tea.Model, tea.Cmd) {
 	}
 	a.Home.loadingBeads = true
 	a.Home.buildItems()
-	a.refreshHomePanes()
+	a.refreshHomeSessions()
 	return a, tea.Batch(a.Home.spinnerTickCmd(), loadHomeBeadsCmd(groups))
 }
 

@@ -1,7 +1,4 @@
-// Package session tracks active tmux panes associated with project resources.
-// The SessionTracker maps resource keys to live panes (shells and agents),
-// supports liveness pruning via tmux list-panes, and persists across project
-// switches by living on AppModel rather than per-view.
+// Package session tracks active tmux sessions associated with project resources.
 package session
 
 import (
@@ -9,31 +6,22 @@ import (
 	"time"
 )
 
-// PaneType distinguishes shell vs agent panes.
-type PaneType string
-
-const (
-	PaneShell PaneType = "shell"
-	PaneAgent PaneType = "agent"
-)
-
-// TrackedPane holds metadata about one active tmux pane.
-type TrackedPane struct {
-	PaneID      string      // tmux pane ID (e.g. "%42")
-	Type        PaneType    // shell or agent
-	ResourceKey ResourceKey // resource this pane belongs to
-	CreatedAt   time.Time   // when the pane was registered
+// TrackedSession holds metadata about one active tmux session.
+type TrackedSession struct {
+	Name        string      // tmux session name (e.g. "dd-repo-devdeploy")
+	ResourceKey ResourceKey // resource this session belongs to
+	CreatedAt   time.Time   // when the session was registered
 }
 
-// LivenessChecker returns the set of currently live tmux pane IDs.
-// In production this calls tmux.ListPaneIDs(); tests can inject a stub.
+// LivenessChecker returns the set of currently live tmux session names.
+// In production this calls tmux.ListSessionNames(); tests can inject a stub.
 type LivenessChecker func() (map[string]bool, error)
 
-// Tracker manages the mapping from resources to active tmux panes.
+// Tracker manages the mapping from resources to active tmux sessions.
 // Safe for concurrent use.
 type Tracker struct {
 	mu       sync.RWMutex
-	panes    map[ResourceKey][]TrackedPane // resourceKey -> panes
+	sessions map[ResourceKey]TrackedSession // resourceKey -> session
 	liveness LivenessChecker
 }
 
@@ -41,95 +29,64 @@ type Tracker struct {
 // If liveness is nil, Prune becomes a no-op.
 func New(liveness LivenessChecker) *Tracker {
 	return &Tracker{
-		panes:    make(map[ResourceKey][]TrackedPane),
+		sessions: make(map[ResourceKey]TrackedSession),
 		liveness: liveness,
 	}
 }
 
-// Register adds a pane to the tracker for the given resource.
-func (t *Tracker) Register(resourceKey ResourceKey, paneID string, paneType PaneType) {
+// Register upserts a tracked session for the given resource.
+func (t *Tracker) Register(resourceKey ResourceKey, sessionName string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.panes[resourceKey] = append(t.panes[resourceKey], TrackedPane{
-		PaneID:      paneID,
-		Type:        paneType,
+	t.sessions[resourceKey] = TrackedSession{
+		Name:        sessionName,
 		ResourceKey: resourceKey,
 		CreatedAt:   time.Now(),
-	})
+	}
 }
 
-// Unregister removes a specific pane by ID from the tracker.
-// Returns true if the pane was found and removed.
-func (t *Tracker) Unregister(paneID string) bool {
+// UnregisterByName removes a tracked session by session name.
+// Returns true if the session was found and removed.
+func (t *Tracker) UnregisterByName(sessionName string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for key, panes := range t.panes {
-		for i, p := range panes {
-			if p.PaneID == paneID {
-				t.panes[key] = append(panes[:i], panes[i+1:]...)
-				if len(t.panes[key]) == 0 {
-					delete(t.panes, key)
-				}
-				return true
-			}
+	for key, tracked := range t.sessions {
+		if tracked.Name == sessionName {
+			delete(t.sessions, key)
+			return true
 		}
 	}
 	return false
 }
 
-// PanesForResource returns tracked panes for a resource key.
-// Returns nil if no panes are tracked.
-func (t *Tracker) PanesForResource(resourceKey ResourceKey) []TrackedPane {
+// SessionForResource returns the tracked session for a resource key.
+func (t *Tracker) SessionForResource(resourceKey ResourceKey) (TrackedSession, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	panes := t.panes[resourceKey]
-	if len(panes) == 0 {
-		return nil
-	}
-	out := make([]TrackedPane, len(panes))
-	copy(out, panes)
-	return out
+	s, ok := t.sessions[resourceKey]
+	return s, ok
 }
 
-// AllPanes returns all tracked panes across all resources.
-func (t *Tracker) AllPanes() []TrackedPane {
+// AllSessions returns all tracked sessions across all resources.
+func (t *Tracker) AllSessions() []TrackedSession {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	var out []TrackedPane
-	for _, panes := range t.panes {
-		out = append(out, panes...)
+	out := make([]TrackedSession, 0, len(t.sessions))
+	for _, s := range t.sessions {
+		out = append(out, s)
 	}
 	return out
 }
 
-// Count returns the total number of tracked panes.
+// Count returns the total number of tracked sessions.
 func (t *Tracker) Count() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	n := 0
-	for _, panes := range t.panes {
-		n += len(panes)
-	}
-	return n
+	return len(t.sessions)
 }
 
-// CountForResource returns (shells, agents) for a given resource key.
-func (t *Tracker) CountForResource(resourceKey ResourceKey) (shells, agents int) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	for _, p := range t.panes[resourceKey] {
-		switch p.Type {
-		case PaneShell:
-			shells++
-		case PaneAgent:
-			agents++
-		}
-	}
-	return
-}
-
-// Prune removes dead panes by checking liveness via tmux list-panes.
-// Returns the number of panes pruned.
+// Prune removes dead sessions by checking liveness via tmux list-sessions.
+// Returns the number of sessions pruned.
 func (t *Tracker) Prune() (int, error) {
 	if t.liveness == nil {
 		return 0, nil
@@ -143,30 +100,23 @@ func (t *Tracker) Prune() (int, error) {
 	defer t.mu.Unlock()
 
 	pruned := 0
-	for key, panes := range t.panes {
-		var kept []TrackedPane
-		for _, p := range panes {
-			if live[p.PaneID] {
-				kept = append(kept, p)
-			} else {
-				pruned++
-			}
-		}
-		if len(kept) == 0 {
-			delete(t.panes, key)
-		} else {
-			t.panes[key] = kept
+	for key, tracked := range t.sessions {
+		if !live[tracked.Name] {
+			delete(t.sessions, key)
+			pruned++
 		}
 	}
 	return pruned, nil
 }
 
-// UnregisterAll removes all panes for a resource key.
-// Returns the number of panes removed.
-func (t *Tracker) UnregisterAll(resourceKey ResourceKey) int {
+// Unregister removes tracked session info for a resource key.
+// Returns true if a session was removed.
+func (t *Tracker) Unregister(resourceKey ResourceKey) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	n := len(t.panes[resourceKey])
-	delete(t.panes, resourceKey)
-	return n
+	if _, ok := t.sessions[resourceKey]; ok {
+		delete(t.sessions, resourceKey)
+		return true
+	}
+	return false
 }

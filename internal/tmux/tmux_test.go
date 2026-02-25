@@ -1,9 +1,10 @@
 package tmux
 
 import (
+	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
+	"time"
 )
 
 // skipIfTmuxTestsDisabled skips the test unless DEVDEPLOY_TMUX_TESTS=1 is set.
@@ -18,84 +19,49 @@ func skipIfTmuxTestsDisabled(t *testing.T) {
 	}
 }
 
-func TestSplitPane_KillPane(t *testing.T) {
+func TestEnsureSessionLifecycleAndCapturePane(t *testing.T) {
 	skipIfTmuxTestsDisabled(t)
 	workDir := t.TempDir()
-	paneID, err := SplitPane(workDir)
+	sessionName := fmt.Sprintf("dd-test-%d", time.Now().UnixNano())
+	created, err := EnsureSession(sessionName, workDir, os.Getenv("SHELL"))
 	if err != nil {
-		t.Fatalf("SplitPane: %v", err)
+		t.Fatalf("EnsureSession(create): %v", err)
 	}
-	if paneID == "" {
-		t.Fatal("SplitPane returned empty pane ID")
+	if !created {
+		t.Fatal("expected EnsureSession to create a new session")
 	}
-	if err := KillPane(paneID); err != nil {
-		t.Fatalf("KillPane: %v", err)
-	}
-}
+	t.Cleanup(func() {
+		_ = KillSession(sessionName)
+	})
 
-func TestSendKeys(t *testing.T) {
-	skipIfTmuxTestsDisabled(t)
-	workDir := t.TempDir()
-	paneID, err := SplitPane(workDir)
+	exists, err := SessionExists(sessionName)
 	if err != nil {
-		t.Fatalf("SplitPane: %v", err)
+		t.Fatalf("SessionExists(after create): %v", err)
 	}
-	defer func() { _ = KillPane(paneID) }()
-	if err := SendKeys(paneID, "echo ok\n"); err != nil {
-		t.Fatalf("SendKeys: %v", err)
+	if !exists {
+		t.Fatalf("expected session %q to exist", sessionName)
 	}
-}
 
-func TestSplitPane_InvalidDir(t *testing.T) {
-	skipIfTmuxTestsDisabled(t)
-	_, err := SplitPane(filepath.Join(t.TempDir(), "nonexistent"))
-	if err == nil {
-		t.Error("expected error for nonexistent dir")
-	}
-}
-
-func TestBreakPane_JoinPane(t *testing.T) {
-	skipIfTmuxTestsDisabled(t)
-	workDir := t.TempDir()
-	paneID, err := SplitPane(workDir)
+	created, err = EnsureSession(sessionName, workDir, os.Getenv("SHELL"))
 	if err != nil {
-		t.Fatalf("SplitPane: %v", err)
+		t.Fatalf("EnsureSession(idempotent): %v", err)
 	}
-	defer func() { _ = KillPane(paneID) }()
-	if err := BreakPane(paneID); err != nil {
-		t.Fatalf("BreakPane: %v", err)
+	if created {
+		t.Fatal("expected EnsureSession to be idempotent")
 	}
-	if err := JoinPane(paneID); err != nil {
-		t.Fatalf("JoinPane: %v", err)
-	}
-}
 
-func TestListPaneIDs(t *testing.T) {
-	skipIfTmuxTestsDisabled(t)
-	// Create a pane to ensure we have at least one pane
-	workDir := t.TempDir()
-	paneID, err := SplitPane(workDir)
-	if err != nil {
-		t.Fatalf("SplitPane: %v", err)
+	if _, err := CapturePane(sessionName, CaptureOpts{LastLines: 20}); err != nil {
+		t.Fatalf("CapturePane: %v", err)
 	}
-	defer func() { _ = KillPane(paneID) }()
 
-	// List all pane IDs
-	paneIDs, err := ListPaneIDs()
+	if err := KillSession(sessionName); err != nil {
+		t.Fatalf("KillSession: %v", err)
+	}
+	exists, err = SessionExists(sessionName)
 	if err != nil {
-		t.Fatalf("ListPaneIDs: %v", err)
+		t.Fatalf("SessionExists(after kill): %v", err)
 	}
-	if len(paneIDs) == 0 {
-		t.Error("ListPaneIDs: expected at least one pane")
-	}
-	// Verify our created pane is in the list
-	if !paneIDs[paneID] {
-		t.Errorf("ListPaneIDs: expected pane %s to be in the list", paneID)
-	}
-	// Verify pane IDs have the correct format (%N)
-	for id := range paneIDs {
-		if len(id) == 0 || id[0] != '%' {
-			t.Errorf("ListPaneIDs: pane ID %q should start with %%", id)
-		}
+	if exists {
+		t.Fatalf("expected session %q to be killed", sessionName)
 	}
 }

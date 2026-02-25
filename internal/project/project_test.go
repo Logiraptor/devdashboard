@@ -9,19 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestManager_ListProjects_Empty(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, dir)
-
-	projects, err := m.ListProjects()
-	if err != nil {
-		t.Fatalf("ListProjects: %v", err)
-	}
-	if len(projects) != 0 {
-		t.Errorf("expected 0 projects, got %d", len(projects))
-	}
-}
-
 func TestManager_CreateProject(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, dir)
@@ -65,45 +52,6 @@ func TestManager_CreateProject_Idempotent(t *testing.T) {
 	// Second create should succeed (already exists)
 	if err := m.CreateProject("test"); err != nil {
 		t.Errorf("CreateProject idempotent: %v", err)
-	}
-}
-
-func TestManager_ListProjects_AfterCreate(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, dir)
-
-	_ = m.CreateProject("proj-a")
-	_ = m.CreateProject("proj-b")
-
-	projects, err := m.ListProjects()
-	if err != nil {
-		t.Fatalf("ListProjects: %v", err)
-	}
-	if len(projects) != 2 {
-		t.Errorf("expected 2 projects, got %d", len(projects))
-	}
-	names := make(map[string]bool)
-	for _, p := range projects {
-		names[p.Name] = true
-	}
-	if !names["proj-a"] || !names["proj-b"] {
-		t.Errorf("expected proj-a and proj-b, got %v", names)
-	}
-}
-
-func TestManager_ListProjects_SkipsDotDirs(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, dir)
-
-	_ = m.CreateProject("visible")
-	_ = os.MkdirAll(filepath.Join(dir, ".hidden"), 0755)
-
-	projects, err := m.ListProjects()
-	if err != nil {
-		t.Fatalf("ListProjects: %v", err)
-	}
-	if len(projects) != 1 || projects[0].Name != "visible" {
-		t.Errorf("expected 1 project (visible), got %d: %v", len(projects), projects)
 	}
 }
 
@@ -698,70 +646,6 @@ func TestManager_IsImplicitProject_RealProjectOverrides(t *testing.T) {
 
 	if m.IsImplicitProject("overlap") {
 		t.Error("repo with a same-named real project should not be implicit")
-	}
-}
-
-func TestManager_ListProjects_IncludesImplicit(t *testing.T) {
-	dir := t.TempDir()
-	wsDir := filepath.Join(dir, "workspace")
-	projBase := filepath.Join(dir, "projects")
-	_ = os.MkdirAll(wsDir, 0755)
-	_ = os.MkdirAll(projBase, 0755)
-	m := NewManager(projBase, wsDir)
-
-	_ = m.CreateProject("real-proj")
-	setupWorkspaceRepo(t, wsDir, "my-repo")
-
-	projects, err := m.ListProjects()
-	if err != nil {
-		t.Fatalf("ListProjects: %v", err)
-	}
-	if len(projects) != 2 {
-		t.Fatalf("expected 2 projects (1 real + 1 implicit), got %d", len(projects))
-	}
-
-	byName := map[string]ProjectInfo{}
-	for _, p := range projects {
-		byName[p.Name] = p
-	}
-
-	real := byName["real-proj"]
-	if real.Immutable {
-		t.Error("real project should not be immutable")
-	}
-
-	implicit := byName["my-repo"]
-	if !implicit.Immutable {
-		t.Error("implicit project should be immutable")
-	}
-	if implicit.RepoCount != 1 {
-		t.Errorf("implicit project should have RepoCount=1, got %d", implicit.RepoCount)
-	}
-	if implicit.Dir != filepath.Join(wsDir, "my-repo") {
-		t.Errorf("implicit project Dir: want %s, got %s", filepath.Join(wsDir, "my-repo"), implicit.Dir)
-	}
-}
-
-func TestManager_ListProjects_ImplicitSuppressedByRealProject(t *testing.T) {
-	dir := t.TempDir()
-	wsDir := filepath.Join(dir, "workspace")
-	projBase := filepath.Join(dir, "projects")
-	_ = os.MkdirAll(wsDir, 0755)
-	_ = os.MkdirAll(projBase, 0755)
-	m := NewManager(projBase, wsDir)
-
-	setupWorkspaceRepo(t, wsDir, "overlap")
-	_ = m.CreateProject("overlap")
-
-	projects, err := m.ListProjects()
-	if err != nil {
-		t.Fatalf("ListProjects: %v", err)
-	}
-	if len(projects) != 1 {
-		t.Fatalf("expected 1 project (real shadows implicit), got %d", len(projects))
-	}
-	if projects[0].Immutable {
-		t.Error("should be the real project, not the implicit one")
 	}
 }
 

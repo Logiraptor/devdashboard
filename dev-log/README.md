@@ -13,16 +13,16 @@ This directory contains architecture documentation for the devdeploy project.
 | Document | Contents |
 |----------|----------|
 | [architecture.md](architecture.md) | Vision, roadmap, tech stack, project structure |
-| [ui.md](ui.md) | UI abstractions, layout (Dashboard + Detail), project directory |
+| [ui.md](ui.md) | UI abstractions, layout (Home + Resources), project directory |
 | [keybinds.md](keybinds.md) | Keybind system, SPC leader, help view, project/agent keybinds, tmux |
 | [agent-workflow.md](agent-workflow.md) | Agent integration, progress, abort, tmux orchestration, validation |
 | [2026-02-06-tmux-project-epic.plan.md](2026-02-06-tmux-project-epic.plan.md) | (Superseded) Epic plan: real PRs, selection, SPC s s, tmux organization |
-| [2026-02-08-ralph-loop-tool.md](2026-02-08-ralph-loop-tool.md) | Ralph loop tool: dedicated CLI for autonomous agent work loops |
 | [2026-02-16-pr-loading-consolidation.md](2026-02-16-pr-loading-consolidation.md) | PR loading consolidation: unified API design with options pattern |
 | [2026-02-16-observer-pattern-analysis.md](2026-02-16-observer-pattern-analysis.md) | Observer pattern simplification: analysis and refactoring proposals |
 | [2026-02-16-resource-key-typing-investigation.md](2026-02-16-resource-key-typing-investigation.md) | Resource key typing: investigation and design for replacing string keys with typed struct |
-| [2026-02-16-worktree-unification-investigation.md](2026-02-16-worktree-unification-investigation.md) | Worktree unification: investigation of worktree operations in project.go and ralph/worktree.go, unified API design |
+| [2026-02-16-worktree-unification-investigation.md](2026-02-16-worktree-unification-investigation.md) | Worktree unification: investigation of worktree operations in project.go and worktree APIs, unified API design |
 | [2026-02-16-projectdetail-delegation-investigation.md](2026-02-16-projectdetail-delegation-investigation.md) | ProjectDetailView delegation complexity: analysis of cursorDelegate pattern, performance benchmarks, simplification options |
+| [2026-02-25-v2-sessions-and-ralph-removal.md](2026-02-25-v2-sessions-and-ralph-removal.md) | V2 plan: remove Ralph; tmux sessions per resource, capture-pane preview, ENTER/F1 navigation |
 
 ## Adding New Decisions
 

@@ -22,25 +22,7 @@ const (
 	WorkspaceEnv = "DEVDEPLOY_WORKSPACE"
 	// DefaultWorkspace is the default path for listing available repos.
 	DefaultWorkspace = "workspace"
-
-	// ProjectDirEnv is the env var override for the projects base directory.
-	ProjectDirEnv = "DEVDEPLOY_PROJECTS_DIR"
-	// DefaultProjectsBase is the default base for project directories under $HOME.
-	DefaultProjectsBase = ".devdeploy/projects"
 )
-
-// ResolveProjectsBase returns the projects base directory, using the
-// DEVDEPLOY_PROJECTS_DIR env var if set, otherwise ~/.devdeploy/projects.
-func ResolveProjectsBase() (string, error) {
-	if base := os.Getenv(ProjectDirEnv); base != "" {
-		return base, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, DefaultProjectsBase), nil
-}
 
 const alnumChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 
@@ -92,7 +74,7 @@ type prCacheEntry struct {
 	timestamp time.Time
 }
 
-// Manager handles project CRUD and worktree operations.
+// Manager handles repo/resource and worktree operations.
 type Manager struct {
 	projectsBase string
 	workspace    string
@@ -103,7 +85,9 @@ type Manager struct {
 // prCacheTTL is how long cached PR data remains valid.
 const prCacheTTL = 45 * time.Second
 
-// NewManager creates a manager for the given projects base directory.
+// NewManager creates a manager for the given workspace.
+// If projectsBase is empty, it defaults to workspace so worktree placement
+// stays within the workspace tree.
 func NewManager(projectsBase, workspace string) *Manager {
 	if workspace == "" {
 		workspace = os.Getenv(WorkspaceEnv)
@@ -112,63 +96,14 @@ func NewManager(projectsBase, workspace string) *Manager {
 		home, _ := os.UserHomeDir()
 		workspace = filepath.Join(home, DefaultWorkspace)
 	}
+	if projectsBase == "" {
+		projectsBase = workspace
+	}
 	return &Manager{
 		projectsBase: projectsBase,
 		workspace:    workspace,
 		// prCache is nil by default; initialized lazily on first use
 	}
-}
-
-// ProjectInfo holds minimal project metadata for listing.
-type ProjectInfo struct {
-	Name      string
-	RepoCount int
-	Dir       string
-	Immutable bool // true for implicit workspace-repo projects (read-only)
-}
-
-// ListProjects returns projects from disk (~/.devdeploy/projects/) plus
-// implicit read-only projects for workspace repos that have no real project.
-func (m *Manager) ListProjects() ([]ProjectInfo, error) {
-	entries, err := os.ReadDir(m.projectsBase)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	var out []ProjectInfo
-	existingNames := make(map[string]bool)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		dir := filepath.Join(m.projectsBase, name)
-		repos, _ := m.ListProjectRepos(name)
-		out = append(out, ProjectInfo{
-			Name:      name,
-			RepoCount: len(repos),
-			Dir:       dir,
-		})
-		existingNames[name] = true
-	}
-
-	// Append implicit projects for workspace repos without a real project.
-	repos, _ := m.ListWorkspaceRepos()
-	for _, repo := range repos {
-		normalized := strings.ToLower(strings.ReplaceAll(repo, " ", "-"))
-		if existingNames[normalized] {
-			continue
-		}
-		out = append(out, ProjectInfo{
-			Name:      repo,
-			RepoCount: 1,
-			Dir:       filepath.Join(m.workspace, repo),
-			Immutable: true,
-		})
-	}
-	return out, nil
 }
 
 // CreateProject creates a project directory and minimal config.

@@ -12,11 +12,10 @@ const (
 	ResourcePR ResourceKind = "pr"
 )
 
-// PaneInfo tracks an active tmux pane associated with a resource.
+// SessionInfo tracks an active tmux session associated with a resource.
 // Populated from session.Tracker during view construction.
-type PaneInfo struct {
-	ID      string // tmux pane ID (e.g. "%42")
-	IsAgent bool   // true if running `agent`, false for plain shell
+type SessionInfo struct {
+	Name string // tmux session name (e.g. "dd-repo-devdeploy")
 }
 
 // BeadInfo holds a bd issue associated with a resource for display.
@@ -44,7 +43,7 @@ type Resource struct {
 	PR           *PRInfo       // non-nil for PR resources
 	Worktree     *WorktreeInfo // non-nil for worktree resources
 	WorktreePath string        // populated when worktree exists; empty otherwise
-	Panes        []PaneInfo    // active tmux panes (from session tracker)
+	Session      *SessionInfo  // active tmux session (from session tracker)
 	Beads        []BeadInfo    // bd issues associated with this resource
 }
 
